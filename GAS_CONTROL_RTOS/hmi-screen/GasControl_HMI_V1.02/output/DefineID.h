@@ -16,6 +16,8 @@
 //创建画面Screen5的命令索引ID
 #define  _SCREEN_SCREEN5                                                       5
 
+#define  _TXT_DIS__SCREEN0_MENU_SYSTEM_TITLE                                 115
+
 #define  _BTN_SCREEN0_OPEN_MONITOR                                            57
 
 //全局图片screen0_down.png
@@ -191,6 +193,8 @@
 
 #define  _BTN_SCREEN1_GO_TO_LOG                                               60
 
+#define  _TXT_DIS__SCREEN2_EVENT_LOG_TITLE                                   116
+
 #define  _BTN_SCREEN2_REFRESH_EVENT_LOG                                       61
 
 #define  _RECORD_SCREEN2_EVENT_LOG_RECORD                                     62
@@ -204,6 +208,8 @@
 
 #define  _BTN_SCREEN2_EVENT_TO_REGULAR_LOG                                    69
 
+#define  _TXT_DIS__SCREEN3_REGULAR_LOG_TITLE                                 117
+
 #define  _BTN_SCREEN3_REFRESH_REGULAR_LOG                                     65
 
 #define  _RECORD_SCREEN3_REGULAR_LOG_CONTENT_RECORD                           66
@@ -216,6 +222,8 @@
 #define  _BTN_SCREEN3_REGULAR_LOG_BACK_TO_MENU                                68
 
 #define  _BTN_SCREEN3_REGULAR_TO_EVENT_LOG                                    70
+
+#define  _TXT_DIS__SCREEN4_CONFIG_PAGE_TITLE                                 118
 
 #define  _TXT_DIS__SCREEN4_CONFIG_VALUE_1                                     80
 

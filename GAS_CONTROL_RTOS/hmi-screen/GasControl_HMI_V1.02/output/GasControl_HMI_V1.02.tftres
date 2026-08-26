@@ -8,19 +8,19 @@
         <page name="Screen5" id="5" />
     </pages>
     <images>
-        <image id="0" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen0.png" effect_width="1024" effect_height="600" />
-        <image id="1" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen0_down.png" effect_width="1024" effect_height="600" />
-        <image id="2" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen1.png" effect_width="1024" effect_height="600" />
-        <image id="3" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Gas_Cylinder_Highlight.icon" effect_width="161" effect_height="455" />
-        <image id="4" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen1_down.png" effect_width="1024" effect_height="600" />
-        <image id="5" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen2.png" effect_width="1024" effect_height="600" />
-        <image id="6" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen2_down.png" effect_width="1024" effect_height="600" />
-        <image id="7" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen3.png" effect_width="1024" effect_height="600" />
-        <image id="8" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen3_down.png" effect_width="1024" effect_height="600" />
-        <image id="9" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen4.png" effect_width="1024" effect_height="600" />
-        <image id="10" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen4_down.png" effect_width="1024" effect_height="600" />
-        <image id="11" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen5.png" effect_width="1024" effect_height="600" />
-        <image id="12" url="c:\users\ci\desktop\gas_control\hmi_screen\gascontrol_hmi_v1.02\Images\Screen5_down.png" effect_width="1024" effect_height="600" />
+        <image id="0" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen0.png" effect_width="1024" effect_height="600" />
+        <image id="1" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen0_down.png" effect_width="1024" effect_height="600" />
+        <image id="2" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen1.png" effect_width="1024" effect_height="600" />
+        <image id="3" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Gas_Cylinder_Highlight.icon" effect_width="161" effect_height="455" />
+        <image id="4" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen1_down.png" effect_width="1024" effect_height="600" />
+        <image id="5" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen2.png" effect_width="1024" effect_height="600" />
+        <image id="6" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen2_down.png" effect_width="1024" effect_height="600" />
+        <image id="7" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen3.png" effect_width="1024" effect_height="600" />
+        <image id="8" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen3_down.png" effect_width="1024" effect_height="600" />
+        <image id="9" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen4.png" effect_width="1024" effect_height="600" />
+        <image id="10" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen4_down.png" effect_width="1024" effect_height="600" />
+        <image id="11" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen5.png" effect_width="1024" effect_height="600" />
+        <image id="12" url="c:\users\ci\desktop\gas_control\projects\gas_control_rtos\hmi-screen\gascontrol_hmi_v1.02\Images\Screen5_down.png" effect_width="1024" effect_height="600" />
     </images>
     <waves />
 </Resource>

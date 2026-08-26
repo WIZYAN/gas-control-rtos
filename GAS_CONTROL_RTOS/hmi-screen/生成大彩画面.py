@@ -31,6 +31,7 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(font_path), size=size)
 
 
+FONT_12 = load_font(12)
 FONT_14 = load_font(14)
 FONT_16 = load_font(16)
 FONT_18 = load_font(18)
@@ -217,6 +218,62 @@ def create_monitor_backgrounds(images_dir: Path) -> None:
     down_image.save(images_dir / "Screen1_down.png")
 
 
+def draw_menu_icon(draw: ImageDraw.ImageDraw, center_x: int, center_y: int,
+                   icon_kind: str, accent_color: tuple[int, int, int]) -> None:
+    """
+    函数名：draw_menu_icon。
+    说明：在主菜单圆形区域绘制实时监控、日志查询或参数设置线性图标。
+    输入：draw为画布；center_x和center_y为图标中心；icon_kind为图标类型；accent_color为强调色。
+    输出：无；图标直接绘制到传入画布。
+    """
+    light_color = (230, 246, 255)
+
+    if icon_kind == "monitor":
+        draw.arc((center_x - 43, center_y - 36, center_x + 43, center_y + 50),
+                 198, 342, fill=light_color, width=5)
+        draw.line((center_x - 34, center_y + 22, center_x - 39, center_y + 14),
+                  fill=light_color, width=4)
+        draw.line((center_x, center_y - 17, center_x, center_y - 27),
+                  fill=light_color, width=4)
+        draw.line((center_x + 34, center_y + 22, center_x + 39, center_y + 14),
+                  fill=light_color, width=4)
+        draw.line((center_x, center_y + 19, center_x + 24, center_y - 5),
+                  fill=accent_color, width=6)
+        draw.ellipse((center_x - 7, center_y + 12, center_x + 7, center_y + 26),
+                     fill=light_color)
+        draw.line((center_x - 28, center_y + 38, center_x + 28, center_y + 38),
+                  fill=light_color, width=4)
+    elif icon_kind == "log":
+        draw.rounded_rectangle((center_x - 35, center_y - 42,
+                                center_x + 26, center_y + 40),
+                               radius=6, outline=light_color, width=4)
+        draw.line((center_x - 22, center_y - 20, center_x + 13, center_y - 20),
+                  fill=light_color, width=4)
+        draw.line((center_x - 22, center_y - 2, center_x + 8, center_y - 2),
+                  fill=light_color, width=4)
+        draw.line((center_x - 22, center_y + 16, center_x - 2, center_y + 16),
+                  fill=light_color, width=4)
+        draw.ellipse((center_x + 1, center_y + 3, center_x + 43, center_y + 45),
+                     fill=(27, 86, 92), outline=accent_color, width=4)
+        draw.line((center_x + 22, center_y + 12, center_x + 22, center_y + 25),
+                  fill=light_color, width=4)
+        draw.line((center_x + 22, center_y + 25, center_x + 32, center_y + 30),
+                  fill=light_color, width=4)
+    elif icon_kind == "config":
+        slider_y = (center_y - 25, center_y, center_y + 25)
+        slider_x = (center_x - 37, center_x + 37)
+        knob_x = (center_x - 14, center_x + 17, center_x - 3)
+        for y, knob in zip(slider_y, knob_x):
+            draw.line((slider_x[0], y, slider_x[1], y), fill=light_color, width=4)
+            draw.ellipse((knob - 7, y - 7, knob + 7, y + 7),
+                         fill=accent_color, outline=light_color, width=3)
+        draw.arc((center_x + 17, center_y + 12, center_x + 43, center_y + 40),
+                 180, 360, fill=light_color, width=3)
+        draw.rounded_rectangle((center_x + 15, center_y + 25,
+                                center_x + 45, center_y + 47),
+                               radius=4, fill=(85, 59, 100), outline=light_color, width=3)
+
+
 def create_menu_backgrounds(images_dir: Path) -> None:
     """
     函数名：create_menu_backgrounds。
@@ -226,10 +283,8 @@ def create_menu_backgrounds(images_dir: Path) -> None:
     """
     image = Image.new("RGB", (WIDTH, HEIGHT), (8, 18, 31))
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, WIDTH, 104), fill=(12, 29, 48))
-    draw.rectangle((0, 101, WIDTH, 104), fill=(28, 174, 216))
-    draw_centered(draw, (0, 16, WIDTH, 58), "六瓶三阀气源控制系统", FONT_28_BOLD, (239, 248, 255))
-    draw_centered(draw, (0, 63, WIDTH, 91), "请选择需要进入的功能", FONT_16, (124, 170, 196))
+    draw.rectangle((0, 0, WIDTH, 88), fill=(12, 29, 48))
+    draw.rectangle((0, 85, WIDTH, 88), fill=(28, 174, 216))
 
     menu_cards = ((32, 154, 316, 444), (370, 154, 654, 444), (708, 154, 992, 444))
     card_colors = (((14, 38, 60), (38, 98, 131)),
@@ -240,14 +295,12 @@ def create_menu_backgrounds(images_dir: Path) -> None:
     draw.ellipse((112, 196, 236, 320), fill=(19, 95, 135), outline=(69, 214, 255), width=3)
     draw.ellipse((450, 196, 574, 320), fill=(27, 86, 92), outline=(52, 211, 153), width=3)
     draw.ellipse((788, 196, 912, 320), fill=(85, 59, 100), outline=(198, 145, 231), width=3)
-    draw_centered(draw, (32, 338, 316, 382), "实时监控", FONT_28_BOLD, (239, 248, 255))
-    draw_centered(draw, (370, 338, 654, 382), "日志查询", FONT_28_BOLD, (239, 248, 255))
-    draw_centered(draw, (708, 338, 992, 382), "参数设置", FONT_28_BOLD, (239, 248, 255))
-    draw_centered(draw, (32, 389, 316, 420), "查看压力、状态与人工维护操作", FONT_14, (142, 181, 204))
-    draw_centered(draw, (370, 389, 654, 420), "查询事件日志与半小时常规日志", FONT_14, (142, 181, 204))
-    draw_centered(draw, (708, 389, 992, 420), "密码验证后编辑并保存运行参数", FONT_14, (142, 181, 204))
-    draw.rectangle((0, 542, WIDTH, HEIGHT), fill=(10, 24, 39))
-    draw_centered(draw, (0, 548, WIDTH, 586), "系统控制逻辑持续在后台运行，切换画面不会停止压力采集和自动换瓶。", FONT_16, (163, 190, 207))
+    draw_menu_icon(draw, 174, 258, "monitor", (69, 214, 255))
+    draw_menu_icon(draw, 512, 258, "log", (52, 211, 153))
+    draw_menu_icon(draw, 850, 258, "config", (198, 145, 231))
+    draw_centered(draw, (32, 348, 316, 404), "实时监控", FONT_28_BOLD, (239, 248, 255))
+    draw_centered(draw, (370, 348, 654, 404), "日志查询", FONT_28_BOLD, (239, 248, 255))
+    draw_centered(draw, (708, 348, 992, 404), "参数设置", FONT_28_BOLD, (239, 248, 255))
     image.save(images_dir / "Screen0.png")
 
     down_image = image.copy()
@@ -255,7 +308,31 @@ def create_menu_backgrounds(images_dir: Path) -> None:
     down_draw.rounded_rectangle(menu_cards[0], radius=18, fill=(19, 83, 116), outline=(69, 214, 255), width=3)
     down_draw.rounded_rectangle(menu_cards[1], radius=18, fill=(23, 93, 91), outline=(52, 211, 153), width=3)
     down_draw.rounded_rectangle(menu_cards[2], radius=18, fill=(94, 61, 111), outline=(221, 166, 248), width=3)
+    down_draw.ellipse((112, 196, 236, 320), fill=(19, 95, 135), outline=(69, 214, 255), width=4)
+    down_draw.ellipse((450, 196, 574, 320), fill=(27, 86, 92), outline=(52, 211, 153), width=4)
+    down_draw.ellipse((788, 196, 912, 320), fill=(85, 59, 100), outline=(221, 166, 248), width=4)
+    draw_menu_icon(down_draw, 174, 258, "monitor", (69, 214, 255))
+    draw_menu_icon(down_draw, 512, 258, "log", (52, 211, 153))
+    draw_menu_icon(down_draw, 850, 258, "config", (221, 166, 248))
+    draw_centered(down_draw, (32, 348, 316, 404), "实时监控", FONT_28_BOLD, (255, 255, 255))
+    draw_centered(down_draw, (370, 348, 654, 404), "日志查询", FONT_28_BOLD, (255, 255, 255))
+    draw_centered(down_draw, (708, 348, 992, 404), "参数设置", FONT_28_BOLD, (255, 255, 255))
     down_image.save(images_dir / "Screen0_down.png")
+
+
+def create_menu_preview(project_dir: Path) -> None:
+    """
+    函数名：create_menu_preview。
+    说明：把115号标题文本的默认效果叠加到主菜单背景，生成便于核对布局的静态预览图。
+    输入：project_dir为大彩画面工程目录。
+    输出：无；在工程目录生成“主菜单实际预览.png”。
+    """
+    with Image.open(project_dir / "images" / "Screen0.png") as source_image:
+        preview = source_image.copy()
+    preview_draw = ImageDraw.Draw(preview)
+    draw_centered(preview_draw, (212, 20, 812, 62),
+                  "六瓶三阀气源控制系统", FONT_28_BOLD, (239, 248, 255))
+    preview.save(project_dir / "主菜单实际预览.png")
 
 
 def create_config_backgrounds(images_dir: Path) -> None:
@@ -269,10 +346,9 @@ def create_config_backgrounds(images_dir: Path) -> None:
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, WIDTH, 88), fill=(12, 29, 48))
     draw.rectangle((0, 85, WIDTH, 88), fill=(28, 174, 216))
-    draw.text((24, 27), "运行参数设置", font=FONT_28_BOLD, fill=(239, 248, 255))
 
     left_fields = (
-        ("切瓶压力", "MPa", "大于0"), ("待用最低压力", "MPa", "不低于自动回差"),
+        ("切瓶压力", "MPa", "大于0"), ("待用最低压力", "MPa", "不低于切瓶压力+0.1MPa"),
         ("低压警告压力", "MPa", "1.5～5.0"), ("压力合法上限", "MPa", "不低于警告值"),
         ("12V强吸合时间", "ms", "1～65535"), ("低压确认时间", "ms", "0～65535"))
     right_fields = (
@@ -284,7 +360,9 @@ def create_config_backgrounds(images_dir: Path) -> None:
         draw.rounded_rectangle((column_x, y, column_x + 464, y + 48), radius=7,
                                fill=(13, 35, 55), outline=(36, 73, 98), width=1)
         draw.text((column_x + 14, y + 7), label, font=FONT_16, fill=(223, 240, 249))
-        draw.text((column_x + 168, y + 26), hint, font=FONT_14, fill=(124, 170, 196))
+        hint_font = FONT_12 if label == "待用最低压力" else FONT_14
+        hint_x = column_x + 142 if label == "待用最低压力" else column_x + 168
+        draw.text((hint_x, y + 26), hint, font=hint_font, fill=(124, 170, 196))
         draw.rounded_rectangle((column_x + 280, y + 6, column_x + 410, y + 42), radius=5,
                                fill=(7, 24, 39), outline=(47, 135, 173), width=2)
         draw.text((column_x + 418, y + 14), unit, font=FONT_14, fill=(163, 190, 207))
@@ -364,8 +442,6 @@ def create_log_backgrounds(images_dir: Path) -> None:
     event_draw = ImageDraw.Draw(event_image)
     event_draw.rectangle((0, 0, WIDTH, 90), fill=(12, 29, 48))
     event_draw.rectangle((0, 87, WIDTH, 90), fill=(28, 174, 216))
-    event_draw.text((22, 10), "事件日志", font=FONT_28_BOLD, fill=(239, 248, 255))
-    event_draw.text((24, 49), "可上下滑动浏览全部记录", font=FONT_14, fill=(124, 170, 196))
     draw_button(event_draw, (210, 17, 365, 67), "事件日志", (19, 86, 132), (42, 154, 210))
     draw_button(event_draw, (375, 17, 530, 67), "常规日志", (39, 63, 82), (89, 125, 148))
     draw_button(event_draw, (676, 17, 835, 67), "刷新事件", (19, 86, 132), (42, 154, 210))
@@ -397,8 +473,6 @@ def create_log_backgrounds(images_dir: Path) -> None:
     regular_draw = ImageDraw.Draw(regular_image)
     regular_draw.rectangle((0, 0, WIDTH, 90), fill=(12, 29, 48))
     regular_draw.rectangle((0, 87, WIDTH, 90), fill=(28, 174, 216))
-    regular_draw.text((22, 10), "常规日志", font=FONT_28_BOLD, fill=(239, 248, 255))
-    regular_draw.text((24, 49), "可上下滑动浏览全部记录", font=FONT_14, fill=(124, 170, 196))
     draw_button(regular_draw, (210, 17, 365, 67), "事件日志", (39, 63, 82), (89, 125, 148))
     draw_button(regular_draw, (375, 17, 530, 67), "常规日志", (19, 86, 132), (42, 154, 210))
     draw_button(regular_draw, (676, 17, 835, 67), "刷新常规", (19, 86, 132), (42, 154, 210))
@@ -759,6 +833,8 @@ def create_menu_screen_file(project_dir: Path) -> None:
         "bk_image": "Images\\Screen0.png", "size_option": "0",
         "width": str(WIDTH), "height": str(HEIGHT)
     })
+    add_text_item(root, "Menu_System_Title", 115, "六瓶三阀气源控制系统", 10,
+                  "239;248;255", 212, 20, 600, 42, 1, 1)
     add_navigation_button(root, "Open_Monitor", 57, "Screen1", "Screen0_down.png",
                           32, 154, 284, 290)
     add_navigation_button(root, "Open_Log", 58, "Screen2", "Screen0_down.png",
@@ -782,6 +858,8 @@ def create_event_log_screen_file(project_dir: Path) -> None:
         "bk_image": "Images\\Screen2.png", "size_option": "0",
         "width": str(WIDTH), "height": str(HEIGHT)
     })
+    add_text_item(root, "Event_Log_Title", 116, "事件日志", 10,
+                  "239;248;255", 22, 10, 166, 38, 0, 1)
     add_button_item(root, "Refresh_Event_Log", 61, False, 676, 17, 159, 50,
                     "Screen2_down.png")
     add_event_record_item(root)
@@ -808,6 +886,8 @@ def create_regular_log_screen_file(project_dir: Path) -> None:
         "bk_image": "Images\\Screen3.png", "size_option": "0",
         "width": str(WIDTH), "height": str(HEIGHT)
     })
+    add_text_item(root, "Regular_Log_Title", 117, "常规日志", 10,
+                  "239;248;255", 22, 10, 166, 38, 0, 1)
     add_button_item(root, "Refresh_Regular_Log", 65, False, 676, 17, 159, 50,
                     "Screen3_down.png")
     add_regular_record_item(root)
@@ -834,6 +914,8 @@ def create_config_screen_file(project_dir: Path) -> None:
         "bk_image": "Images\\Screen4.png", "size_option": "0",
         "width": str(WIDTH), "height": str(HEIGHT)
     })
+    add_text_item(root, "Config_Page_Title", 118, "运行参数设置", 10,
+                  "239;248;255", 24, 20, 280, 44, 0, 1)
     defaults = ("1.200", "1.500", "2.000", "25.000", "100", "1000",
                 "3", "500", "500", "5.000", "60")
     for index, value in enumerate(defaults):
@@ -974,6 +1056,7 @@ def main() -> None:
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
     create_menu_backgrounds(PROJECT_DIR / "images")
+    create_menu_preview(PROJECT_DIR)
     create_monitor_backgrounds(PROJECT_DIR / "images")
     create_monitor_highlight_icon(PROJECT_DIR / "images")
     create_log_backgrounds(PROJECT_DIR / "images")
