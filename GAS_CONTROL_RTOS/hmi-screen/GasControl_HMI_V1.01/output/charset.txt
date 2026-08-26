@@ -1,0 +1,2 @@
+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz`1234567890-=[];',./~!@#$%^&*()_+{}:"<>? 年月日时分秒星期一二三四五六日
+初始化关闭请修改参数自动运行
