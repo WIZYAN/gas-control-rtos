@@ -7,6 +7,7 @@
 #define A_GAS_CONTROL_COMM_LEGACY_ADDRESS (0x0020U) // V2工程使用的旧模式地址，仅用于启动迁移。
 #define A_GAS_CONTROL_COMM_RECORD_SIZE    (8U)      // 模式记录固定长度，包含标识、版本、模式和CRC16。
 #define A_GAS_CONTROL_COMM_RECORD_VERSION (1U)      // 外部通讯模式记录格式版本。
+#define A_GAS_CONTROL_RECOVERY_SAMPLES    (3U)      // 低压瓶恢复到待测试前需要取得的独立合格压力样本数。
 
 static bool A_GasControl_SaveCommMode(A_Storage_Context *storage,
                                       gas_external_comm_mode_t mode);
@@ -206,6 +207,63 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
 }
 
 /*
+ * 函数名：F_GasControl_EnterLowReplace。
+ * 说明：统一把指定气瓶转入低压待换，清除原测试合格结论并复位压力恢复确认计数。
+ * 输入：context为气源控制应用上下文；index为从0开始的气瓶索引。
+ * 输出：无；参数有效时更新气瓶状态并请求串口屏把对应测试通过按钮恢复为未通过。
+ */
+static void F_GasControl_EnterLowReplace(A_Gas_Control_Context *context, uint8_t index)
+{
+    Gas_Cylinder *cylinder;
+    bool state_changed;
+    bool qualification_changed;
+
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    {
+        return;
+    }
+
+    cylinder = &context->system.cylinder[index];
+    state_changed = (cylinder->state != GAS_CYL_LOW_REPLACE);
+    qualification_changed = cylinder->qualification_passed;
+    cylinder->state = GAS_CYL_LOW_REPLACE;
+    cylinder->qualification_passed = false;
+    cylinder->recovery_sample_count = 0U;
+    cylinder->recovery_sample_timestamp_ms = cylinder->pressure_timestamp_ms;
+    if (state_changed || qualification_changed)
+    {
+        A_Hmi_RequestQualificationSync(&context->hmi, index);
+    }
+    // 只有首次进入或原标志确实为通过时才请求优先回写，持续低压不会重复占用串口带宽。
+}
+
+/*
+ * 函数名：F_GasControl_RecoveryPressureConfirmed。
+ * 说明：按压力样本时间戳累计独立合格样本，确认低压待换气瓶的压力已经稳定恢复。
+ * 输入：cylinder为气瓶状态输入输出指针。
+ * 输出：累计达到固定的三个独立合格样本时返回true，否则返回false。
+ */
+static bool F_GasControl_RecoveryPressureConfirmed(Gas_Cylinder *cylinder)
+{
+    if (cylinder == NULL)
+    {
+        return false;
+    }
+
+    if ((cylinder->recovery_sample_count == 0U) ||
+        (cylinder->recovery_sample_timestamp_ms != cylinder->pressure_timestamp_ms))
+    {
+        cylinder->recovery_sample_timestamp_ms = cylinder->pressure_timestamp_ms;
+        if (cylinder->recovery_sample_count < A_GAS_CONTROL_RECOVERY_SAMPLES)
+        {
+            cylinder->recovery_sample_count++;
+        }
+        // 只在传感器产生新时间戳时累计，5 ms控制任务不得重复计算同一份压力数据。
+    }
+    return (cylinder->recovery_sample_count >= A_GAS_CONTROL_RECOVERY_SAMPLES);
+}
+
+/*
  * 函数名：A_GasControl_FindNextReady。
  * 说明：从指定位置之后按 1→2→3→4→5→6→1 顺序查找可投入工作的待用瓶。
  * 输入：system 为只读系统状态；config 为运行参数；start_index 为查找起点；now_ms 为当前时间。
@@ -237,9 +295,9 @@ static uint8_t A_GasControl_FindNextReady(const Gas_System *system,
 
 /*
  * 函数名：A_GasControl_UpdateCylinderStates。
- * 说明：根据有效压力、测试合格标志、当前工作瓶和停用标志维护六种气瓶业务状态。
+ * 说明：根据有效压力、测试合格标志、当前工作瓶和停用标志维护七种气瓶业务状态。
  * 输入：context 为气源控制应用上下文；now_ms 为当前时间。
- * 输出：无；更新六只气瓶的初始化、待用、使用、低压待换和低压警告状态。
+ * 输出：无；更新六只气瓶的初始化、待测试、待用、使用、低压待换和低压警告状态。
  */
 static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, uint32_t now_ms)
 {
@@ -288,7 +346,16 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
         {
             if (cylinder->pressure_mpa < context->config.ready_min_pressure_mpa)
             {
-                cylinder->state = GAS_CYL_LOW_REPLACE;
+                F_GasControl_EnterLowReplace(context, index);
+            }
+            else if (cylinder->state == GAS_CYL_LOW_REPLACE)
+            {
+                if (F_GasControl_RecoveryPressureConfirmed(cylinder))
+                {
+                    cylinder->state = GAS_CYL_WAIT_TEST;
+                    cylinder->recovery_sample_count = 0U;
+                    // 低压瓶只有连续取得三个独立合格样本后才表示新瓶压力恢复，随后等待人工测试。
+                }
             }
             else
             {
@@ -296,11 +363,12 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
                 {
                     cylinder->state = GAS_CYL_READY;
                 }
-                else if (cylinder->state != GAS_CYL_LOW_REPLACE)
+                else
                 {
-                    cylinder->state = GAS_CYL_INIT;
+                    cylinder->state = GAS_CYL_WAIT_TEST;
                 }
-                // 低压待换即使压力已经恢复，也保持原状态等待工作人员确认测试通过。
+                cylinder->recovery_sample_count = 0U;
+                // 压力合格但没有人工测试结论时统一显示待测试，不再混用初始化或低压待换状态。
             }
         }
         else
@@ -561,7 +629,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             {
                 if (system->cylinder[system->switch_old_index].state != GAS_CYL_DISABLED)
                 {
-                    system->cylinder[system->switch_old_index].state = GAS_CYL_LOW_REPLACE;
+                    F_GasControl_EnterLowReplace(context, system->switch_old_index);
                 }
                 system->cylinder[system->switch_new_index].state = GAS_CYL_ACTIVE;
                 system->active_index = system->switch_new_index;
@@ -632,6 +700,8 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     {
         index = (uint8_t) (button_id - A_HMI_QUALIFIED_BUTTON_BASE);
         success = A_GasControl_SetQualificationPassed(context, index, value != 0U);
+        A_Hmi_RequestQualificationSync(&context->hmi, index);
+        // 无论请求是否被状态门槛接受，都优先把按钮校正为MCU中的最终测试结论。
     }
     else if ((button_id == A_HMI_EVENT_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
@@ -1349,7 +1419,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
 
 /*
  * 函数名：A_GasControl_StartExhaust。
- * 说明：在自动模式的初始化、待用或低压待换状态打开指定排气阀，并设置独立的自动关闭截止时间；允许测试阀同时开启。
+ * 说明：在自动模式的初始化、待测试、待用或低压待换状态打开指定排气阀，并设置独立的自动关闭截止时间；允许测试阀同时开启。
  * 输入：context 为应用上下文；index 为从 0 开始的气瓶索引。
  * 输出：状态、运行模式和供气互锁允许且开阀成功时返回 true，否则返回 false。
  */
@@ -1363,6 +1433,7 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
     }
     if ((context->system.mode != GAS_MODE_AUTO) ||
         ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
+         (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
          (context->system.cylinder[index].state != GAS_CYL_READY) &&
          (context->system.cylinder[index].state != GAS_CYL_LOW_REPLACE)))
     {
@@ -1400,6 +1471,7 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
     }
     if (on && ((context->system.mode != GAS_MODE_AUTO) ||
         ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
+         (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
          (context->system.cylinder[index].state != GAS_CYL_READY) &&
          (context->system.cylinder[index].state != GAS_CYL_LOW_REPLACE))))
     {
@@ -1464,6 +1536,10 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
         }
 
         cylinder->state = GAS_CYL_DISABLED;
+        cylinder->qualification_passed = false;
+        cylinder->recovery_sample_count = 0U;
+        A_Hmi_RequestQualificationSync(&context->hmi, index);
+        // 停用通常用于维护或换瓶，因此同时撤销原测试结论，重新启用后必须再次测试。
         if ((system->active_index == index) ||
             (system->switch_old_index == index) ||
             (system->switch_new_index == index))
@@ -1489,7 +1565,7 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
 
 /*
  * 函数名：A_GasControl_SetQualificationPassed。
- * 说明：设置指定气瓶由人员确认的测试合格标志；非工作瓶只有压力合格且本标志为true时才能进入待用。
+ * 说明：设置指定气瓶由人员确认的测试合格标志；只有待测试且压力合格时允许确认通过，待用状态允许撤销。
  * 输入：context 为应用上下文；index 为气瓶索引；passed 为目标测试结果，true表示通过、false表示不通过。
  * 输出：参数有效并完成设置时返回 true，否则返回 false。
  */
@@ -1497,18 +1573,39 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
                                          uint8_t index,
                                          bool passed)
 {
+    Gas_Cylinder *cylinder;
+    uint32_t now_ms;
+
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
         return false;
     }
 
-    context->system.cylinder[index].qualification_passed = passed;
+    cylinder = &context->system.cylinder[index];
+    if (passed)
+    {
+        now_ms = F_GasRuntime_Millis(&context->runtime_service);
+        if ((cylinder->state != GAS_CYL_WAIT_TEST) ||
+            !A_GasControl_PressureIsFresh(cylinder, &context->config, now_ms) ||
+            (cylinder->pressure_mpa < context->config.ready_min_pressure_mpa))
+        {
+            return false;
+        }
+    }
+    else if (((cylinder->state == GAS_CYL_ACTIVE) ||
+              (cylinder->state == GAS_CYL_LOW_WARNING)) &&
+             cylinder->qualification_passed)
+    {
+        return false;
+    }
+
+    cylinder->qualification_passed = passed;
     return true;
 }
 
 /*
  * 函数名：A_GasControl_Task。
- * 说明：周期执行压力轮询、六状态判断、三阀计时、自动切瓶、日志、串口屏和当前外部通讯。
+ * 说明：周期执行压力轮询、七状态判断、三阀计时、自动切瓶、日志、串口屏和当前外部通讯。
  * 输入：context 为气源控制应用上下文输入输出指针。
  * 输出：无；通过 context 输出本周期处理后的系统状态。
  */

@@ -759,8 +759,10 @@ static void Test_DefaultCanProtocol(void)
     assert(F_CAN_LOCAL_ADDRESS == 1U);
     assert(F_CAN_CYCLE_TARGET_TYPE == 0U);
     assert(F_CAN_CYCLE_TARGET_ADDRESS == 1U);
+    assert(GAS_DEFAULT_VALVE_PULL_IN_TIME_MS == 200U);
 
     A_GasControl_Init(&context);
+    assert(context.config.valve_pull_in_time_ms == 200U);
     assert(context.external_comm_mode == GAS_EXTERNAL_COMM_CAN);
     assert(A_Can_IsReady(&context.external_can));
     context.system.total_pressure.pressure_mpa = 3.25F;
@@ -884,6 +886,9 @@ static void Test_GasLog(void)
     {
         context.system.cylinder[index].pressure_mpa = 10.0F + (float) index;
         context.system.cylinder[index].pressure_quality = GAS_PRESSURE_VALID;
+        context.system.cylinder[index].state = GAS_CYL_WAIT_TEST;
+        context.log_service.previous_state[index] = GAS_CYL_WAIT_TEST;
+        // 本用例只验证日志格式，先把状态快照对齐，避免状态机新增的初始化→待测试事件混入计数。
     }
     context.system.total_pressure.pressure_mpa = 0.625F;
     context.system.total_pressure.pressure_quality = GAS_PRESSURE_VALID;
@@ -942,7 +947,7 @@ static void Test_GasLog(void)
     assert(A_GasLog_ReadRecord(&context.log_service, 2U, record));
     assert((record[0] == A_GAS_LOG_TYPE_EVENT) &&
            (record[12] == 1U) &&
-           (record[13] == GAS_CYL_INIT) &&
+           (record[13] == GAS_CYL_WAIT_TEST) &&
            (record[14] == GAS_CYL_READY));
 
     assert(A_GasLog_Init(&recovered, &context.storage_service, &context.system));
@@ -1004,7 +1009,7 @@ static void Test_TotalPressurePoll(void)
 
 /*
  * 函数名：Test_QualificationGate。
- * 说明：验证测试不通过时不能进入待用，测试通过开关以及初始化状态人工测试阀操作均有效。
+ * 说明：验证待测试门槛、低压待换自动撤销合格结论、三样本恢复确认及人工阀门权限。
  * 输入：无。
  * 输出：无。
  */
@@ -1018,11 +1023,12 @@ static void Test_QualificationGate(void)
     context.system.mode = GAS_MODE_AUTO;
     Test_SeedPressure(&context, 0U, 5.0F);
     A_GasControl_Task(&context);
-    assert(context.system.cylinder[0].state == GAS_CYL_INIT);
+    assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
     assert(!context.system.cylinder[0].qualification_passed);
     assert(A_GasControl_SetTestValve(&context, 0U, true));
     assert(A_GasControl_SetTestValve(&context, 0U, false));
-    A_GasControl_Stop(&context);
+    context.system.mode = GAS_MODE_STOPPED;
+    // 本用例只验证单瓶状态门槛，停止自动选瓶，避免刚进入待用便被选择为使用瓶。
 
     assert(A_GasControl_SetQualificationPassed(&context, 0U, true));
     A_GasControl_Task(&context);
@@ -1030,14 +1036,30 @@ static void Test_QualificationGate(void)
 
     assert(A_GasControl_SetQualificationPassed(&context, 0U, false));
     A_GasControl_Task(&context);
-    assert(context.system.cylinder[0].state == GAS_CYL_INIT);
+    assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
+
+    assert(A_GasControl_SetQualificationPassed(&context, 0U, true));
+    A_GasControl_Task(&context);
+    assert(context.system.cylinder[0].state == GAS_CYL_READY);
 
     Test_SeedPressure(&context, 0U, 1.0F);
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_LOW_REPLACE);
+    assert(!context.system.cylinder[0].qualification_passed);
+    assert(!A_GasControl_SetQualificationPassed(&context, 0U, true));
+
+    context.runtime_service.platform.millis++;
     Test_SeedPressure(&context, 0U, 5.0F);
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_LOW_REPLACE);
+    context.runtime_service.platform.millis++;
+    Test_SeedPressure(&context, 0U, 5.0F);
+    A_GasControl_Task(&context);
+    assert(context.system.cylinder[0].state == GAS_CYL_LOW_REPLACE);
+    context.runtime_service.platform.millis++;
+    Test_SeedPressure(&context, 0U, 5.0F);
+    A_GasControl_Task(&context);
+    assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
     assert(A_GasControl_SetQualificationPassed(&context, 0U, true));
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_READY);
@@ -1072,6 +1094,9 @@ static void Test_StateAndSwitch(void)
     A_GasControl_Task(&context);
     assert(context.system.active_index == 2U);
     assert(context.system.cylinder[2].supply_cmd);
+    assert((context.system.cylinder[1].state == GAS_CYL_LOW_REPLACE) &&
+           !context.system.cylinder[1].qualification_passed);
+    // 自动切瓶完成后，原工作瓶必须进入低压待换并撤销上一轮测试通过结论。
 }
 
 /*
@@ -1099,6 +1124,7 @@ static void Test_ManualAndDisabled(void)
     assert(!A_GasControl_StartExhaust(&context, context.system.active_index));
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, true));
     assert(context.system.cylinder[1].state == GAS_CYL_DISABLED);
+    assert(!context.system.cylinder[1].qualification_passed);
     A_GasControl_Task(&context);
     assert(context.system.active_index == 2U);
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, false));
@@ -1126,6 +1152,7 @@ static void Test_Hmi(void)
     const uint8_t auto_frame[] = {0xEEU,0xB1U,0x11U,0U,1U,0U,99U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U};
+    const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U};
     const uint8_t valve_on_text[] = {0xBFU,0xAAU,0xC6U,0xF4U};
     const uint8_t valve_off_text[] = {0xB9U,0xD8U,0xB1U,0xD5U};
     const char sample_record[] = "2026-08-22 10:00:00;TEST;1;OK;";
@@ -1144,7 +1171,9 @@ static void Test_Hmi(void)
     A_GasControl_Task(&gas);
     assert(gas.system.cylinder[0].exhaust_cmd);
 
+    gas.system.cylinder[0].state = GAS_CYL_WAIT_TEST;
     gas.system.cylinder[0].qualification_passed = false;
+    Test_SeedPressure(&gas, 0U, 5.0F);
     for (index = 0U; index < sizeof(qualification_on_frame); ++index)
     {
         gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = qualification_on_frame[index];
@@ -1225,7 +1254,7 @@ static void Test_Hmi(void)
     gas.system.total_pressure.pressure_quality = GAS_PRESSURE_VALID;
     assert(A_Hmi_Init(&display));
     assert(A_HMI_RTC_CONTROL_ID == 50U);
-    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 46U));
+    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 52U));
     A_Hmi_Task(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx_length == 6U) &&
            (g_test_state.hmi_tx[0] == 0xEEU) &&
@@ -1255,6 +1284,30 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[7] == 0U));
     // 首次刷新必须先同步模式文本，再把MCU自动模式回写为开关弹起状态。
 
+    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 2U);
+    assert((g_test_state.hmi_tx_length == 12U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    display.qualification_refresh_pending_bits = 0U;
+    // 首次建立快照后优先回写51号按钮；其余五路在本测试中清空队列后单独验证周期刷新。
+
+    gas.system.cylinder[0].qualification_passed = true;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 1U));
+    gas.system.cylinder[0].qualification_passed = false;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    display.refresh_slot = 44U;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    // 标志正反变化触发优先回写，普通刷新槽也会周期重申MCU实际状态。
+
     gas.system.cylinder[0].state = GAS_CYL_LOW_WARNING;
     display.refresh_slot = 12U;
     display.next_refresh_ms = 0U;
@@ -1272,6 +1325,14 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[2] == 0x23U) &&
            (g_test_state.hmi_tx[6] == A_HMI_HIGHLIGHT_ICON_BASE) &&
            (g_test_state.hmi_tx[7] == A_HMI_HIGHLIGHT_FRAME_WARNING));
+
+    gas.system.cylinder[0].state = GAS_CYL_WAIT_TEST;
+    display.refresh_slot = 12U;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx_length == 17U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_STATE_TEXT_BASE));
+    assert(memcmp(&g_test_state.hmi_tx[7], wait_test_text, sizeof(wait_test_text)) == 0);
 
     gas.system.cylinder[0].state = GAS_CYL_ACTIVE;
     display.refresh_slot = 38U;
@@ -1293,7 +1354,7 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[7] == A_HMI_HIGHLIGHT_FRAME_WARNING));
 
     gas.system.mode = GAS_MODE_STOPPED;
-    display.refresh_slot = 44U;
+    display.refresh_slot = 50U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_TEXT_ID) &&
@@ -1779,7 +1840,7 @@ static void Test_HmiLogQuery(void)
 
 /*
  * 函数名：main。
- * 说明：执行三阀六状态、日志、外部通讯、七路压力、串口屏RTC与卡片高亮和自动切瓶主机单元测试。
+ * 说明：执行三阀七状态、日志、外部通讯、七路压力、串口屏RTC与卡片高亮和自动切瓶主机单元测试。
  * 输入：无。
  * 输出：全部测试通过时返回 0。
  */
@@ -1796,6 +1857,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("全部气源控制、CAN/RS485双外部通讯、EEPROM日志与13项参数、密码页11项映射及隐藏参数补齐、逐项修改自动确认、运行中应用、整机模式开关双向同步、65.535秒排气上限、测试合格门槛、总压力、串口屏时间与状态高亮、事件与常规日志全量流式滑动查询测试通过。");
+    puts("V1.03三阀七状态、待测试门槛、低压自动撤销测试结论、51至56号按钮双向同步、CAN/RS485双外部通讯、EEPROM日志、参数设置、总压力、串口屏时间与状态高亮、事件与常规日志全量流式滑动查询测试通过。");
     return 0;
 }

@@ -146,6 +146,10 @@ static size_t A_Hmi_FormatCylinderState(gas_cylinder_state_t state,
             state_text = "\xCD\xA3\xD3\xC3"; // 停用。
             break;
 
+        case GAS_CYL_WAIT_TEST:
+            state_text = "\xB4\xFD\xB2\xE2\xCA\xD4"; // 待测试。
+            break;
+
         default:
             state_text = "\xCE\xB4\xD6\xAA"; // 未知，用于防止异常枚举值显示成正常状态。
             break;
@@ -279,6 +283,22 @@ bool A_Hmi_TakeButtonEvent(A_Hmi_Context *context, uint16_t *button_id, uint8_t 
 }
 
 /*
+ * 函数名：A_Hmi_RequestQualificationSync。
+ * 说明：请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关。
+ * 输入：context为HMI上下文；index为从0开始的气瓶索引。
+ * 输出：无；参数有效时设置待同步位，实际发送由A_Hmi_Refresh分时完成。
+ */
+void A_Hmi_RequestQualificationSync(A_Hmi_Context *context, uint8_t index)
+{
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    {
+        return;
+    }
+
+    context->qualification_refresh_pending_bits |= (uint8_t) (1U << index);
+}
+
+/*
  * 函数名：A_Hmi_TakeTextEvent。
  * 说明：取出一条串口屏文本输入控件上传的ASCII参数文本。
  * 输入：context为HMI上下文；page_id和control_id为控件标识输出；text为输出缓存；capacity为容量。
@@ -319,7 +339,7 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
 
 /*
  * 函数名：A_Hmi_Refresh。
- * 说明：分时刷新压力、气瓶状态、十八路阀位、卡片高亮、系统模式文本及模式开关。
+ * 说明：分时刷新压力、气瓶状态、十八路阀位、测试通过开关、卡片高亮及系统模式。
  * 输入：context 为 HMI 上下文；system 为只读气源系统；now_ms 为当前毫秒计数。
  * 输出：无；每次最多启动一帧异步发送。
  */
@@ -328,6 +348,8 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     char text[16];
     uint16_t control_id;
     uint8_t index;
+    uint8_t qualification_bits = 0U;
+    uint8_t changed_bits;
     size_t length = 0U;
     bool out_of_range;
     bool sent = false;
@@ -336,6 +358,27 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         return;
     }
+
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        if (system->cylinder[index].qualification_passed)
+        {
+            qualification_bits |= (uint8_t) (1U << index);
+        }
+    }
+    if (!context->qualification_refresh_initialized)
+    {
+        context->qualification_refresh_value_bits = qualification_bits;
+        context->qualification_refresh_pending_bits = (uint8_t) ((1U << GAS_CYLINDER_COUNT) - 1U);
+        context->qualification_refresh_initialized = true;
+    }
+    else
+    {
+        changed_bits = (uint8_t) (context->qualification_refresh_value_bits ^ qualification_bits);
+        context->qualification_refresh_value_bits = qualification_bits;
+        context->qualification_refresh_pending_bits |= changed_bits;
+    }
+    // MCU标志发生变化时建立优先回写队列，串口屏本地按钮状态不作为业务判断依据。
 
     if (!context->mode_refresh_initialized ||
         (context->mode_refresh_value != system->mode))
@@ -386,7 +429,29 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         return;
     }
 
-    // 46个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
+    if (context->qualification_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->qualification_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
+                                     (qualification_bits & (uint8_t) (1U << index)) != 0U);
+        if (sent)
+        {
+            context->qualification_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 每次只校正一个测试通过开关，自动清零或非法点击后优先于普通监控数据恢复画面。
+        return;
+    }
+
+    // 52个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
     if (context->refresh_slot < 12U)
     {
         index = (uint8_t) (context->refresh_slot / 2U);
@@ -469,9 +534,18 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                                    A_HMI_MONITOR_PAGE_ID,
                                    control_id,
                                    A_Hmi_GetHighlightFrame(system->cylinder[index].state));
-        // 高亮层只在使用和低压警告状态显示，其余四种状态统一切回透明普通帧。
+        // 高亮层只在使用和低压警告状态显示，其余五种状态统一切回透明普通帧。
     }
-    else if (context->refresh_slot == 44U)
+    else if (context->refresh_slot < 50U)
+    {
+        index = (uint8_t) (context->refresh_slot - 44U);
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
+                                     system->cylinder[index].qualification_passed);
+        // 周期回写用于串口屏重启、页面切换或偶发丢帧后的最终一致性校正。
+    }
+    else if (context->refresh_slot == 50U)
     {
         control_id = A_HMI_SYSTEM_MODE_TEXT_ID;
         length = A_Hmi_FormatSystemMode(system->mode, text, sizeof(text));

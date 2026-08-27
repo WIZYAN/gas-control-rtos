@@ -30,7 +30,7 @@
 #define A_HMI_SYSTEM_MODE_BUTTON_ID    (99U)  // 实时监控页整机模式开关ID：0自动运行，1安全停止。
 #define A_HMI_SYSTEM_TITLE_TEXT_ID     (114U) // 实时监控页“六瓶三阀气源控制系统”静态文本控件ID。
 #define A_HMI_REFRESH_GAP_MS          (20UL) // 相邻两个显示控件更新帧的最小间隔。
-#define A_HMI_REFRESH_SLOT_COUNT      (46U)  // 压力双层、状态阀位、高亮、模式文本和模式开关共46个刷新槽。
+#define A_HMI_REFRESH_SLOT_COUNT      (52U)  // 压力双层、状态阀位、高亮、六路测试通过开关及系统模式共52个刷新槽。
 #define A_HMI_RTC_READ_INTERVAL_MS    (1000UL) // 向串口屏读取一次全局 RTC 时间的周期，单位 ms。
 #define A_HMI_RTC_STALE_TIME_MS       (5000UL) // 连续未收到有效 RTC 响应后判定系统时间失效的时限，单位 ms。
 
@@ -43,10 +43,13 @@ typedef struct
     gas_mode_t mode_refresh_value; // 最近一次请求同步到串口屏的MCU实际运行模式。
     uint8_t refresh_slot;          // 下一个待刷新的显示控件槽号。
     uint8_t mode_refresh_phase;    // 模式优先同步阶段：0刷新文本，1回写开关状态。
+    uint8_t qualification_refresh_value_bits;   // 最近一次观察到的六路MCU测试通过标志位图，bit0～bit5对应1～6号瓶。
+    uint8_t qualification_refresh_pending_bits; // 需要优先回写到51～56号按钮的位图。
     uint32_t next_refresh_ms;      // 下一个显示帧允许发送的时间。
     uint32_t next_rtc_read_ms;     // 下一次允许发送 RTC 读取命令的时间。
     bool mode_refresh_pending;     // MCU模式变化后是否需要优先刷新文本和开关。
     bool mode_refresh_initialized; // 是否已建立过模式同步快照。
+    bool qualification_refresh_initialized; // 是否已建立过六路测试通过标志同步快照。
     bool ready;                    // 串口屏 SCI9 和协议层是否初始化成功。
 } A_Hmi_Context;
 
@@ -73,6 +76,14 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms);
  * 输出：存在待处理事件时返回 true，否则返回 false。
  */
 bool A_Hmi_TakeButtonEvent(A_Hmi_Context *context, uint16_t *button_id, uint8_t *value);
+
+/*
+ * 函数名：A_Hmi_RequestQualificationSync。
+ * 说明：请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关。
+ * 输入：context为HMI上下文；index为从0开始的气瓶索引。
+ * 输出：无；参数有效时设置待同步位，实际发送由A_Hmi_Refresh分时完成。
+ */
+void A_Hmi_RequestQualificationSync(A_Hmi_Context *context, uint8_t index);
 
 /*
  * 函数名：A_Hmi_TakeTextEvent。

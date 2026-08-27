@@ -40,6 +40,7 @@ static bool F_ValveControl_ManualOpenAllowed(const Gas_System *system, uint8_t i
 
     state = system->cylinder[index].state;
     return ((state == GAS_CYL_INIT) ||
+            (state == GAS_CYL_WAIT_TEST) ||
             (state == GAS_CYL_READY) ||
             (state == GAS_CYL_LOW_REPLACE));
 }
@@ -157,7 +158,7 @@ bool F_ValveControl_SetSupply(H_Gas_Platform_Context *platform,
 
 /*
  * 函数名：F_ValveControl_SetExhaust。
- * 说明：仅在自动模式的初始化、待用或低压待换状态下设置排气阀，并保持与供气阀互锁；允许测试阀同时开启。
+ * 说明：仅在自动模式的初始化、待测试、待用或低压待换状态下设置排气阀，并保持与供气阀互锁；允许测试阀同时开启。
  * 输入：platform 为硬件上下文；system 为系统状态；config 为运行参数；index 为气瓶索引；on 为目标开关状态。
  * 输出：阀门命令成功执行时返回 true；参数、互锁或硬件条件不满足时返回 false。
  */
@@ -193,7 +194,7 @@ bool F_ValveControl_SetExhaust(H_Gas_Platform_Context *platform,
 
 /*
  * 函数名：F_ValveControl_SetTest。
- * 说明：仅在自动模式的初始化、待用或低压待换状态下设置测试阀，并保持与供气阀互锁；允许排气阀同时开启。
+ * 说明：仅在自动模式的初始化、待测试、待用或低压待换状态下设置测试阀，并保持与供气阀互锁；允许排气阀同时开启。
  * 输入：platform 为硬件上下文；system 为系统状态；config 为运行参数；index 为气瓶索引；on 为目标状态。
  * 输出：阀门命令成功执行时返回 true；参数、互锁或硬件条件不满足时返回 false。
  */

@@ -15,7 +15,7 @@
 // EEPROM 中没有有效记录时使用的运行参数默认值；外部 Modbus 可在安全停止状态下修改并持久化。
 #define GAS_DEFAULT_SWITCH_PRESSURE_MPA       (1.2F)    // 工作瓶触发低压切换的默认压力，单位 MPa。
 #define GAS_DEFAULT_SWITCH_RELEASE_MPA        (1.3F)    // 低压确认退出回差的默认压力，单位 MPa。
-#define GAS_DEFAULT_VALVE_PULL_IN_TIME_MS     (100UL)   // 电磁阀默认 12 V 强吸合时间，单位 ms。
+#define GAS_DEFAULT_VALVE_PULL_IN_TIME_MS     (200UL)   // 电磁阀默认12 V强吸合时间，单位ms。
 #define GAS_DEFAULT_READY_MIN_PRESSURE_MPA    (1.5F)    // 备用瓶允许投入使用的默认最低压力，单位 MPa。
 #define GAS_DEFAULT_PRESSURE_MAX_MPA          (25.0F)   // 压力数据合法性检查的默认上限，单位 MPa。
 #define GAS_DEFAULT_LOW_CONFIRM_TIME_MS       (1000UL)  // 工作瓶低压持续确认的默认时间，单位 ms。
@@ -156,7 +156,7 @@ typedef enum
     GAS_EXTERNAL_LOG_BUSY = 6             // 上一条日志请求尚未完成。
 } gas_external_log_result_t;
 
-// 气瓶业务状态，枚举数值 1～6 与串口屏显示约定保持一致。
+// 气瓶业务状态；V1.03在末尾追加状态7，保留原有1～6的CAN、Modbus和EEPROM编码兼容性。
 typedef enum
 {
     GAS_CYL_INIT = 1,       // 初始化：等待有效压力和人员测试合格确认并执行状态判断。
@@ -164,7 +164,8 @@ typedef enum
     GAS_CYL_ACTIVE = 3,     // 使用：该路供气阀开启并作为当前工作瓶。
     GAS_CYL_LOW_REPLACE = 4,// 低压待换：压力不足，禁止自动选用并持续等待压力恢复。
     GAS_CYL_LOW_WARNING = 5,// 低压警告：工作瓶低于警告阈值但尚未完成自动切换。
-    GAS_CYL_DISABLED = 6    // 停用：维护人员停用该路，三个电磁阀必须全部关闭。
+    GAS_CYL_DISABLED = 6,   // 停用：维护人员停用该路，三个电磁阀必须全部关闭。
+    GAS_CYL_WAIT_TEST = 7   // 待测试：压力已经恢复合格，等待工作人员确认测试通过后进入待用。
 } gas_cylinder_state_t;
 
 // 压力数据质量，用于区分有效数据、陈旧数据和物理量程异常。
@@ -224,7 +225,9 @@ typedef struct
     bool supply_cmd;                          // 供气阀的软件命令状态，true 表示开阀。
     bool exhaust_cmd;                         // 排气阀的软件命令状态，true 表示开阀。
     bool test_cmd;                            // 测试阀的软件命令状态，true 表示开阀。
-    bool qualification_passed;                // 人员确认的气瓶测试合格标志，true 才允许从初始化或低压待换进入待用。
+    bool qualification_passed;                // 人员确认的气瓶测试合格标志，true才允许从待测试进入待用。
+    uint8_t recovery_sample_count;             // 低压待换后累计的独立合格压力样本数，用于确认新瓶压力已经稳定恢复。
+    uint32_t recovery_sample_timestamp_ms;     // 最近一次计入恢复确认的压力样本时间戳，避免同一样本被任务循环重复累计。
     uint32_t exhaust_deadline_ms;             // 人工排气阀按照当前运行参数自动关闭的截止时间。
     uint32_t test_deadline_ms;                // 测试阀按照当前运行参数自动关闭的截止时间。
     gas_cylinder_state_t state;               // 当前气瓶业务状态。

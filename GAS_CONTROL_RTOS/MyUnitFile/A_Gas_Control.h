@@ -103,7 +103,7 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
 
 /*
  * 函数名：A_GasControl_SetQualificationPassed。
- * 说明：设置指定气瓶由人员确认的测试合格标志，作为初始化或低压待换进入待用的必要条件。
+ * 说明：设置指定气瓶由人员确认的测试合格标志，作为待测试进入待用的必要条件。
  * 输入：context 为应用上下文；index 为从0开始的气瓶索引；passed 为测试是否通过。
  * 输出：参数有效并完成设置时返回 true，否则返回 false。
  */

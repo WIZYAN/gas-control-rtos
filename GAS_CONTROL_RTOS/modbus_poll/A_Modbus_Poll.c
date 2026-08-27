@@ -60,7 +60,7 @@ bool A_ModbusPoll_DecodePressure(const uint8_t *data,
 
 /*
  * 函数名：A_ModbusPoll_RecordFailure。
- * 说明：记录一次气瓶压力或总压力传感器通信失败，并在达到门限时设置报警；气瓶六状态由气源业务层统一维护。
+ * 说明：记录一次气瓶压力或总压力传感器通信失败，并在达到门限时设置报警；气瓶七状态由气源业务层统一维护。
  * 输入：system 为系统状态；index 为发生失败的压力传感器索引，0～5对应气瓶，6对应总压力。
  * 输出：无；更新对应传感器的失败计数、压力质量和报警，必要时更新非工作瓶状态。
  */
@@ -217,7 +217,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
                 cylinder->pressure_quality = pressure_quality;
                 cylinder->pressure_timestamp_ms = now_ms;
                 cylinder->comm_fail_count = 0U;
-                // 只更新压力数据和质量，初始化、待用、低压等待等六状态由 A_Gas_Control 统一判断。
+                // 只更新压力数据和质量，初始化、待测试、待用等七状态由A_Gas_Control统一判断。
             }
         }
         else

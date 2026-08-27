@@ -170,7 +170,7 @@ static bool A_HmiLog_AppendDateTime(char *row,
 /*
  * 函数名：A_HmiLog_AppendState。
  * 说明：把日志中的气瓶状态编码转换为固定GBK中文状态名称。
- * 输入：row、length和capacity描述目标缓冲；state为1～6状态编码。
+ * 输入：row、length和capacity描述目标缓冲；state为1～7状态编码。
  * 输出：状态文字追加成功时返回true，否则返回false。
  */
 static bool A_HmiLog_AppendState(char *row,
@@ -211,6 +211,11 @@ static bool A_HmiLog_AppendState(char *row,
         case GAS_CYL_DISABLED:
             text = "\xCD\xA3\xD3\xC3"; // 停用。
             text_length = 4U;
+            break;
+
+        case GAS_CYL_WAIT_TEST:
+            text = "\xB4\xFD\xB2\xE2\xCA\xD4"; // 待测试。
+            text_length = 6U;
             break;
 
         default:
