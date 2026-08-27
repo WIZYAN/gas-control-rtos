@@ -84,6 +84,14 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
 bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index);
 
 /*
+ * 函数名：A_GasControl_StopExhaust。
+ * 说明：立即关闭指定气瓶排气阀并取消本次人工排气截止时间，供CAN远程关闭操作使用。
+ * 输入：context为应用上下文；index为从0开始的气瓶索引。
+ * 输出：排气阀已经关闭或成功关闭时返回true，参数或硬件无效时返回false。
+ */
+bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index);
+
+/*
  * 函数名：A_GasControl_SetTestValve。
  * 说明：按照串口屏开关状态打开或关闭指定气瓶测试阀，并按当前超时参数自动关闭；允许排气阀同时开启。
  * 输入：context 为应用上下文；index 为从 0 开始的气瓶索引。

@@ -712,6 +712,75 @@ static void Test_ExternalModbusConfig(void)
 }
 
 /*
+ * 函数名：Test_FloatToRaw。
+ * 说明：把主机测试浮点值无别名地转换为CAN协议使用的32位原始位模式。
+ * 输入：value为待转换float32数值。
+ * 输出：返回具有相同位模式的uint32数值。
+ */
+static uint32_t Test_FloatToRaw(float value)
+{
+    uint32_t raw = 0U;
+    (void) memcpy(&raw, &value, sizeof(raw));
+    return raw;
+}
+
+/*
+ * 函数名：Test_QueueCanWrite。
+ * 说明：向模拟CAN接收环形队列加入一帧来自表头1号节点的合法定向写请求。
+ * 输入：context为气源应用上下文；address为写地址；value为32位原始写值。
+ * 输出：无；请求写入模拟CAN接收队列并推进队头。
+ */
+static void Test_QueueCanWrite(A_Gas_Control_Context *context,
+                               uint16_t address,
+                               uint32_t value)
+{
+    H_Can_Frame *request =
+        &context->external_can.hardware.receive_queue[context->external_can.hardware.receive_head];
+
+    (void) memset(request, 0, sizeof(*request));
+    request->id = ((uint32_t) F_CAN_FUNCTION_WRITE << 24U) |
+                  ((uint32_t) F_CAN_LOCAL_TYPE << 19U) |
+                  ((uint32_t) F_CAN_LOCAL_ADDRESS << 12U) |
+                  1U;
+    request->data[0] = (uint8_t) address;
+    request->data[1] = (uint8_t) (address >> 8U);
+    request->data[3] = 1U;
+    request->data[4] = (uint8_t) value;
+    request->data[5] = (uint8_t) (value >> 8U);
+    request->data[6] = (uint8_t) (value >> 16U);
+    request->data[7] = (uint8_t) (value >> 24U);
+    request->data[2] = F_CanProtocol_CalculateCrc(request->id, request->data);
+    context->external_can.hardware.receive_head =
+        (uint8_t) ((context->external_can.hardware.receive_head + 1U) % H_CAN_RX_QUEUE_CAPACITY);
+}
+
+/*
+ * 函数名：Test_RunCanWrite。
+ * 说明：执行一条模拟CAN写请求并轮询气源任务，直到最终功能码6响应实际发送。
+ * 输入：context为气源应用上下文；address为写地址；value为32位原始写值。
+ * 输出：无；断言最多八个任务周期内产生一帧写响应。
+ */
+static void Test_RunCanWrite(A_Gas_Control_Context *context,
+                             uint16_t address,
+                             uint32_t value)
+{
+    uint32_t previous_tx_count = g_test_state.can_tx_count;
+    uint8_t step;
+
+    Test_QueueCanWrite(context, address, value);
+    for (step = 0U; (step < 8U) && (g_test_state.can_tx_count == previous_tx_count); ++step)
+    {
+        A_GasControl_Task(context);
+    }
+    assert(g_test_state.can_tx_count == (previous_tx_count + 1U));
+    assert(((g_test_state.can_tx.id >> 24U) & 0x1FU) == F_CAN_FUNCTION_WRITE_RESPONSE);
+    assert(g_test_state.can_tx.data[0] == (uint8_t) address);
+    assert(g_test_state.can_tx.data[1] == (uint8_t) (address >> 8U));
+    assert(g_test_state.can_tx.data[2] ==
+           F_CanProtocol_CalculateCrc(g_test_state.can_tx.id, g_test_state.can_tx.data));
+}
+
+/*
  * 函数名：Test_DefaultCanProtocol。
  * 说明：验证无有效模式记录时默认启用CAN，并按参考29位ID和CRC响应总压力读取请求。
  * 输入：无。
@@ -731,10 +800,10 @@ static void Test_DefaultCanProtocol(void)
     assert(A_CAN_ADDRESS_PRESSURE_BASE <= 0x00FFU);
     assert(A_CAN_ADDRESS_TOTAL_PRESSURE <= 0x00FFU);
     assert((A_CAN_ADDRESS_STATE_BASE >= 0x0100U) && (A_CAN_ADDRESS_STATE_BASE <= 0x01FFU));
-    assert((A_CAN_ADDRESS_COMMAND_RESULT >= 0x0100U) && (A_CAN_ADDRESS_LOG_DATA_BASE <= 0x01FFU));
+    assert((A_CAN_ADDRESS_COMMAND_RESULT >= 0x0100U) && (A_CAN_ADDRESS_WRITE_SEQUENCE <= 0x01FFU));
     assert((A_CAN_ADDRESS_SWITCH_PRESSURE >= 0x0200U) && (A_CAN_ADDRESS_PRESSURE_MAX <= 0x02FFU));
     assert((A_CAN_ADDRESS_VALVE_PULL_IN_TIME >= 0x0300U) && (A_CAN_ADDRESS_LOG_INDEX <= 0x03FFU));
-    assert(A_CAN_SOFTWARE_VERSION == 0x0204UL);
+    assert(A_CAN_SOFTWARE_VERSION == 0x0205UL);
     assert(A_CAN_ADDRESS_COMMAND_RESULT == (A_CAN_ADDRESS_COMM_MODE + 1U));
     assert(A_CAN_ADDRESS_CONFIG_RESULT == (A_CAN_ADDRESS_COMMAND_RESULT + 1U));
     assert(A_CAN_ADDRESS_CONFIG_VERSION == (A_CAN_ADDRESS_CONFIG_RESULT + 1U));
@@ -744,6 +813,10 @@ static void Test_DefaultCanProtocol(void)
     assert(A_CAN_ADDRESS_LOG_RECORD_SIZE == (A_CAN_ADDRESS_LOG_CAPACITY + 1U));
     assert(A_CAN_ADDRESS_LOG_DATA_BASE == (A_CAN_ADDRESS_LOG_RECORD_SIZE + 1U));
     assert((A_CAN_ADDRESS_LOG_DATA_BASE + (A_CAN_LOG_RECORD_SIZE / 4U) - 1U) == 0x0126U);
+    assert(A_CAN_ADDRESS_LAST_WRITE_ADDRESS == 0x0127U);
+    assert(A_CAN_ADDRESS_LAST_WRITE_RESULT == 0x0128U);
+    assert(A_CAN_ADDRESS_LAST_WRITE_VALUE == 0x0129U);
+    assert(A_CAN_ADDRESS_WRITE_SEQUENCE == 0x012AU);
     assert(A_CAN_ADDRESS_LOW_CONFIRM_TIME == (A_CAN_ADDRESS_VALVE_PULL_IN_TIME + 1U));
     assert(A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES == (A_CAN_ADDRESS_LOW_CONFIRM_TIME + 1U));
     assert(A_CAN_ADDRESS_VALVE_CLOSE_WAIT == (A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES + 1U));
@@ -755,6 +828,11 @@ static void Test_DefaultCanProtocol(void)
     assert(A_CAN_ADDRESS_LOG_COMMAND == (A_CAN_ADDRESS_CONFIG_DEFAULT + 1U));
     assert(A_CAN_ADDRESS_LOG_INDEX == (A_CAN_ADDRESS_LOG_COMMAND + 1U));
     assert(A_CAN_ADDRESS_LOG_INDEX == 0x030AU);
+    assert(A_CAN_ADDRESS_EXHAUST_CONTROL_BASE == 0x030BU);
+    assert(A_CAN_ADDRESS_TEST_CONTROL_BASE == 0x0311U);
+    assert(A_CAN_ADDRESS_DISABLE_CONTROL_BASE == 0x0317U);
+    assert(A_CAN_ADDRESS_QUALIFY_CONTROL_BASE == 0x031DU);
+    assert((A_CAN_ADDRESS_QUALIFY_CONTROL_BASE + GAS_CYLINDER_COUNT - 1U) == 0x0322U);
     assert(F_CAN_LOCAL_TYPE == 15U);
     assert(F_CAN_LOCAL_ADDRESS == 1U);
     assert(F_CAN_CYCLE_TARGET_TYPE == 0U);
@@ -797,7 +875,7 @@ static void Test_DefaultCanProtocol(void)
            F_CanProtocol_CalculateCrc(g_test_state.can_tx.id, g_test_state.can_tx.data));
 
     for (address = A_CAN_ADDRESS_STATE_BASE;
-         address <= (A_CAN_ADDRESS_LOG_DATA_BASE + (A_CAN_LOG_RECORD_SIZE / 4U) - 1U);
+         address <= A_CAN_ADDRESS_WRITE_SEQUENCE;
          ++address)
     {
         uint8_t receive_head = context.external_can.hardware.receive_head;
@@ -821,7 +899,7 @@ static void Test_DefaultCanProtocol(void)
         assert(g_test_state.can_tx.data[3] == 1U);
         assert(g_test_state.can_tx.data[2] ==
                F_CanProtocol_CalculateCrc(g_test_state.can_tx.id, g_test_state.can_tx.data));
-        // 逐个构造真实读请求，保证0x0100～0x0126每个只读整数地址都产生合法响应帧。
+        // 逐个构造真实读请求，保证0x0100～0x012A每个只读整数地址都产生合法响应帧。
     }
 
     assert((g_test_state.can_tx.data[4] != 0xFFU) ||
@@ -834,7 +912,7 @@ static void Test_DefaultCanProtocol(void)
     request->id = request_id;
     request->data[0] = (uint8_t) A_CAN_ADDRESS_QUALITY_BASE;
     request->data[1] = (uint8_t) (A_CAN_ADDRESS_QUALITY_BASE >> 8U);
-    request->data[3] = (uint8_t) ((A_CAN_ADDRESS_LOG_DATA_BASE + (A_CAN_LOG_RECORD_SIZE / 4U)) -
+    request->data[3] = (uint8_t) ((A_CAN_ADDRESS_WRITE_SEQUENCE + 1U) -
                                  A_CAN_ADDRESS_QUALITY_BASE);
     request->data[2] = F_CanProtocol_CalculateCrc(request->id, request->data);
     context.external_can.hardware.receive_head =
@@ -843,15 +921,92 @@ static void Test_DefaultCanProtocol(void)
     A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
 
     for (address = A_CAN_ADDRESS_QUALITY_BASE;
-         address <= (A_CAN_ADDRESS_LOG_DATA_BASE + (A_CAN_LOG_RECORD_SIZE / 4U) - 1U);
+         address <= A_CAN_ADDRESS_WRITE_SEQUENCE;
          ++address)
     {
         A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
         assert(g_test_state.can_tx_count == ++previous_tx_count);
         assert(g_test_state.can_tx.data[0] == (uint8_t) address);
         assert(g_test_state.can_tx.data[1] == (uint8_t) (address >> 8U));
-        // 模拟上位机用一帧请求连续读取0x0106～0x0126，验证33帧响应能够分批完整发出。
+        // 模拟上位机用一帧请求连续读取0x0106～0x012A，验证37帧响应能够分批完整发出。
     }
+}
+
+/*
+ * 函数名：Test_CanDirectWriteAndControl。
+ * 说明：验证V1.06 CAN单参数保存、参数关系拒绝、废弃提交地址以及排气和测试阀最终结果应答。
+ * 输入：无。
+ * 输出：无；断言功能码6基础码、详细码、EEPROM生效值和阀门实际命令均正确。
+ */
+static void Test_CanDirectWriteAndControl(void)
+{
+    A_Gas_Control_Context context;
+    float loaded_pressure_max;
+
+    (void) memset(&g_test_state, 0, sizeof(g_test_state));
+    A_GasControl_Init(&context);
+
+    Test_RunCanWrite(&context,
+                     A_CAN_ADDRESS_PRESSURE_MAX,
+                     Test_FloatToRaw(29.0F));
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_SUCCESS);
+    assert(g_test_state.can_tx.data[5] == A_CAN_WRITE_DETAIL_NONE);
+    assert(context.config.pressure_max_mpa == 29.0F);
+    assert(context.external_can.last_write_result == 0U);
+    assert(A_GasConfig_Load(&context.storage_service, &context.external_can.pending_config));
+    loaded_pressure_max = context.external_can.pending_config.pressure_max_mpa;
+    assert(loaded_pressure_max == 29.0F);
+    // 成功响应到达时，参数已经写入EEPROM、读回校验并同步到正式运行结构。
+
+    Test_RunCanWrite(&context,
+                     A_CAN_ADDRESS_PRESSURE_MAX,
+                     Test_FloatToRaw(1.0F));
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_EXECUTION_ERROR);
+    assert(g_test_state.can_tx.data[5] == A_CAN_WRITE_DETAIL_RELATION_CONFLICT);
+    assert(context.config.pressure_max_mpa == 29.0F);
+
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_CONFIG_COMMIT, 0x0000A55AUL);
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_ADDRESS_ERROR);
+    assert(g_test_state.can_tx.data[5] == A_CAN_WRITE_DETAIL_DEPRECATED);
+
+    context.system.mode = GAS_MODE_AUTO;
+    context.system.switch_state = GAS_SWITCH_IDLE;
+    context.system.cylinder[0].state = GAS_CYL_READY;
+    context.system.cylinder[0].qualification_passed = true;
+    context.system.cylinder[0].pressure_mpa = 3.0F;
+    context.system.cylinder[0].pressure_quality = GAS_PRESSURE_VALID;
+    context.system.cylinder[0].pressure_timestamp_ms =
+        context.runtime_service.platform.millis;
+    context.system.active_index = 1U;
+    context.system.cylinder[1].state = GAS_CYL_ACTIVE;
+    context.system.cylinder[1].qualification_passed = true;
+    context.system.cylinder[1].pressure_mpa = 3.0F;
+    context.system.cylinder[1].pressure_quality = GAS_PRESSURE_VALID;
+    context.system.cylinder[1].pressure_timestamp_ms =
+        context.runtime_service.platform.millis;
+    context.system.cylinder[1].supply_cmd = true;
+    context.runtime_service.platform.supply_state[1] = true;
+    // 固定2号瓶为当前工作瓶，避免自动选择逻辑在测试CAN人工阀请求前占用1号瓶供气阀。
+
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_EXHAUST_CONTROL_BASE, 1U);
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_SUCCESS);
+    assert(context.system.cylinder[0].exhaust_cmd);
+
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_TEST_CONTROL_BASE, 1U);
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_SUCCESS);
+    assert(context.system.cylinder[0].exhaust_cmd);
+    assert(context.system.cylinder[0].test_cmd);
+    // 同一气瓶同时具备人工阀开启权限时，排气阀和测试阀允许并行开启。
+
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_EXHAUST_CONTROL_BASE, 0U);
+    assert(!context.system.cylinder[0].exhaust_cmd);
+    assert(context.system.cylinder[0].test_cmd);
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_TEST_CONTROL_BASE, 0U);
+    assert(!context.system.cylinder[0].test_cmd);
+
+    assert(context.external_can.last_write_address == A_CAN_ADDRESS_TEST_CONTROL_BASE);
+    assert(context.external_can.last_write_value == 0U);
+    assert(context.external_can.write_sequence == 7U);
 }
 
 /*
@@ -1999,6 +2154,7 @@ int main(void)
     Test_ConfigV2Migration();
     Test_TotalPressurePoll();
     Test_DefaultCanProtocol();
+    Test_CanDirectWriteAndControl();
     Test_ExternalModbusConfig();
     Test_GasLog();
     Test_QualificationGate();
@@ -2007,6 +2163,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.05三阀七状态、排气按钮状态同步、待测试门槛、CAN/RS485双外部通讯、EEPROM日志、运行参数、事件15条分页与常规10条分页查询测试通过。");
+    puts("V1.06三阀七状态、CAN单参数最终应答、详细错误码、远程人工控制、EEPROM日志和分类分页查询测试通过。");
     return 0;
 }

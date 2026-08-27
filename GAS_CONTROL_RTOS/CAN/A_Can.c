@@ -32,6 +32,153 @@ static float A_Can_RawToFloat(uint32_t raw)
 }
 
 /*
+ * 函数名：A_Can_PackWriteResult。
+ * 说明：把基础结果码和详细原因码组合为功能码6使用的32位小端结果。
+ * 输入：result为基础结果码；detail为详细原因码。
+ * 输出：返回低8位为基础码、bit8～bit15为详细码的32位结果。
+ */
+static uint32_t A_Can_PackWriteResult(A_Can_Write_Result result,
+                                      A_Can_Write_Detail detail)
+{
+    return ((uint32_t) result) | ((uint32_t) detail << 8U);
+}
+
+/*
+ * 函数名：A_Can_FloatRawIsFinite。
+ * 说明：通过IEEE-754指数位检查原始float32是否为有限数，拒绝NaN和正负无穷大。
+ * 输入：raw为float32的32位原始位模式。
+ * 输出：指数位不是全1时返回true，否则返回false。
+ */
+static bool A_Can_FloatRawIsFinite(uint32_t raw)
+{
+    return ((raw & 0x7F800000UL) != 0x7F800000UL);
+}
+
+/*
+ * 函数名：A_Can_IsMechanicalSwitching。
+ * 说明：判断自动切瓶是否已经进入实际关阀、死区、开阀或新阀验证阶段。
+ * 输入：system为只读气源系统状态。
+ * 输出：机械切换阶段返回true，其他阶段或参数无效返回false。
+ */
+static bool A_Can_IsMechanicalSwitching(const Gas_System *system)
+{
+    if (system == NULL)
+    {
+        return false;
+    }
+    return ((system->switch_state == GAS_SWITCH_CLOSE_OLD) ||
+            (system->switch_state == GAS_SWITCH_DEAD_TIME) ||
+            (system->switch_state == GAS_SWITCH_OPEN_NEW) ||
+            (system->switch_state == GAS_SWITCH_VERIFY_NEW));
+}
+
+/*
+ * 函数名：A_Can_RecordWriteAttempt。
+ * 说明：记录一条已经通过协议帧格式和CRC检查的CAN写请求，供连续诊断地址读取。
+ * 输入：context为CAN上下文；address为写地址；value为32位原始写值。
+ * 输出：无；更新最近地址、原始值和累计序号。
+ */
+static void A_Can_RecordWriteAttempt(A_Can_Context *context,
+                                     uint16_t address,
+                                     uint32_t value)
+{
+    context->last_write_address = address;
+    context->last_write_value = value;
+    context->write_sequence++;
+}
+
+/*
+ * 函数名：A_Can_SetImmediateWriteResult。
+ * 说明：记录无需业务层异步处理的CAN写结果，并立即加入功能码6发送队列。
+ * 输入：context为CAN上下文；request为原写请求；result为基础结果；detail为详细原因。
+ * 输出：响应成功入队时返回true；发送队列已满时返回false并累计丢弃数。
+ */
+static bool A_Can_SetImmediateWriteResult(A_Can_Context *context,
+                                          const F_Can_Request *request,
+                                          A_Can_Write_Result result,
+                                          A_Can_Write_Detail detail)
+{
+    uint32_t packed = A_Can_PackWriteResult(result, detail);
+
+    context->last_write_result = packed;
+    if (!F_CanProtocol_QueueWriteResponse(&context->function,
+                                          request->source_type,
+                                          request->source_address,
+                                          request->data_address,
+                                          packed))
+    {
+        context->response_drop_count++;
+        return false;
+    }
+    return true;
+}
+
+/*
+ * 函数名：A_Can_BeginDeferredWrite。
+ * 说明：保存需要气源业务层执行后才能应答的写请求来源，保证成功响应代表最终完成。
+ * 输入：context为CAN上下文；request为原写请求。
+ * 输出：没有其他延迟写请求时返回true；已有请求未完成时返回false。
+ */
+static bool A_Can_BeginDeferredWrite(A_Can_Context *context,
+                                     const F_Can_Request *request)
+{
+    if (context->deferred_write_pending || context->deferred_write_response_ready)
+    {
+        return false;
+    }
+    context->deferred_write_address = request->data_address;
+    context->deferred_write_target_type = request->source_type;
+    context->deferred_write_target_address = request->source_address;
+    context->deferred_write_pending = true;
+    return true;
+}
+
+/*
+ * 函数名：A_Can_CompleteDeferredWrite。
+ * 说明：完成当前延迟写请求并保存最终结果，实际功能码6入队由CAN周期任务重试完成。
+ * 输入：context为CAN上下文；result为基础结果；detail为详细原因。
+ * 输出：存在匹配的延迟写请求并完成记录时返回true，否则返回false。
+ */
+static bool A_Can_CompleteDeferredWrite(A_Can_Context *context,
+                                        A_Can_Write_Result result,
+                                        A_Can_Write_Detail detail)
+{
+    if ((context == NULL) || !context->deferred_write_pending)
+    {
+        return false;
+    }
+    context->deferred_write_result = A_Can_PackWriteResult(result, detail);
+    context->last_write_result = context->deferred_write_result;
+    context->deferred_write_pending = false;
+    context->deferred_write_response_ready = true;
+    return true;
+}
+
+/*
+ * 函数名：A_Can_QueueDeferredWriteResponse。
+ * 说明：把已经完成的延迟写最终结果加入协议发送队列，队列暂满时保留到下一周期重试。
+ * 输入：context为CAN上下文。
+ * 输出：没有待发结果或结果成功入队时返回true，队列暂满时返回false。
+ */
+static bool A_Can_QueueDeferredWriteResponse(A_Can_Context *context)
+{
+    if (!context->deferred_write_response_ready)
+    {
+        return true;
+    }
+    if (!F_CanProtocol_QueueWriteResponse(&context->function,
+                                          context->deferred_write_target_type,
+                                          context->deferred_write_target_address,
+                                          context->deferred_write_address,
+                                          context->deferred_write_result))
+    {
+        return false;
+    }
+    context->deferred_write_response_ready = false;
+    return true;
+}
+
+/*
  * 函数名：A_Can_GetCylinderMask。
  * 说明：按指定类别汇总六瓶布尔状态为bit0～bit5位图。
  * 输入：system为系统状态；kind为0进气阀、1排气阀、2测试阀、3测试合格标志。
@@ -136,6 +283,10 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
         case A_CAN_ADDRESS_LOG_COUNT: *value = context->log_count; return true;
         case A_CAN_ADDRESS_LOG_CAPACITY: *value = context->log_capacity; return true;
         case A_CAN_ADDRESS_LOG_RECORD_SIZE: *value = A_CAN_LOG_RECORD_SIZE; return true;
+        case A_CAN_ADDRESS_LAST_WRITE_ADDRESS: *value = context->last_write_address; return true;
+        case A_CAN_ADDRESS_LAST_WRITE_RESULT: *value = context->last_write_result; return true;
+        case A_CAN_ADDRESS_LAST_WRITE_VALUE: *value = context->last_write_value; return true;
+        case A_CAN_ADDRESS_WRITE_SEQUENCE: *value = context->write_sequence; return true;
         default: break;
     }
 
@@ -149,111 +300,381 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
                  ((uint32_t) context->log_record[offset + 3U] << 24U);
         return true;
     }
+
+    if ((address >= A_CAN_ADDRESS_EXHAUST_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_EXHAUST_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        *value = system->cylinder[address - A_CAN_ADDRESS_EXHAUST_CONTROL_BASE].exhaust_cmd ? 1U : 0U;
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_TEST_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_TEST_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        *value = system->cylinder[address - A_CAN_ADDRESS_TEST_CONTROL_BASE].test_cmd ? 1U : 0U;
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_DISABLE_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_DISABLE_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        *value = (system->cylinder[address - A_CAN_ADDRESS_DISABLE_CONTROL_BASE].state == GAS_CYL_DISABLED) ? 1U : 0U;
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_QUALIFY_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_QUALIFY_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        *value = system->cylinder[address - A_CAN_ADDRESS_QUALIFY_CONTROL_BASE].qualification_passed ? 1U : 0U;
+        return true;
+    }
+    return false;
+}
+
+/*
+ * 函数名：A_Can_AssignParameterCandidate。
+ * 说明：把一个公开CAN参数写值赋给正式参数副本，并完成该字段可编码范围的精确检查。
+ * 输入：candidate为参数副本；address为参数地址；raw为32位原始写值；detail为错误明细输出指针。
+ * 输出：地址和值均有效并完成赋值时返回true，否则返回false并输出具体原因。
+ */
+static bool A_Can_AssignParameterCandidate(Gas_Config *candidate,
+                                           uint16_t address,
+                                           uint32_t raw,
+                                           A_Can_Write_Detail *detail)
+{
+    float pressure;
+    uint32_t minimum_fresh_ms = GAS_SENSOR_POLL_INTERVAL_MS * GAS_PRESSURE_SENSOR_COUNT;
+
+    if ((address >= A_CAN_ADDRESS_SWITCH_PRESSURE) &&
+        (address <= A_CAN_ADDRESS_PRESSURE_MAX))
+    {
+        if (!A_Can_FloatRawIsFinite(raw))
+        {
+            *detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
+            return false;
+        }
+        pressure = A_Can_RawToFloat(raw);
+        if (pressure < 0.001F)
+        {
+            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_LOW;
+            return false;
+        }
+        if (pressure > GAS_CONFIG_PRESSURE_MAX_ENCODED_MPA)
+        {
+            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
+            return false;
+        }
+        pressure = (float) ((uint32_t) ((pressure * GAS_CONFIG_PRESSURE_SCALE) + 0.5F)) /
+                   GAS_CONFIG_PRESSURE_SCALE;
+        // EEPROM以0.001 MPa定点数保存，先规范化再应用，保证立即读回值与重新上电后的值完全一致。
+        if (address == A_CAN_ADDRESS_SWITCH_PRESSURE) { candidate->switch_pressure_mpa = pressure; }
+        else if (address == A_CAN_ADDRESS_SWITCH_RELEASE) { candidate->switch_release_mpa = pressure; }
+        else if (address == A_CAN_ADDRESS_READY_MIN_PRESSURE) { candidate->ready_min_pressure_mpa = pressure; }
+        else { candidate->pressure_max_mpa = pressure; }
+        return true;
+    }
+
+    switch (address)
+    {
+        case A_CAN_ADDRESS_VALVE_PULL_IN_TIME:
+            if (raw == 0U) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_LOW; return false; }
+            if (raw > GAS_CONFIG_TIME_MAX_MS) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->valve_pull_in_time_ms = raw;
+            return true;
+        case A_CAN_ADDRESS_LOW_CONFIRM_TIME:
+            if (raw > GAS_CONFIG_TIME_MAX_MS) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->low_confirm_time_ms = raw;
+            return true;
+        case A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES:
+            if (raw == 0U) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_LOW; return false; }
+            if (raw > GAS_CONFIG_SAMPLE_MAX_COUNT) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->low_confirm_samples = (uint16_t) raw;
+            return true;
+        case A_CAN_ADDRESS_VALVE_CLOSE_WAIT:
+            if (raw > GAS_CONFIG_TIME_MAX_MS) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->valve_close_wait_ms = raw;
+            return true;
+        case A_CAN_ADDRESS_VALVE_OPEN_WAIT:
+            if (raw > GAS_CONFIG_TIME_MAX_MS) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->valve_open_wait_ms = raw;
+            return true;
+        case A_CAN_ADDRESS_PRESSURE_FRESH:
+            if (raw < minimum_fresh_ms) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_LOW; return false; }
+            if (raw > GAS_CONFIG_TIME_MAX_MS) { *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH; return false; }
+            candidate->pressure_fresh_ms = raw;
+            return true;
+        default:
+            *detail = A_CAN_WRITE_DETAIL_ADDRESS_NOT_FOUND;
+            return false;
+    }
+}
+
+/*
+ * 函数名：A_Can_StartConfigWrite。
+ * 说明：校验单地址候选参数并建立等待EEPROM保存和业务应用的延迟写请求。
+ * 输入：context为CAN上下文；system为系统状态；request为原写请求；candidate为待校验参数。
+ * 输出：需要立即应答时返回true并写入result和detail；成功建立延迟请求时返回false。
+ */
+static bool A_Can_StartConfigWrite(A_Can_Context *context,
+                                   const Gas_System *system,
+                                   const F_Can_Request *request,
+                                   const Gas_Config *candidate,
+                                   A_Can_Write_Result *result,
+                                   A_Can_Write_Detail *detail)
+{
+    A_Gas_Config_Validation validation = A_GasConfig_Validate(candidate);
+
+    if (validation != A_GAS_CONFIG_VALID)
+    {
+        context->config_result = (validation == A_GAS_CONFIG_INVALID_RELATION) ?
+            GAS_EXTERNAL_CONFIG_INVALID_RELATION : GAS_EXTERNAL_CONFIG_INVALID_RANGE;
+        *result = (validation == A_GAS_CONFIG_INVALID_RELATION) ?
+            A_CAN_WRITE_EXECUTION_ERROR : A_CAN_WRITE_VALUE_ERROR;
+        *detail = (validation == A_GAS_CONFIG_INVALID_RELATION) ?
+            A_CAN_WRITE_DETAIL_RELATION_CONFLICT : A_CAN_WRITE_DETAIL_VALUE_FORMAT;
+        return true;
+    }
+    if (A_Can_IsMechanicalSwitching(system))
+    {
+        context->config_result = GAS_EXTERNAL_CONFIG_SYSTEM_BUSY;
+        *result = A_CAN_WRITE_EXECUTION_ERROR;
+        *detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
+        return true;
+    }
+    if (memcmp(candidate, &context->staged_config, sizeof(*candidate)) == 0)
+    {
+        context->config_result = GAS_EXTERNAL_CONFIG_SUCCESS;
+        *result = A_CAN_WRITE_SUCCESS;
+        *detail = A_CAN_WRITE_DETAIL_NONE;
+        return true;
+    }
+    if (!A_Can_BeginDeferredWrite(context, request))
+    {
+        *result = A_CAN_WRITE_EXECUTION_ERROR;
+        *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
+        return true;
+    }
+
+    context->pending_config = *candidate;
+    context->config_pending = true;
+    context->config_result = GAS_EXTERNAL_CONFIG_PENDING;
+    return false;
+}
+
+/*
+ * 函数名：A_Can_DecodeControlAddress。
+ * 说明：把连续的四组六瓶控制地址转换为控制类型和从0开始的气瓶索引。
+ * 输入：address为CAN数据地址；request为控制请求输出指针。
+ * 输出：地址属于人工控制区时返回true，否则返回false。
+ */
+static bool A_Can_DecodeControlAddress(uint16_t address,
+                                       A_Can_Control_Request *request)
+{
+    if ((address >= A_CAN_ADDRESS_EXHAUST_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_EXHAUST_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        request->type = A_CAN_CONTROL_EXHAUST;
+        request->index = (uint8_t) (address - A_CAN_ADDRESS_EXHAUST_CONTROL_BASE);
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_TEST_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_TEST_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        request->type = A_CAN_CONTROL_TEST;
+        request->index = (uint8_t) (address - A_CAN_ADDRESS_TEST_CONTROL_BASE);
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_DISABLE_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_DISABLE_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        request->type = A_CAN_CONTROL_DISABLE;
+        request->index = (uint8_t) (address - A_CAN_ADDRESS_DISABLE_CONTROL_BASE);
+        return true;
+    }
+    if ((address >= A_CAN_ADDRESS_QUALIFY_CONTROL_BASE) &&
+        (address < (A_CAN_ADDRESS_QUALIFY_CONTROL_BASE + GAS_CYLINDER_COUNT)))
+    {
+        request->type = A_CAN_CONTROL_QUALIFICATION;
+        request->index = (uint8_t) (address - A_CAN_ADDRESS_QUALIFY_CONTROL_BASE);
+        return true;
+    }
     return false;
 }
 
 /*
  * 函数名：A_Can_WriteValue。
- * 说明：处理一个CAN可写地址，将参数写入暂存区或生成控制、提交和日志请求。
- * 输入：context为CAN上下文；address为数据地址；value为32位原始写值。
- * 输出：返回写成功、只读、范围错误或忙状态码。
+ * 说明：处理一条CAN写请求；简单操作立即给出结果，参数、启停和阀门操作等待业务层最终完成后应答。
+ * 输入：context为CAN上下文；system为系统状态；comm_mode为通讯模式；request为原写请求；result和detail为立即结果输出。
+ * 输出：需要立即发送功能码6响应时返回true；已经建立延迟业务请求时返回false。
  */
-static A_Can_Write_Result A_Can_WriteValue(A_Can_Context *context,
-                                            uint16_t address,
-                                            uint32_t value)
+static bool A_Can_WriteValue(A_Can_Context *context,
+                             const Gas_System *system,
+                             gas_external_comm_mode_t comm_mode,
+                             const F_Can_Request *request,
+                             A_Can_Write_Result *result,
+                             A_Can_Write_Detail *detail)
 {
-    A_Gas_Config_Validation validation;
+    Gas_Config candidate;
+    A_Can_Control_Request control = {A_CAN_CONTROL_NONE, 0U, false};
 
-    switch (address)
+    *result = A_CAN_WRITE_SUCCESS;
+    *detail = A_CAN_WRITE_DETAIL_NONE;
+    if (context->deferred_write_pending || context->deferred_write_response_ready)
     {
-        case A_CAN_ADDRESS_SWITCH_PRESSURE: context->staged_config.switch_pressure_mpa = A_Can_RawToFloat(value); return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_SWITCH_RELEASE: context->staged_config.switch_release_mpa = A_Can_RawToFloat(value); return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_READY_MIN_PRESSURE: context->staged_config.ready_min_pressure_mpa = A_Can_RawToFloat(value); return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_PRESSURE_MAX: context->staged_config.pressure_max_mpa = A_Can_RawToFloat(value); return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_VALVE_PULL_IN_TIME: context->staged_config.valve_pull_in_time_ms = value; return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_LOW_CONFIRM_TIME: context->staged_config.low_confirm_time_ms = value; return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES:
-            if (value > 0xFFFFU) { return A_CAN_WRITE_INVALID_RANGE; }
-            context->staged_config.low_confirm_samples = (uint16_t) value;
-            return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_VALVE_CLOSE_WAIT: context->staged_config.valve_close_wait_ms = value; return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_VALVE_OPEN_WAIT: context->staged_config.valve_open_wait_ms = value; return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_PRESSURE_FRESH: context->staged_config.pressure_fresh_ms = value; return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_COMMAND:
-            if (context->command_pending) { return A_CAN_WRITE_BUSY; }
-            if ((value != GAS_EXTERNAL_COMMAND_START_AUTO) && (value != GAS_EXTERNAL_COMMAND_STOP))
-            {
-                context->command_result = GAS_EXTERNAL_RESULT_INVALID_COMMAND;
-                return A_CAN_WRITE_INVALID_RANGE;
-            }
-            context->pending_command = (gas_external_command_t) value;
-            context->command_pending = true;
-            context->command_result = GAS_EXTERNAL_RESULT_PENDING;
-            return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_CONFIG_COMMIT:
-            if (value != A_CAN_CONFIG_COMMIT_KEY)
-            {
-                context->config_result = GAS_EXTERNAL_CONFIG_INVALID_KEY;
-                return A_CAN_WRITE_INVALID_RANGE;
-            }
-            if (context->config_pending) { return A_CAN_WRITE_BUSY; }
-            validation = A_GasConfig_Validate(&context->staged_config);
-            if (validation != A_GAS_CONFIG_VALID)
-            {
-                context->config_result = (validation == A_GAS_CONFIG_INVALID_RELATION) ?
-                    GAS_EXTERNAL_CONFIG_INVALID_RELATION : GAS_EXTERNAL_CONFIG_INVALID_RANGE;
-                return A_CAN_WRITE_INVALID_RANGE;
-            }
-            context->pending_config = context->staged_config;
-            context->config_pending = true;
-            context->config_result = GAS_EXTERNAL_CONFIG_PENDING;
-            return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_CONFIG_DEFAULT:
-        {
-            float low_warning_pressure_mpa;
-            uint32_t manual_exhaust_time_ms;
-            uint32_t test_valve_max_time_ms;
-
-            if (value != A_CAN_CONFIG_DEFAULT_KEY)
-            {
-                context->config_result = GAS_EXTERNAL_CONFIG_INVALID_KEY;
-                return A_CAN_WRITE_INVALID_RANGE;
-            }
-            if (context->config_pending) { return A_CAN_WRITE_BUSY; }
-            low_warning_pressure_mpa = context->staged_config.low_warning_pressure_mpa;
-            manual_exhaust_time_ms = context->staged_config.manual_exhaust_time_ms;
-            test_valve_max_time_ms = context->staged_config.test_valve_max_time_ms;
-            A_GasConfig_LoadDefaults(&context->pending_config);
-            context->pending_config.low_warning_pressure_mpa = low_warning_pressure_mpa;
-            context->pending_config.manual_exhaust_time_ms = manual_exhaust_time_ms;
-            context->pending_config.test_valve_max_time_ms = test_valve_max_time_ms;
-            // CAN恢复默认只处理协议已公开的10项，不改变密码页管理的三项安全参数。
-            context->staged_config = context->pending_config;
-            context->config_pending = true;
-            context->config_result = GAS_EXTERNAL_CONFIG_PENDING;
-            return A_CAN_WRITE_SUCCESS;
-        }
-        case A_CAN_ADDRESS_LOG_INDEX:
-            if (value > 0xFFFFU) { return A_CAN_WRITE_INVALID_RANGE; }
-            context->selected_log_index = (uint16_t) value;
-            return A_CAN_WRITE_SUCCESS;
-        case A_CAN_ADDRESS_LOG_COMMAND:
-            if (value != 1U)
-            {
-                context->log_result = GAS_EXTERNAL_LOG_INVALID_COMMAND;
-                return A_CAN_WRITE_INVALID_RANGE;
-            }
-            if (context->log_read_pending)
-            {
-                context->log_result = GAS_EXTERNAL_LOG_BUSY;
-                return A_CAN_WRITE_BUSY;
-            }
-            context->pending_log_index = context->selected_log_index;
-            context->log_read_pending = true;
-            context->log_result = GAS_EXTERNAL_LOG_PENDING;
-            return A_CAN_WRITE_SUCCESS;
-        default: return A_CAN_WRITE_READ_ONLY;
+        *result = A_CAN_WRITE_EXECUTION_ERROR;
+        *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
+        return true;
     }
+
+    if (((request->data_address >= A_CAN_ADDRESS_SWITCH_PRESSURE) &&
+         (request->data_address <= A_CAN_ADDRESS_PRESSURE_MAX)) ||
+        ((request->data_address >= A_CAN_ADDRESS_VALVE_PULL_IN_TIME) &&
+         (request->data_address <= A_CAN_ADDRESS_PRESSURE_FRESH)))
+    {
+        candidate = context->staged_config;
+        if (!A_Can_AssignParameterCandidate(&candidate,
+                                            request->data_address,
+                                            request->value,
+                                            detail))
+        {
+            context->config_result = GAS_EXTERNAL_CONFIG_INVALID_RANGE;
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            return true;
+        }
+        return A_Can_StartConfigWrite(context,
+                                      system,
+                                      request,
+                                      &candidate,
+                                      result,
+                                      detail);
+    }
+
+    if (request->data_address == A_CAN_ADDRESS_COMMAND)
+    {
+        if ((request->value != GAS_EXTERNAL_COMMAND_START_AUTO) &&
+            (request->value != GAS_EXTERNAL_COMMAND_STOP))
+        {
+            context->command_result = GAS_EXTERNAL_RESULT_INVALID_COMMAND;
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
+            return true;
+        }
+        if (!A_Can_BeginDeferredWrite(context, request))
+        {
+            *result = A_CAN_WRITE_EXECUTION_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
+            return true;
+        }
+        context->pending_command = (gas_external_command_t) request->value;
+        context->command_pending = true;
+        context->command_result = GAS_EXTERNAL_RESULT_PENDING;
+        return false;
+    }
+
+    if (request->data_address == A_CAN_ADDRESS_CONFIG_COMMIT)
+    {
+        *result = A_CAN_WRITE_ADDRESS_ERROR;
+        *detail = A_CAN_WRITE_DETAIL_DEPRECATED;
+        return true;
+    }
+
+    if (request->data_address == A_CAN_ADDRESS_CONFIG_DEFAULT)
+    {
+        if (request->value != A_CAN_CONFIG_DEFAULT_KEY)
+        {
+            context->config_result = GAS_EXTERNAL_CONFIG_INVALID_KEY;
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
+            return true;
+        }
+        candidate = context->staged_config;
+        A_GasConfig_LoadDefaults(&candidate);
+        candidate.low_warning_pressure_mpa = context->staged_config.low_warning_pressure_mpa;
+        candidate.manual_exhaust_time_ms = context->staged_config.manual_exhaust_time_ms;
+        candidate.test_valve_max_time_ms = context->staged_config.test_valve_max_time_ms;
+        // 恢复默认只改变CAN公开的10项，密码页管理的三项安全参数保持不变。
+        return A_Can_StartConfigWrite(context,
+                                      system,
+                                      request,
+                                      &candidate,
+                                      result,
+                                      detail);
+    }
+
+    if (request->data_address == A_CAN_ADDRESS_LOG_INDEX)
+    {
+        if (request->value > 0xFFFFU)
+        {
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
+            return true;
+        }
+        context->selected_log_index = (uint16_t) request->value;
+        return true;
+    }
+    if (request->data_address == A_CAN_ADDRESS_LOG_COMMAND)
+    {
+        if (request->value != 1U)
+        {
+            context->log_result = GAS_EXTERNAL_LOG_INVALID_COMMAND;
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
+            return true;
+        }
+        if (context->log_read_pending)
+        {
+            context->log_result = GAS_EXTERNAL_LOG_BUSY;
+            *result = A_CAN_WRITE_EXECUTION_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
+            return true;
+        }
+        context->pending_log_index = context->selected_log_index;
+        context->log_read_pending = true;
+        context->log_result = GAS_EXTERNAL_LOG_PENDING;
+        return true;
+    }
+
+    if (A_Can_DecodeControlAddress(request->data_address, &control))
+    {
+        if (request->value > 1U)
+        {
+            *result = A_CAN_WRITE_VALUE_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
+            return true;
+        }
+        if (A_Can_IsMechanicalSwitching(system))
+        {
+            *result = A_CAN_WRITE_EXECUTION_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
+            return true;
+        }
+        if (!A_Can_BeginDeferredWrite(context, request))
+        {
+            *result = A_CAN_WRITE_EXECUTION_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
+            return true;
+        }
+        control.enabled = (request->value != 0U);
+        context->pending_control = control;
+        context->control_pending = true;
+        return false;
+    }
+
+    {
+        uint32_t read_value;
+        if (A_Can_ReadValue(context,
+                            system,
+                            comm_mode,
+                            request->data_address,
+                            &read_value))
+        {
+            *result = A_CAN_WRITE_ADDRESS_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_READ_ONLY;
+        }
+        else
+        {
+            *result = A_CAN_WRITE_ADDRESS_ERROR;
+            *detail = A_CAN_WRITE_DETAIL_ADDRESS_NOT_FOUND;
+        }
+    }
+    return true;
 }
 
 /*
@@ -350,6 +771,11 @@ void A_Can_Task(A_Can_Context *context,
         return;
     }
     F_CanProtocol_Task(&context->function);
+    if (!A_Can_QueueDeferredWriteResponse(context))
+    {
+        return;
+    }
+    // EEPROM或阀门业务已经给出最终结果后，在这里持续重试入队，成功响应不会因发送队列短时占满而丢失。
     A_Can_QueueReadResponses(context, system, comm_mode);
     if (context->read_response_remaining > 0U)
     {
@@ -372,16 +798,20 @@ void A_Can_Task(A_Can_Context *context,
     }
     else
     {
-        A_Can_Write_Result result = A_Can_WriteValue(context,
-                                                      request.data_address,
-                                                      request.value);
-        if (!F_CanProtocol_QueueWriteResponse(&context->function,
-                                              request.source_type,
-                                              request.source_address,
-                                              request.data_address,
-                                              (uint32_t) result))
+        A_Can_Write_Result result;
+        A_Can_Write_Detail detail;
+        bool immediate;
+
+        A_Can_RecordWriteAttempt(context, request.data_address, request.value);
+        immediate = A_Can_WriteValue(context,
+                                     system,
+                                     comm_mode,
+                                     &request,
+                                     &result,
+                                     &detail);
+        if (immediate)
         {
-            context->response_drop_count++;
+            (void) A_Can_SetImmediateWriteResult(context, &request, result, detail);
         }
     }
 }
@@ -409,7 +839,29 @@ bool A_Can_TakeCommand(A_Can_Context *context, gas_external_command_t *command)
  */
 void A_Can_SetCommandResult(A_Can_Context *context, gas_external_result_t result)
 {
-    if (context != NULL) { context->command_result = result; }
+    if (context == NULL)
+    {
+        return;
+    }
+    context->command_result = result;
+    if (result == GAS_EXTERNAL_RESULT_SUCCESS)
+    {
+        (void) A_Can_CompleteDeferredWrite(context,
+                                           A_CAN_WRITE_SUCCESS,
+                                           A_CAN_WRITE_DETAIL_NONE);
+    }
+    else if (result == GAS_EXTERNAL_RESULT_REJECTED)
+    {
+        (void) A_Can_CompleteDeferredWrite(context,
+                                           A_CAN_WRITE_EXECUTION_ERROR,
+                                           A_CAN_WRITE_DETAIL_STATE_DISALLOWED);
+    }
+    else if (result == GAS_EXTERNAL_RESULT_INVALID_COMMAND)
+    {
+        (void) A_Can_CompleteDeferredWrite(context,
+                                           A_CAN_WRITE_VALUE_ERROR,
+                                           A_CAN_WRITE_DETAIL_VALUE_FORMAT);
+    }
 }
 
 /*
@@ -448,7 +900,72 @@ bool A_Can_TakeConfigRequest(A_Can_Context *context, Gas_Config *config)
  */
 void A_Can_SetConfigResult(A_Can_Context *context, gas_external_config_result_t result)
 {
-    if (context != NULL) { context->config_result = result; }
+    A_Can_Write_Result write_result;
+    A_Can_Write_Detail detail;
+
+    if (context == NULL)
+    {
+        return;
+    }
+    context->config_result = result;
+    if (result == GAS_EXTERNAL_CONFIG_SUCCESS)
+    {
+        write_result = A_CAN_WRITE_SUCCESS;
+        detail = A_CAN_WRITE_DETAIL_NONE;
+    }
+    else if (result == GAS_EXTERNAL_CONFIG_STORAGE_FAILED)
+    {
+        write_result = A_CAN_WRITE_EXECUTION_ERROR;
+        detail = A_CAN_WRITE_DETAIL_STORAGE_FAILED;
+    }
+    else if (result == GAS_EXTERNAL_CONFIG_INVALID_RELATION)
+    {
+        write_result = A_CAN_WRITE_EXECUTION_ERROR;
+        detail = A_CAN_WRITE_DETAIL_RELATION_CONFLICT;
+    }
+    else if (result == GAS_EXTERNAL_CONFIG_SYSTEM_BUSY)
+    {
+        write_result = A_CAN_WRITE_EXECUTION_ERROR;
+        detail = A_CAN_WRITE_DETAIL_STATE_DISALLOWED;
+    }
+    else
+    {
+        write_result = A_CAN_WRITE_VALUE_ERROR;
+        detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
+    }
+    (void) A_Can_CompleteDeferredWrite(context, write_result, detail);
+}
+
+/*
+ * 函数名：A_Can_TakeControlRequest。
+ * 说明：取出并清除一条已经通过地址和值检查的CAN人工控制请求。
+ * 输入：context为CAN上下文；request为控制请求输出指针。
+ * 输出：存在待处理控制请求时返回true，否则返回false。
+ */
+bool A_Can_TakeControlRequest(A_Can_Context *context,
+                              A_Can_Control_Request *request)
+{
+    if ((context == NULL) || (request == NULL) || !context->control_pending)
+    {
+        return false;
+    }
+    *request = context->pending_control;
+    context->pending_control.type = A_CAN_CONTROL_NONE;
+    context->control_pending = false;
+    return true;
+}
+
+/*
+ * 函数名：A_Can_CompleteControlRequest。
+ * 说明：保存CAN人工控制最终执行结果，并组织与原请求对应的功能码6响应。
+ * 输入：context为CAN上下文；result为基础结果码；detail为详细原因码。
+ * 输出：无；完整结果保存在诊断地址并等待协议层发送。
+ */
+void A_Can_CompleteControlRequest(A_Can_Context *context,
+                                  A_Can_Write_Result result,
+                                  A_Can_Write_Detail detail)
+{
+    (void) A_Can_CompleteDeferredWrite(context, result, detail);
 }
 
 /*

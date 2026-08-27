@@ -1044,6 +1044,112 @@ static void A_GasControl_SetExternalLogResult(A_Gas_Control_Context *context,
 }
 
 /*
+ * 函数名：A_GasControl_IsMechanicalSwitching。
+ * 说明：判断自动切瓶是否正在执行实际关阀、无气死区、开阀或新阀稳定等待。
+ * 输入：system为只读气源系统状态。
+ * 输出：处于机械切换阶段时返回true，否则返回false。
+ */
+static bool A_GasControl_IsMechanicalSwitching(const Gas_System *system)
+{
+    if (system == NULL)
+    {
+        return false;
+    }
+    return ((system->switch_state == GAS_SWITCH_CLOSE_OLD) ||
+            (system->switch_state == GAS_SWITCH_DEAD_TIME) ||
+            (system->switch_state == GAS_SWITCH_OPEN_NEW) ||
+            (system->switch_state == GAS_SWITCH_VERIFY_NEW));
+}
+
+/*
+ * 函数名：A_GasControl_ProcessCanControl。
+ * 说明：通过现有气源业务接口执行CAN单瓶排气、测试、停用和测试结论请求，并返回最终互锁结果。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：无；执行结果通过功能码6和CAN只读诊断地址返回，不直接绕过业务层操作GPIO。
+ */
+static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
+{
+    A_Can_Control_Request request;
+    A_Can_Write_Result result = A_CAN_WRITE_EXECUTION_ERROR;
+    A_Can_Write_Detail detail = A_CAN_WRITE_DETAIL_STATE_DISALLOWED;
+    Gas_Cylinder *cylinder;
+    bool success = false;
+
+    if ((context == NULL) ||
+        (context->external_comm_mode != GAS_EXTERNAL_COMM_CAN) ||
+        !A_Can_TakeControlRequest(&context->external_can, &request))
+    {
+        return;
+    }
+    cylinder = &context->system.cylinder[request.index];
+
+    if (!context->system.platform_ready)
+    {
+        detail = A_CAN_WRITE_DETAIL_HARDWARE_NOT_READY;
+    }
+    else if (A_GasControl_IsMechanicalSwitching(&context->system))
+    {
+        detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
+    }
+    else
+    {
+        switch (request.type)
+        {
+            case A_CAN_CONTROL_EXHAUST:
+                success = request.enabled ?
+                    A_GasControl_StartExhaust(context, request.index) :
+                    A_GasControl_StopExhaust(context, request.index);
+                if (success)
+                {
+                    A_Hmi_RequestExhaustSync(&context->hmi, request.index);
+                }
+                break;
+            case A_CAN_CONTROL_TEST:
+                success = A_GasControl_SetTestValve(context,
+                                                    request.index,
+                                                    request.enabled);
+                break;
+            case A_CAN_CONTROL_DISABLE:
+                success = A_GasControl_SetCylinderDisabled(context,
+                                                          request.index,
+                                                          request.enabled);
+                break;
+            case A_CAN_CONTROL_QUALIFICATION:
+                success = A_GasControl_SetQualificationPassed(context,
+                                                             request.index,
+                                                             request.enabled);
+                if (success)
+                {
+                    A_Hmi_RequestQualificationSync(&context->hmi, request.index);
+                }
+                break;
+            default:
+                success = false;
+                break;
+        }
+
+        if (!success && request.enabled && cylinder->supply_cmd &&
+            ((request.type == A_CAN_CONTROL_EXHAUST) ||
+             (request.type == A_CAN_CONTROL_TEST)))
+        {
+            detail = A_CAN_WRITE_DETAIL_VALVE_INTERLOCK;
+        }
+        else if (!success &&
+                 ((context->system.alarm_bits & GAS_ALARM_PLATFORM_NOT_READY) != 0U))
+        {
+            detail = A_CAN_WRITE_DETAIL_HARDWARE_NOT_READY;
+        }
+    }
+
+    if (success)
+    {
+        result = A_CAN_WRITE_SUCCESS;
+        detail = A_CAN_WRITE_DETAIL_NONE;
+    }
+    A_Can_CompleteControlRequest(&context->external_can, result, detail);
+}
+
+/*
  * 函数名：A_GasControl_ProcessExternalCommand。
  * 说明：执行当前外部通讯已经校验的启动或停止命令。
  * 输入：context 为气源控制应用上下文输入输出指针。
@@ -1115,7 +1221,7 @@ static void A_GasControl_ReclassifyPressureQuality(Gas_System *system,
 
 /*
  * 函数名：A_GasControl_ProcessExternalConfig。
- * 说明：在系统安全停止时保存并应用当前外部通讯提交的运行参数。
+ * 说明：保存并应用外部通讯提交的运行参数；CAN单地址写在稳定运行中直接生效，Modbus仍要求安全停止。
  * 输入：context 为气源控制应用上下文输入输出指针。
  * 输出：无；参数处理结果写入 Modbus，并在成功时同步更新 EEPROM 和参数保持寄存器。
  */
@@ -1129,8 +1235,9 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
         return;
     }
 
-    if ((context->system.mode != GAS_MODE_STOPPED) ||
-        !A_GasControl_AllValveCommandsAreOff(&context->system))
+    if ((context->external_comm_mode == GAS_EXTERNAL_COMM_RS485) &&
+        ((context->system.mode != GAS_MODE_STOPPED) ||
+         !A_GasControl_AllValveCommandsAreOff(&context->system)))
     {
         (void) A_GasControl_UpdateExternalConfig(context, &context->config);
         A_GasControl_SetExternalConfigResult(context, GAS_EXTERNAL_CONFIG_SYSTEM_BUSY);
@@ -1147,6 +1254,15 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
 
     context->config = candidate;
     A_GasControl_ReclassifyPressureQuality(&context->system, &context->config);
+    if ((context->system.switch_state == GAS_SWITCH_LOW_CONFIRM) ||
+        (context->system.switch_state == GAS_SWITCH_NO_BACKUP))
+    {
+        context->system.switch_state = GAS_SWITCH_IDLE;
+        context->system.low_sample_count = 0U;
+        context->system.low_last_sample_ms = 0U;
+        context->system.low_start_ms = 0U;
+        // CAN稳定运行中修改阈值后重新开始尚未进入机械动作的低压判断，已经完成的阀门动作不会被追溯修改。
+    }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
     (void) A_GasControl_UpdateExternalConfig(context, &context->config);
     A_GasControl_SetExternalConfigResult(context, GAS_EXTERNAL_CONFIG_SUCCESS);
@@ -1499,6 +1615,38 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
 }
 
 /*
+ * 函数名：A_GasControl_StopExhaust。
+ * 说明：立即关闭指定气瓶排气阀并取消本次人工排气截止时间，供CAN远程关闭操作使用。
+ * 输入：context为应用上下文；index为从0开始的气瓶索引。
+ * 输出：排气阀已经关闭或成功关闭时返回true，参数或硬件无效时返回false。
+ */
+bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
+{
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    {
+        return false;
+    }
+    if (!context->system.cylinder[index].exhaust_cmd)
+    {
+        context->system.cylinder[index].exhaust_deadline_ms = 0U;
+        A_Hmi_RequestExhaustSync(&context->hmi, index);
+        return true;
+    }
+    if (!F_ValveControl_SetExhaust(&context->runtime_service.platform,
+                                   &context->system,
+                                   &context->config,
+                                   index,
+                                   false))
+    {
+        return false;
+    }
+    context->system.cylinder[index].exhaust_deadline_ms = 0U;
+    A_Hmi_RequestExhaustSync(&context->hmi, index);
+    // 关闭操作不受气瓶状态限制，成功后立即同步屏幕按钮并取消原自动关闭计时。
+    return true;
+}
+
+/*
  * 函数名：A_GasControl_SetTestValve。
  * 说明：按照串口屏开关状态打开或关闭指定测试阀，开启后按独立上限自动关闭；允许排气阀同时开启。
  * 输入：context 为应用上下文；index 为气瓶索引；on 为目标开关状态。
@@ -1717,6 +1865,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
         }
     }
     A_GasControl_ProcessExternalCommand(context);
+    A_GasControl_ProcessCanControl(context);
     A_GasControl_ProcessExternalConfig(context);
     A_GasControl_ProcessExternalLogRead(context);
     // 协议层先解析一帧请求，再由气源应用层执行控制、参数持久化或EEPROM日志读取。
