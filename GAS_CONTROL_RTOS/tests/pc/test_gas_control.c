@@ -1584,9 +1584,9 @@ static void Test_HmiConfig(void)
 
 /*
  * 函数名：Test_HmiLogQuery。
- * 说明：验证事件和常规日志全量流式筛选，事件单行输出，常规每条在统一两列表中输出压力和状态两行。
+ * 说明：验证事件和常规日志分页索引、第一页优先显示、上一页和下一页，以及常规记录双行输出。
  * 输入：无。
- * 输出：无；通过断言校验控件ID、全量逻辑数量、最新优先顺序、两列分号、快照变化提示和中文状态。
+ * 输出：无；通过断言校验控件ID、每页数量、翻页方向、索引总数、快照变化提示和中文状态。
  */
 static void Test_HmiLogQuery(void)
 {
@@ -1598,6 +1598,7 @@ static void Test_HmiLogQuery(void)
     uint16_t sent_rows;
     uint16_t clear_count;
     uint16_t status_count;
+    uint16_t page_info_count;
     uint16_t step;
     uint32_t previous_tx_count;
     uint32_t saved_next_sequence;
@@ -1658,6 +1659,7 @@ static void Test_HmiLogQuery(void)
     sent_rows = 0U;
     clear_count = 0U;
     status_count = 0U;
+    page_info_count = 0U;
     first_event_saved = false;
     previous_tx_count = g_test_state.hmi_tx_count;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
@@ -1703,8 +1705,21 @@ static void Test_HmiLogQuery(void)
         }
         else if (g_test_state.hmi_tx[2] == 0x10U)
         {
-            status_count++;
-            assert(g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_STATUS_CONTROL_ID);
+            if (g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_STATUS_CONTROL_ID)
+            {
+                status_count++;
+            }
+            else
+            {
+                assert(g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_PAGE_INFO_CONTROL_ID);
+                page_info_count++;
+                if (page_info_count == 1U)
+                {
+                    assert(!gas.hmi_log.index_complete);
+                    assert(gas.hmi_log.scanned_count < log_count);
+                    // 第一页必须在完整索引统计结束之前送达，保证刷新后的可见响应速度。
+                }
+            }
         }
         else
         {
@@ -1713,17 +1728,64 @@ static void Test_HmiLogQuery(void)
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert((clear_count == 1U) &&
-           (sent_rows == event_count) &&
-           (status_count >= 2U));
+           (sent_rows == A_HMI_EVENT_LOG_VISIBLE_COUNT) &&
+           (status_count >= 2U) &&
+           (page_info_count >= 2U));
     assert((first_event_length >= 19U) &&
            (memcmp(first_event_text, "2026-08-22 10:30:19", 19U) == 0));
     assert((gas.hmi_log.scan_logical_index == 0U) &&
-           (gas.hmi_log.scanned_count == log_count));
-    // 全量模式必须扫描快照内所有原始日志，但只发送当前类型。
+           (gas.hmi_log.scanned_count == log_count) &&
+           gas.hmi_log.index_complete &&
+           (gas.hmi_log.matched_count == event_count) &&
+           (gas.hmi_log.current_page == 0U));
+    // 后台仍需扫描完整快照以建立索引，但串口屏只接收当前页15条事件日志。
+
+    sent_rows = 0U;
+    clear_count = 0U;
+    previous_tx_count = g_test_state.hmi_tx_count;
+    assert(A_HmiLog_RequestPage(&gas.hmi_log,
+                                A_HMI_LOG_QUERY_EVENT,
+                                A_HMI_LOG_PAGE_NEXT));
+    for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+        if (previous_tx_count == g_test_state.hmi_tx_count)
+        {
+            continue;
+        }
+        previous_tx_count = g_test_state.hmi_tx_count;
+        if (g_test_state.hmi_tx[2] == 0x53U)
+        {
+            clear_count++;
+        }
+        else if (g_test_state.hmi_tx[2] == 0x52U)
+        {
+            sent_rows++;
+        }
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert((gas.hmi_log.current_page == 1U) &&
+           (clear_count == 1U) &&
+           (sent_rows == (((uint16_t) (event_count - A_HMI_EVENT_LOG_VISIBLE_COUNT) >
+                            A_HMI_EVENT_LOG_VISIBLE_COUNT) ?
+                           A_HMI_EVENT_LOG_VISIBLE_COUNT :
+                           (uint16_t) (event_count - A_HMI_EVENT_LOG_VISIBLE_COUNT))));
+
+    assert(A_HmiLog_RequestPage(&gas.hmi_log,
+                                A_HMI_LOG_QUERY_EVENT,
+                                A_HMI_LOG_PAGE_PREVIOUS));
+    for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert(gas.hmi_log.current_page == 0U);
+    // “下一页”增加页码并查看更早记录，“上一页”减少页码并返回更新记录。
 
     sent_rows = 0U;
     clear_count = 0U;
     status_count = 0U;
+    page_info_count = 0U;
     regular_send_phase = 0U;
     regular_content_cleared = false;
     previous_tx_count = g_test_state.hmi_tx_count;
@@ -1786,8 +1848,20 @@ static void Test_HmiLogQuery(void)
         }
         else if (g_test_state.hmi_tx[2] == 0x10U)
         {
-            status_count++;
-            assert(g_test_state.hmi_tx[6] == A_HMI_REGULAR_LOG_STATUS_CONTROL_ID);
+            if (g_test_state.hmi_tx[6] == A_HMI_REGULAR_LOG_STATUS_CONTROL_ID)
+            {
+                status_count++;
+            }
+            else
+            {
+                assert(g_test_state.hmi_tx[6] == A_HMI_REGULAR_LOG_PAGE_INFO_CONTROL_ID);
+                page_info_count++;
+                if (page_info_count == 1U)
+                {
+                    assert(!gas.hmi_log.index_complete);
+                    assert(gas.hmi_log.scanned_count < log_count);
+                }
+            }
         }
         else
         {
@@ -1797,10 +1871,57 @@ static void Test_HmiLogQuery(void)
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(regular_send_phase == 0U);
     assert((clear_count == 1U) && regular_content_cleared &&
-            (sent_rows == (uint16_t) (regular_count * 2U)) &&
-            (status_count >= 2U));
+            (sent_rows == (uint16_t) (A_HMI_REGULAR_LOG_VISIBLE_COUNT * 2U)) &&
+            (status_count >= 2U) && (page_info_count >= 2U));
     assert((gas.hmi_log.scan_logical_index == 0U) &&
-           (gas.hmi_log.scanned_count == log_count));
+           (gas.hmi_log.scanned_count == log_count) &&
+           gas.hmi_log.index_complete &&
+           (gas.hmi_log.matched_count == regular_count) &&
+           (gas.hmi_log.current_page == 0U));
+
+    sent_rows = 0U;
+    clear_count = 0U;
+    previous_tx_count = g_test_state.hmi_tx_count;
+    assert(A_HmiLog_RequestPage(&gas.hmi_log,
+                                A_HMI_LOG_QUERY_REGULAR,
+                                A_HMI_LOG_PAGE_NEXT));
+    for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+        if (previous_tx_count == g_test_state.hmi_tx_count)
+        {
+            continue;
+        }
+        previous_tx_count = g_test_state.hmi_tx_count;
+        if (g_test_state.hmi_tx[2] == 0x53U)
+        {
+            clear_count++;
+        }
+        else if (g_test_state.hmi_tx[2] == 0x52U)
+        {
+            sent_rows++;
+        }
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert((gas.hmi_log.current_page == 1U) &&
+           (clear_count == 1U) &&
+           (sent_rows == (uint16_t) (((((uint16_t) (regular_count -
+                                                    A_HMI_REGULAR_LOG_VISIBLE_COUNT) >
+                                        A_HMI_REGULAR_LOG_VISIBLE_COUNT) ?
+                                       A_HMI_REGULAR_LOG_VISIBLE_COUNT :
+                                       (uint16_t) (regular_count -
+                                                   A_HMI_REGULAR_LOG_VISIBLE_COUNT)) * 2U))));
+
+    assert(A_HmiLog_RequestPage(&gas.hmi_log,
+                                A_HMI_LOG_QUERY_REGULAR,
+                                A_HMI_LOG_PAGE_LATEST));
+    for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert(gas.hmi_log.current_page == 0U);
+    // “最新页”直接返回零起始页0，不重新扫描已经完成的EEPROM日志索引。
 
     saved_next_sequence = gas.log_service.next_sequence;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
@@ -1857,6 +1978,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.03三阀七状态、待测试门槛、低压自动撤销测试结论、51至56号按钮双向同步、CAN/RS485双外部通讯、EEPROM日志、参数设置、总压力、串口屏时间与状态高亮、事件与常规日志全量流式滑动查询测试通过。");
+    puts("V1.04三阀七状态、待测试门槛、CAN/RS485双外部通讯、EEPROM日志、运行参数、串口屏状态高亮、事件15条分页与常规10条分页查询测试通过。");
     return 0;
 }

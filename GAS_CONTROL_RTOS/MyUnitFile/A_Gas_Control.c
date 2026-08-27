@@ -706,12 +706,48 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     else if ((button_id == A_HMI_EVENT_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
         success = A_HmiLog_Request(&context->hmi_log, A_HMI_LOG_QUERY_EVENT);
-        // 事件日志按钮只提交查询类型，全量筛选和流式发送由后续周期分步完成。
+        // 刷新事件日志时重建单类型RAM索引，并优先显示最新的第1页。
     }
     else if ((button_id == A_HMI_REGULAR_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
         success = A_HmiLog_Request(&context->hmi_log, A_HMI_LOG_QUERY_REGULAR);
-        // 常规日志按钮提交独立查询，全部记录在统一两列控件中按压力行和状态行显示。
+        // 刷新常规日志时重建索引，每页10条并保持单条压力、状态双行格式。
+    }
+    else if ((button_id == A_HMI_EVENT_LOG_LATEST_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_EVENT,
+                                       A_HMI_LOG_PAGE_LATEST);
+    }
+    else if ((button_id == A_HMI_EVENT_LOG_PREVIOUS_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_EVENT,
+                                       A_HMI_LOG_PAGE_PREVIOUS);
+    }
+    else if ((button_id == A_HMI_EVENT_LOG_NEXT_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_EVENT,
+                                       A_HMI_LOG_PAGE_NEXT);
+    }
+    else if ((button_id == A_HMI_REGULAR_LOG_LATEST_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_REGULAR,
+                                       A_HMI_LOG_PAGE_LATEST);
+    }
+    else if ((button_id == A_HMI_REGULAR_LOG_PREVIOUS_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_REGULAR,
+                                       A_HMI_LOG_PAGE_PREVIOUS);
+    }
+    else if ((button_id == A_HMI_REGULAR_LOG_NEXT_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiLog_RequestPage(&context->hmi_log,
+                                       A_HMI_LOG_QUERY_REGULAR,
+                                       A_HMI_LOG_PAGE_NEXT);
     }
     else if ((button_id == A_HMI_CONFIG_MENU_BUTTON_ID) && (value != 0U))
     {

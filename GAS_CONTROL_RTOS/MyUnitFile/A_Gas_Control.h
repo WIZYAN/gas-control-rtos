@@ -29,7 +29,7 @@ typedef struct
     gas_external_comm_mode_t external_comm_mode; // 当前实际启用的外部通讯模式。
     A_Hmi_Context hmi;                       // SCI9 大彩串口屏实例。
     A_Hmi_Config_Context hmi_config;         // 密码保护的11项可见参数编辑、完整参数校验和反馈实例。
-    A_Hmi_Log_Context hmi_log;               // 串口屏事件和常规日志全量流式滑动查询实例。
+    A_Hmi_Log_Context hmi_log;               // 串口屏事件15条、常规10条分页索引查询实例。
     A_Storage_Context storage_service;       // 软件 IIC 和 AT24C256 存储实例。
     A_Gas_Log_Context log_service;           // AT24C256常规记录和状态事件循环日志实例。
 } A_Gas_Control_Context;

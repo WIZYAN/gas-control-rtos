@@ -6,10 +6,12 @@ import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 
 
-# 输出目录和现有大彩工程仅用于生成新画面，不修改原始工程。
+# 输出目录和现有大彩工程仅用于生成新画面，不修改历史发布工程。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR / "GasControl_HMI_V1.02"
-SOURCE_PROJECT = Path(r"E:\project\Gas_control\Project")
+PROJECT_VERSION = "1.04"
+PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
+PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
+SOURCE_PROJECT = SCRIPT_DIR / "GasControl_HMI_V1.02"
 
 WIDTH = 1024
 HEIGHT = 600
@@ -455,8 +457,8 @@ def create_log_backgrounds(images_dir: Path) -> None:
         draw_centered(event_draw, (event_column_x[index], 103, event_column_x[index + 1], 133),
                       text, FONT_16, (223, 240, 249))
     event_draw.rectangle((0, 570, WIDTH, HEIGHT), fill=(10, 24, 39))
-    event_draw.text((20, 576), "说明：任一气瓶业务状态发生变化时生成一条事件记录。",
-                    font=FONT_14, fill=(163, 190, 207))
+    for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
+        draw_button(event_draw, box, "", (26, 68, 96), (69, 165, 205))
     event_image.save(images_dir / "Screen2.png")
 
     event_down = event_image.copy()
@@ -467,6 +469,8 @@ def create_log_backgrounds(images_dir: Path) -> None:
                 (180, 112, 22), (248, 183, 66), True)
     draw_button(event_down_draw, (846, 17, 1008, 67), "主菜单",
                 (24, 109, 151), (69, 214, 255), True)
+    for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
+        draw_button(event_down_draw, box, "", (24, 109, 151), (69, 214, 255), True)
     event_down.save(images_dir / "Screen2_down.png")
 
     regular_image = Image.new("RGB", (WIDTH, HEIGHT), (8, 18, 31))
@@ -484,8 +488,8 @@ def create_log_backgrounds(images_dir: Path) -> None:
     draw_centered(regular_draw, (18, 103, 235, 133), "时间", FONT_16, (223, 240, 249))
     draw_centered(regular_draw, (235, 103, 1006, 133), "记录内容", FONT_16, (223, 240, 249))
     regular_draw.rectangle((0, 570, WIDTH, HEIGHT), fill=(10, 24, 39))
-    regular_draw.text((20, 576), "说明：常规日志每30分钟生成一条运行记录，显示各气瓶压力及运行状态。",
-                      font=FONT_14, fill=(163, 190, 207))
+    for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
+        draw_button(regular_draw, box, "", (26, 68, 96), (69, 165, 205))
     regular_image.save(images_dir / "Screen3.png")
 
     regular_down = regular_image.copy()
@@ -496,6 +500,8 @@ def create_log_backgrounds(images_dir: Path) -> None:
                 (180, 112, 22), (248, 183, 66), True)
     draw_button(regular_down_draw, (846, 17, 1008, 67), "主菜单",
                 (24, 109, 151), (69, 214, 255), True)
+    for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
+        draw_button(regular_down_draw, box, "", (24, 109, 151), (69, 214, 255), True)
     regular_down.save(images_dir / "Screen3_down.png")
 
 
@@ -709,7 +715,7 @@ def add_parameter_input_item(root, name: str, control_id: int,
 def add_event_record_item(root) -> None:
     """
     函数名：add_event_record_item。
-    说明：添加一屏显示15行、最多保存1017条并可滑动的四列事件日志控件。
+    说明：添加一屏固定显示15行且不启用内部滚动条的四列事件日志分页控件。
     输入：root为事件日志画面节点。
     输出：无。
     """
@@ -720,18 +726,18 @@ def add_event_record_item(root) -> None:
         "grid_color": "38;75;99", "show_background": "1", "background_color": "10;27;44",
         "record_type": "3", "new_record_first": "0", "alignment": "0",
         "record_item_count": "4", "record_item_width": "24;10;42;24;",
-        "visiable_record_count": "15", "max_record_count": "1017", "sizeof_one_record": "96",
+        "visiable_record_count": "15", "max_record_count": "15", "sizeof_one_record": "96",
         "save_sdram": "1", "flash_block": "0", "record_flash_address": "0",
         "event_enum": "0", "event_value": "", "event_color": "", "event_string": "",
         "event_compare": "", "allow_select": "0", "select_color": "28;174;216",
-        "allow_sliding": "1", "icon": "", "hide_vscroll_bar": "0", "show_number": "0"
+        "allow_sliding": "0", "icon": "", "hide_vscroll_bar": "1", "show_number": "0"
     })
 
 
 def add_regular_record_item(root) -> None:
     """
     函数名：add_regular_record_item。
-    说明：添加时间与内容统一滑动的两列常规日志控件，每条逻辑记录占两行。
+    说明：添加一页20行的两列常规日志控件，每条逻辑记录占压力和状态两行且不启用内部滑动。
     输入：root为常规日志画面节点。
     输出：无。
     """
@@ -742,11 +748,11 @@ def add_regular_record_item(root) -> None:
         "grid_color": "38;75;99", "show_background": "1", "background_color": "10;27;44",
         "record_type": "3", "new_record_first": "0", "alignment": "0",
         "record_item_count": "2", "record_item_width": "22;78;",
-        "visiable_record_count": "20", "max_record_count": "2034", "sizeof_one_record": "128",
+        "visiable_record_count": "20", "max_record_count": "20", "sizeof_one_record": "128",
         "save_sdram": "1", "flash_block": "0", "record_flash_address": "0",
         "event_enum": "0", "event_value": "", "event_color": "", "event_string": "",
         "event_compare": "", "allow_select": "0", "select_color": "28;174;216",
-        "allow_sliding": "1", "icon": "", "hide_vscroll_bar": "0", "show_number": "0"
+        "allow_sliding": "0", "icon": "", "hide_vscroll_bar": "1", "show_number": "0"
     })
 
 
@@ -849,7 +855,7 @@ def create_menu_screen_file(project_dir: Path) -> None:
 def create_event_log_screen_file(project_dir: Path) -> None:
     """
     函数名：create_event_log_screen_file。
-    说明：生成Screen2事件日志画面，包含全部记录滑动查询、常规页签和主菜单按钮。
+    说明：生成Screen2事件日志画面，包含15条分页、刷新、最新页、上一页和下一页按钮。
     输入：project_dir为大彩工程输出目录。
     输出：无。
     """
@@ -869,6 +875,14 @@ def create_event_log_screen_file(project_dir: Path) -> None:
                           846, 17, 162, 50)
     add_navigation_button(root, "Event_To_Regular_Log", 69, "Screen3", "Screen2_down.png",
                           375, 17, 155, 50)
+    add_button_item(root, "Event_Log_Latest", 119, False, 18, 568, 108, 30,
+                    "Screen2_down.png", "最新页")
+    add_button_item(root, "Event_Log_Previous", 120, False, 136, 568, 108, 30,
+                    "Screen2_down.png", "上一页")
+    add_button_item(root, "Event_Log_Next", 121, False, 254, 568, 108, 30,
+                    "Screen2_down.png", "下一页")
+    add_text_item(root, "Event_Log_Page_Info", 122, "第0/0页 共0条", 4,
+                  "163;207;229", 382, 570, 624, 26, 2, 1)
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     tree.write(project_dir / "Screen2.tft", encoding="utf-8", xml_declaration=True)
@@ -877,7 +891,7 @@ def create_event_log_screen_file(project_dir: Path) -> None:
 def create_regular_log_screen_file(project_dir: Path) -> None:
     """
     函数名：create_regular_log_screen_file。
-    说明：生成Screen3常规日志画面，全部记录在统一两列控件中以压力行和状态行滑动显示。
+    说明：生成Screen3常规日志画面，每页10条并提供刷新、最新页、上一页和下一页按钮。
     输入：project_dir为大彩工程输出目录。
     输出：无。
     """
@@ -897,6 +911,14 @@ def create_regular_log_screen_file(project_dir: Path) -> None:
                           846, 17, 162, 50)
     add_navigation_button(root, "Regular_To_Event_Log", 70, "Screen2", "Screen3_down.png",
                           210, 17, 155, 50)
+    add_button_item(root, "Regular_Log_Latest", 123, False, 18, 568, 108, 30,
+                    "Screen3_down.png", "最新页")
+    add_button_item(root, "Regular_Log_Previous", 124, False, 136, 568, 108, 30,
+                    "Screen3_down.png", "上一页")
+    add_button_item(root, "Regular_Log_Next", 125, False, 254, 568, 108, 30,
+                    "Screen3_down.png", "下一页")
+    add_text_item(root, "Regular_Log_Page_Info", 126, "第0/0页 共0条", 4,
+                  "163;207;229", 382, 570, 624, 26, 2, 1)
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     tree.write(project_dir / "Screen3.tft", encoding="utf-8", xml_declaration=True)
@@ -998,7 +1020,7 @@ def create_project_file(project_dir: Path) -> None:
     输出：无。
     """
     attributes = {
-        "Name": "GasControl_HMI_V1.02", "OutputDirectory": "output\\", "StartupPage": "Screen0",
+        "Name": PROJECT_NAME, "OutputDirectory": "output\\", "StartupPage": "Screen0",
         "StartupAction": "", "StartupActionLoop": "1", "DeviceType": "19512", "DeviceEnableControl": "1",
         "DeviceEnableTouchPane": "1", "DeviceEnableBuzzer": "2", "DeviceEnableCRC": "0",
         "DeviceBaudRate": "7", "DeviceCoordinateUpdateMode": "4", "DeviceControlNotify": "3",
@@ -1015,7 +1037,7 @@ def create_project_file(project_dir: Path) -> None:
         "WifiMode": "0", "WifiSSID": "", "WifiPassword": "", "FlashType": "2",
         "PartitionSize0": "100", "PartitionSize1": "10", "PartitionSize2": "0", "Repartition": "1",
         "FormatPartition": "1", "UartDownloadSpeed": "0", "PKGSetting": "0", "PKGControl": "1",
-        "PKGImage": "1", "PKGFont": "1", "PKGOther": "1", "Version": "1.02",
+        "PKGImage": "1", "PKGFont": "1", "PKGOther": "1", "Version": PROJECT_VERSION,
         "EnableSlidingRange": "0", "EnableKeysound": "0", "BacklightAutoControl": "0",
         "BacklightNotify": "0", "StandbyPage": "", "ServerPort": "5050", "WifiSSI": ""
     }
@@ -1031,7 +1053,7 @@ def create_project_file(project_dir: Path) -> None:
     ET.SubElement(root, "Waves")
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
-    tree.write(project_dir / "GasControl_HMI_V1.02.tftprj", encoding="utf-8", xml_declaration=True)
+    tree.write(project_dir / f"{PROJECT_NAME}.tftprj", encoding="utf-8", xml_declaration=True)
 
 
 def copy_project_resources(project_dir: Path) -> None:
@@ -1049,9 +1071,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT 画面工程。
+    说明：生成完整的大彩 VisualTFT V1.04分页日志画面工程。
     输入：无。
-    输出：无；所有文件输出到 GasControl_HMI_V1.02 目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.04目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)

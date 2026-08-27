@@ -263,6 +263,48 @@ static uint16_t A_HmiLog_GetStatusControlId(A_Hmi_Log_Query_Type query_type)
 }
 
 /*
+ * 函数名：A_HmiLog_GetPageInfoControlId。
+ * 说明：根据查询类型选择事件或常规日志页码文本控件ID。
+ * 输入：query_type为当前日志查询类型。
+ * 输出：返回目标页码文本控件ID。
+ */
+static uint16_t A_HmiLog_GetPageInfoControlId(A_Hmi_Log_Query_Type query_type)
+{
+    return (query_type == A_HMI_LOG_QUERY_REGULAR) ?
+           A_HMI_REGULAR_LOG_PAGE_INFO_CONTROL_ID : A_HMI_EVENT_LOG_PAGE_INFO_CONTROL_ID;
+}
+
+/*
+ * 函数名：A_HmiLog_GetPageSize。
+ * 说明：根据查询类型取得每页能够显示的逻辑日志数量。
+ * 输入：query_type为当前日志查询类型。
+ * 输出：常规日志返回10，事件日志返回15。
+ */
+static uint16_t A_HmiLog_GetPageSize(A_Hmi_Log_Query_Type query_type)
+{
+    return (query_type == A_HMI_LOG_QUERY_REGULAR) ?
+           A_HMI_REGULAR_LOG_VISIBLE_COUNT : A_HMI_EVENT_LOG_VISIBLE_COUNT;
+}
+
+/*
+ * 函数名：A_HmiLog_GetPageCount。
+ * 说明：根据已经建立的单类型索引数量计算当前已知的总页数。
+ * 输入：context为只读日志查询上下文。
+ * 输出：没有匹配日志时返回0，否则返回向上取整后的页数。
+ */
+static uint16_t A_HmiLog_GetPageCount(const A_Hmi_Log_Context *context)
+{
+    uint16_t page_size;
+
+    if ((context == NULL) || (context->matched_count == 0U))
+    {
+        return 0U;
+    }
+    page_size = A_HmiLog_GetPageSize(context->query_type);
+    return (uint16_t) ((context->matched_count + page_size - 1U) / page_size);
+}
+
+/*
  * 函数名：A_HmiLog_GetRecordType。
  * 说明：把串口屏查询类型转换为EEPROM日志记录类型编码。
  * 输入：query_type为当前日志查询类型。
@@ -411,7 +453,7 @@ static size_t A_HmiLog_FormatEventRow(const uint8_t *record,
 
 /*
  * 函数名：A_HmiLog_StartRequest。
- * 说明：保存日志流水号快照并初始化指定类型日志的清表和扫描过程。
+ * 说明：保存日志流水号快照，清空旧索引并启动指定类型日志的第一页优先分页查询。
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：无；查询状态切换到清表步骤。
  */
@@ -429,11 +471,21 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
     context->read_failed = !A_GasLog_IsReady(context->log);
     context->snapshot_changed = false;
     context->progress_pending = false;
+    context->index_complete = false;
+    context->cache_valid = !context->read_failed;
+    context->page_rendered = false;
+    context->table_is_clear = false;
+    context->page_request_pending = true;
+    context->current_page = 0U;
+    context->requested_page = 0U;
+    context->page_start_index = 0U;
+    context->page_end_index = 0U;
+    context->page_cursor = 0U;
     context->total_count = A_GasLog_GetCount(context->log);
     context->scan_logical_index = context->total_count;
     context->snapshot_next_sequence = context->log->next_sequence;
     context->state = A_HMI_LOG_QUERY_CLEAR;
-    // 每次请求都建立快照，从最新端单遍扫描并流式发送全部匹配记录。
+    // 第1页索引满足后立即显示，同时保留后台扫描进度以继续建立完整分页索引。
 }
 
 /*
@@ -445,16 +497,20 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
 static void A_HmiLog_FailAndClear(A_Hmi_Log_Context *context)
 {
     context->read_failed = true;
+    context->cache_valid = false;
+    context->index_complete = true;
     context->row_ready = false;
     context->current_record_ready = false;
     context->regular_line_phase = 0U;
     context->progress_pending = false;
+    context->page_request_pending = false;
+    context->table_is_clear = false;
     context->state = A_HMI_LOG_QUERY_CLEAR;
 }
 
 /*
  * 函数名：A_HmiLog_ScanOneRecord。
- * 说明：从快照最新端向旧端读取一条日志，匹配时直接保存为待发记录。
+ * 说明：从快照最新端向旧端读取一条日志，把匹配记录的逻辑位置加入RAM分页索引。
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：本条读取及校验成功时返回true，否则返回false。
  */
@@ -475,9 +531,13 @@ static bool A_HmiLog_ScanOneRecord(A_Hmi_Log_Context *context)
     context->scanned_count++;
     if (context->current_record[0] == A_HmiLog_GetRecordType(context->query_type))
     {
+        if (context->matched_count >= A_HMI_LOG_INDEX_CAPACITY)
+        {
+            return false;
+        }
+        context->log_index[context->matched_count] = logical_index;
         context->matched_count++;
-        context->current_record_ready = true;
-        context->regular_line_phase = 0U;
+        // 索引按扫描顺序从最新到最旧保存，翻页时无需再次遍历前面的原始日志。
     }
     if (((context->scanned_count % A_HMI_LOG_PROGRESS_INTERVAL) == 0U) &&
         (context->scan_logical_index > 0U))
@@ -519,6 +579,125 @@ static bool A_HmiLog_FormatCurrentRow(A_Hmi_Log_Context *context)
 }
 
 /*
+ * 函数名：A_HmiLog_IsRequestedPageAvailable。
+ * 说明：判断当前RAM索引是否已经足够显示请求页；最后一页允许在索引完成后不足整页。
+ * 输入：context为只读日志查询上下文。
+ * 输出：请求页现在能够完整显示时返回true，否则返回false。
+ */
+static bool A_HmiLog_IsRequestedPageAvailable(const A_Hmi_Log_Context *context)
+{
+    uint32_t required_count;
+    uint16_t page_count;
+    uint16_t page_size;
+
+    if ((context == NULL) || (context->matched_count == 0U))
+    {
+        return false;
+    }
+    page_size = A_HmiLog_GetPageSize(context->query_type);
+    required_count = ((uint32_t) context->requested_page + 1UL) * page_size;
+    if (!context->index_complete)
+    {
+        return ((uint32_t) context->matched_count >= required_count);
+    }
+    page_count = A_HmiLog_GetPageCount(context);
+    return (context->requested_page < page_count);
+}
+
+/*
+ * 函数名：A_HmiLog_StartPage。
+ * 说明：根据已建立的RAM索引准备请求页的起止位置，并进入清表或读记录步骤。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；页面游标和状态在context中更新。
+ */
+static void A_HmiLog_StartPage(A_Hmi_Log_Context *context)
+{
+    uint32_t end_index;
+    uint16_t page_size = A_HmiLog_GetPageSize(context->query_type);
+
+    context->current_page = context->requested_page;
+    context->page_start_index = (uint16_t) ((uint32_t) context->current_page * page_size);
+    end_index = (uint32_t) context->page_start_index + page_size;
+    context->page_end_index = (end_index > context->matched_count) ?
+                              context->matched_count : (uint16_t) end_index;
+    context->page_cursor = context->page_start_index;
+    context->sent_count = 0U;
+    context->regular_line_phase = 0U;
+    context->current_record_ready = false;
+    context->row_ready = false;
+    context->row_length = 0U;
+    context->page_request_pending = false;
+    context->state = context->table_is_clear ?
+                     A_HMI_LOG_QUERY_PAGE_READ : A_HMI_LOG_QUERY_PAGE_CLEAR;
+}
+
+/*
+ * 函数名：A_HmiLog_ProcessPageRequest。
+ * 说明：在索引数量允许时启动请求页；索引未完成时继续后台扫描，越界页在完成后钳位到最后一页。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；查询状态切换到页面读取、索引扫描或页码提示。
+ */
+static void A_HmiLog_ProcessPageRequest(A_Hmi_Log_Context *context)
+{
+    uint16_t page_count;
+
+    if (!context->page_request_pending)
+    {
+        return;
+    }
+    if (!context->index_complete && !A_HmiLog_IsRequestedPageAvailable(context))
+    {
+        context->state = A_HMI_LOG_QUERY_SCAN;
+        return;
+    }
+
+    page_count = A_HmiLog_GetPageCount(context);
+    if (page_count == 0U)
+    {
+        context->page_request_pending = false;
+        context->current_page = 0U;
+        context->state = A_HMI_LOG_QUERY_PAGE_INFO;
+        return;
+    }
+    if (context->requested_page >= page_count)
+    {
+        context->requested_page = (uint16_t) (page_count - 1U);
+    }
+    if (context->page_rendered && (context->requested_page == context->current_page))
+    {
+        context->page_request_pending = false;
+        context->state = A_HMI_LOG_QUERY_PAGE_INFO;
+        return;
+    }
+    A_HmiLog_StartPage(context);
+}
+
+/*
+ * 函数名：A_HmiLog_FinishIndex。
+ * 说明：完成当前类型索引统计，并显示等待中的目标页或更新现有页面的准确页数。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；索引标记和后续分页状态在context中更新。
+ */
+static void A_HmiLog_FinishIndex(A_Hmi_Log_Context *context)
+{
+    context->index_complete = true;
+    context->progress_pending = false;
+    if (!context->page_rendered && !context->page_request_pending)
+    {
+        context->requested_page = 0U;
+        context->page_request_pending = true;
+    }
+    if (context->page_request_pending)
+    {
+        A_HmiLog_ProcessPageRequest(context);
+    }
+    else
+    {
+        context->state = A_HMI_LOG_QUERY_PAGE_INFO;
+    }
+}
+
+/*
  * 函数名：A_HmiLog_SendProgress。
  * 说明：向当前日志画面发送“扫描 已处理/快照总数”进度文本。
  * 输入：context为日志查询上下文输入输出指针。
@@ -527,7 +706,7 @@ static bool A_HmiLog_FormatCurrentRow(A_Hmi_Log_Context *context)
 static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
 {
     const char scan_text[] = "\xC9\xA8\xC3\xE8\x20"; // 扫描。
-    char status[24];
+    char status[A_HMI_LOG_STATUS_MAX_SIZE];
     size_t length = 0U;
 
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
@@ -562,7 +741,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
     const char changed_text[] = "\xC8\xD5\xD6\xBE\xD2\xD1\xB8\xFC\xD0\xC2"; // 日志已更新。
     const char error_text[] = "\xB6\xC1\xC8\xA1\xB4\xED\xCE\xF3"; // 读取错误。
     const char rtc_text[] = "\xCA\xB1\xBC\xE4\xCE\xDE\xD0\xA7"; // 时间无效。
-    char status[24];
+    char status[A_HMI_LOG_STATUS_MAX_SIZE];
     const char *fixed_text = NULL;
     size_t fixed_length = 0U;
     size_t length = 0U;
@@ -598,7 +777,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
                              (sizeof(regular_text) - 1U) : (sizeof(event_text) - 1U);
 
         if (!A_HmiLog_AppendBytes(status, &length, sizeof(status), type_text, type_length) ||
-            !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), context->sent_count, 1U) ||
+            !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), context->matched_count, 1U) ||
             !A_HmiLog_AppendBytes(status, &length, sizeof(status),
                                   count_text, sizeof(count_text) - 1U))
         {
@@ -614,8 +793,72 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
 }
 
 /*
+ * 函数名：A_HmiLog_SendPageInfo。
+ * 说明：向当前日志画面发送页码、总页数、已匹配条数或后台统计状态。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：成功启动发送时返回true，否则返回false并在后续周期重试。
+ */
+static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
+{
+    const char first_text[] = "\xB5\xDA"; // 第。
+    const char page_text[] = "\xD2\xB3"; // 页。
+    const char total_text[] = "\xB9\xB2"; // 共。
+    const char count_text[] = "\xCC\xF5"; // 条。
+    const char counting_text[] = "\xCD\xB3\xBC\xC6\xD6\xD0"; // 统计中。
+    char status[A_HMI_LOG_STATUS_MAX_SIZE];
+    uint16_t page_count = A_HmiLog_GetPageCount(context);
+    uint16_t display_page = (context->matched_count == 0U) ?
+                            0U : (uint16_t) (context->current_page + 1U);
+    size_t length = 0U;
+
+    if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
+                              first_text, sizeof(first_text) - 1U) ||
+        !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), display_page, 1U))
+    {
+        return false;
+    }
+    if (context->index_complete)
+    {
+        if (!A_HmiLog_AppendChar(status, &length, sizeof(status), '/') ||
+            !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), page_count, 1U))
+        {
+            return false;
+        }
+    }
+    if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
+                              page_text, sizeof(page_text) - 1U) ||
+        !A_HmiLog_AppendChar(status, &length, sizeof(status), ' '))
+    {
+        return false;
+    }
+    if (!context->index_complete)
+    {
+        if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
+                                  counting_text, sizeof(counting_text) - 1U))
+        {
+            return false;
+        }
+    }
+    else if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
+                                   total_text, sizeof(total_text) - 1U) ||
+             !A_HmiLog_AppendUnsigned(status, &length, sizeof(status),
+                                     context->matched_count, 1U) ||
+             !A_HmiLog_AppendBytes(status, &length, sizeof(status),
+                                  count_text, sizeof(count_text) - 1U))
+    {
+        return false;
+    }
+
+    return F_Hmi_SendText(&context->hmi->function,
+                          A_HmiLog_GetPageId(context->query_type),
+                          A_HmiLog_GetPageInfoControlId(context->query_type),
+                          status,
+                          length);
+}
+
+/*
  * 函数名：A_HmiLog_Init。
- * 说明：初始化串口屏日志查询实例，并关联HMI、EEPROM日志和气源系统状态。
+ * 说明：初始化串口屏分页日志实例，并关联HMI、EEPROM日志和气源系统状态。
  * 输入：context为日志查询上下文；hmi为HMI应用实例；log为EEPROM日志实例；system为气源系统只读实例。
  * 输出：参数有效时返回true，否则返回false。
  */
@@ -641,7 +884,7 @@ bool A_HmiLog_Init(A_Hmi_Log_Context *context,
 
 /*
  * 函数名：A_HmiLog_Request。
- * 说明：请求按指定类型重新加载全部日志，实际EEPROM读取和串口发送由任务分步完成。
+ * 说明：请求刷新指定类型日志，实际索引建立、第一页显示和后台统计由任务分步完成。
  * 输入：context为日志查询上下文；query_type为事件日志或常规日志类型。
  * 输出：模块已初始化且查询类型有效时返回true，否则返回false。
  */
@@ -660,8 +903,67 @@ bool A_HmiLog_Request(A_Hmi_Log_Context *context,
 }
 
 /*
+ * 函数名：A_HmiLog_RequestPage。
+ * 说明：请求显示指定日志类型的最新页、上一页或下一页；没有对应索引时自动从第1页开始刷新。
+ * 输入：context为日志查询上下文；query_type为事件或常规日志；command为翻页命令。
+ * 输出：请求参数有效并已被接收时返回true，否则返回false。
+ */
+bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
+                          A_Hmi_Log_Query_Type query_type,
+                          A_Hmi_Log_Page_Command command)
+{
+    uint16_t base_page;
+
+    if ((context == NULL) || !context->ready ||
+        ((query_type != A_HMI_LOG_QUERY_EVENT) &&
+         (query_type != A_HMI_LOG_QUERY_REGULAR)) ||
+        ((command != A_HMI_LOG_PAGE_LATEST) &&
+         (command != A_HMI_LOG_PAGE_PREVIOUS) &&
+         (command != A_HMI_LOG_PAGE_NEXT)))
+    {
+        return false;
+    }
+
+    if (!context->cache_valid || (context->query_type != query_type))
+    {
+        return A_HmiLog_Request(context, query_type);
+    }
+    if (context->snapshot_changed ||
+        (context->log->next_sequence != context->snapshot_next_sequence))
+    {
+        context->snapshot_changed = true;
+        context->page_request_pending = false;
+        if (context->state == A_HMI_LOG_QUERY_IDLE)
+        {
+            context->state = A_HMI_LOG_QUERY_STATUS;
+        }
+        // 已失效的逻辑索引不能继续翻页，保留当前页并提示人员使用刷新按钮。
+        return true;
+    }
+
+    base_page = context->page_request_pending ?
+                context->requested_page : context->current_page;
+    if (command == A_HMI_LOG_PAGE_LATEST)
+    {
+        context->requested_page = 0U;
+    }
+    else if (command == A_HMI_LOG_PAGE_PREVIOUS)
+    {
+        context->requested_page = (base_page > 0U) ?
+                                  (uint16_t) (base_page - 1U) : 0U;
+    }
+    else
+    {
+        context->requested_page = (base_page < UINT16_MAX) ?
+                                  (uint16_t) (base_page + 1U) : base_page;
+    }
+    context->page_request_pending = true;
+    return true;
+}
+
+/*
  * 函数名：A_HmiLog_Task。
- * 说明：非阻塞执行清表、类型扫描、记录格式转换和串口发送，每次调用最多读取或发送一行数据。
+ * 说明：非阻塞执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多读一条或发一行。
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：无；查询进度保存在context中。
  */
@@ -678,20 +980,34 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
     {
         A_HmiLog_StartRequest(context);
     }
+    if ((context->state == A_HMI_LOG_QUERY_IDLE) && context->cache_valid &&
+        !context->snapshot_changed &&
+        (context->log->next_sequence != context->snapshot_next_sequence))
+    {
+        context->snapshot_changed = true;
+        context->page_request_pending = false;
+        context->state = A_HMI_LOG_QUERY_STATUS;
+        // 空闲查看期间产生新日志时也主动提示，但不改变人员正在阅读的当前页。
+    }
+    if ((context->state == A_HMI_LOG_QUERY_IDLE) && context->page_request_pending)
+    {
+        A_HmiLog_ProcessPageRequest(context);
+    }
     if (context->state == A_HMI_LOG_QUERY_IDLE)
     {
         return;
     }
-
-    if ((context->state != A_HMI_LOG_QUERY_CLEAR) &&
+    if ((context->state != A_HMI_LOG_QUERY_CLEAR) && !context->snapshot_changed &&
+        context->cache_valid &&
         (context->log->next_sequence != context->snapshot_next_sequence))
     {
         context->snapshot_changed = true;
         context->row_ready = false;
         context->current_record_ready = false;
         context->progress_pending = false;
+        context->page_request_pending = false;
         context->state = A_HMI_LOG_QUERY_STATUS;
-        // 查询期间产生新日志时停止使用旧快照，保留已显示行并提示人员重新刷新。
+        // 索引或页面发送期间产生新日志时停止使用旧索引，保留已显示页并提示人员刷新。
     }
 
     page_id = A_HmiLog_GetPageId(context->query_type);
@@ -701,9 +1017,17 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
         case A_HMI_LOG_QUERY_CLEAR:
             if (F_Hmi_SendRecordClear(&context->hmi->function, page_id, record_control_id))
             {
-                if (context->read_failed || (context->total_count == 0U))
+                context->table_is_clear = true;
+                if (context->read_failed)
                 {
-                    context->state = A_HMI_LOG_QUERY_STATUS;
+                    context->page_request_pending = false;
+                    context->state = A_HMI_LOG_QUERY_PAGE_INFO;
+                }
+                else if (context->total_count == 0U)
+                {
+                    context->index_complete = true;
+                    context->page_request_pending = false;
+                    context->state = A_HMI_LOG_QUERY_PAGE_INFO;
                 }
                 else
                 {
@@ -724,23 +1048,54 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
             }
             if (context->scan_logical_index == 0U)
             {
-                context->state = A_HMI_LOG_QUERY_STATUS;
+                A_HmiLog_FinishIndex(context);
             }
             else if (!A_HmiLog_ScanOneRecord(context))
             {
                 A_HmiLog_FailAndClear(context);
             }
-            else if (context->current_record_ready)
+            else if (context->page_request_pending &&
+                     A_HmiLog_IsRequestedPageAvailable(context))
             {
-                context->state = A_HMI_LOG_QUERY_ROWS;
+                A_HmiLog_StartPage(context);
             }
             else if (context->scan_logical_index == 0U)
             {
-                context->state = A_HMI_LOG_QUERY_STATUS;
+                A_HmiLog_FinishIndex(context);
             }
             break;
 
-        case A_HMI_LOG_QUERY_ROWS:
+        case A_HMI_LOG_QUERY_PAGE_CLEAR:
+            if (F_Hmi_SendRecordClear(&context->hmi->function, page_id, record_control_id))
+            {
+                context->table_is_clear = true;
+                context->state = A_HMI_LOG_QUERY_PAGE_READ;
+            }
+            break;
+
+        case A_HMI_LOG_QUERY_PAGE_READ:
+            if (context->page_cursor >= context->page_end_index)
+            {
+                context->page_rendered = context->sent_count > 0U;
+                context->table_is_clear = !context->page_rendered;
+                context->state = A_HMI_LOG_QUERY_PAGE_INFO;
+                break;
+            }
+            if ((context->page_cursor >= context->matched_count) ||
+                !A_GasLog_ReadRecord(context->log,
+                                    context->log_index[context->page_cursor],
+                                    context->current_record) ||
+                (context->current_record[0] != A_HmiLog_GetRecordType(context->query_type)))
+            {
+                A_HmiLog_FailAndClear(context);
+                break;
+            }
+            context->current_record_ready = true;
+            context->regular_line_phase = 0U;
+            context->state = A_HMI_LOG_QUERY_PAGE_ROWS;
+            break;
+
+        case A_HMI_LOG_QUERY_PAGE_ROWS:
             if (!context->current_record_ready)
             {
                 A_HmiLog_FailAndClear(context);
@@ -768,8 +1123,30 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
                     context->current_record_ready = false;
                     context->regular_line_phase = 0U;
                     context->sent_count++;
-                    context->state = (context->scan_logical_index > 0U) ?
-                                     A_HMI_LOG_QUERY_SCAN : A_HMI_LOG_QUERY_STATUS;
+                    context->page_cursor++;
+                    context->state = A_HMI_LOG_QUERY_PAGE_READ;
+                }
+            }
+            break;
+
+        case A_HMI_LOG_QUERY_PAGE_INFO:
+            if (A_HmiLog_SendPageInfo(context))
+            {
+                if (context->read_failed || context->snapshot_changed)
+                {
+                    context->state = A_HMI_LOG_QUERY_STATUS;
+                }
+                else if (context->page_request_pending)
+                {
+                    A_HmiLog_ProcessPageRequest(context);
+                }
+                else if (!context->index_complete)
+                {
+                    context->state = A_HMI_LOG_QUERY_SCAN;
+                }
+                else
+                {
+                    context->state = A_HMI_LOG_QUERY_STATUS;
                 }
             }
             break;
@@ -796,5 +1173,6 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
 bool A_HmiLog_IsBusy(const A_Hmi_Log_Context *context)
 {
     return ((context != NULL) && context->ready &&
-            (context->request_pending || (context->state != A_HMI_LOG_QUERY_IDLE)));
+            (context->request_pending || context->page_request_pending ||
+             (context->state != A_HMI_LOG_QUERY_IDLE)));
 }
