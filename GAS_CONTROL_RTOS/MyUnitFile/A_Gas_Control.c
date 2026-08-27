@@ -427,7 +427,7 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
 
 /*
  * 函数名：A_GasControl_ManualValveTask。
- * 说明：到时关闭固定五秒排气阀和最长一分钟测试阀，并保证停用瓶三阀全关。
+ * 说明：按当前运行参数到时关闭人工排气阀和测试阀，并保证停用瓶三阀全关。
  * 输入：context 为气源控制应用上下文；now_ms 为当前时间。
  * 输出：无；更新人工阀门命令和异常报警。
  */
@@ -682,6 +682,8 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         {
             success = A_GasControl_StartExhaust(context, index);
         }
+        A_Hmi_RequestExhaustSync(&context->hmi, index);
+        // 0仅表示屏端开关被再次触碰，不作为提前关阀命令；最终按钮状态始终回写MCU实际排气命令。
     }
     else if ((button_id >= A_HMI_TEST_BUTTON_BASE) &&
              (button_id < (A_HMI_TEST_BUTTON_BASE + GAS_CYLINDER_COUNT)))
@@ -1455,7 +1457,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
 
 /*
  * 函数名：A_GasControl_StartExhaust。
- * 说明：在自动模式的初始化、待测试、待用或低压待换状态打开指定排气阀，并设置独立的自动关闭截止时间；允许测试阀同时开启。
+ * 说明：在允许状态打开指定排气阀并设置独立截止时间；已在排气时保持原截止时间且允许测试阀同时开启。
  * 输入：context 为应用上下文；index 为从 0 开始的气瓶索引。
  * 输出：状态、运行模式和供气互锁允许且开阀成功时返回 true，否则返回 false。
  */
@@ -1466,6 +1468,11 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
         return false;
+    }
+    if (context->system.cylinder[index].exhaust_cmd)
+    {
+        return true;
+        // 排气中重复点击不重新计算截止时间，防止误触延长一次人工排气过程。
     }
     if ((context->system.mode != GAS_MODE_AUTO) ||
         ((context->system.cylinder[index].state != GAS_CYL_INIT) &&

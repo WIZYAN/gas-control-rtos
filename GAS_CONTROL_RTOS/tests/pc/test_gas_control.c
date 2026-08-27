@@ -1108,18 +1108,25 @@ static void Test_StateAndSwitch(void)
 static void Test_ManualAndDisabled(void)
 {
     A_Gas_Control_Context context;
+    uint32_t exhaust_deadline_ms;
+
     Test_Prepare(&context);
     assert(A_GasControl_StartExhaust(&context, 0U));
+    exhaust_deadline_ms = context.system.cylinder[0].exhaust_deadline_ms;
+    Test_Advance(&context, 100U);
+    assert(A_GasControl_StartExhaust(&context, 0U));
+    assert(context.system.cylinder[0].exhaust_deadline_ms == exhaust_deadline_ms);
+    // 排气中再次请求只返回当前成功状态，不得把原定时截止点向后延长。
     assert(A_GasControl_SetTestValve(&context, 0U, true));
     assert(context.system.cylinder[0].exhaust_cmd &&
            context.system.cylinder[0].test_cmd);
-    Test_Advance(&context, 4999U);
+    Test_Advance(&context, 4899U);
     assert(context.system.cylinder[0].exhaust_cmd &&
            context.system.cylinder[0].test_cmd);
     Test_Advance(&context, 1U);
     assert(!context.system.cylinder[0].exhaust_cmd);
     assert(context.system.cylinder[0].test_cmd);
-    Test_Advance(&context, 55000U);
+    Test_Advance(&context, 55100U);
     assert(!context.system.cylinder[0].test_cmd);
     assert(!A_GasControl_StartExhaust(&context, context.system.active_index));
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, true));
@@ -1254,7 +1261,7 @@ static void Test_Hmi(void)
     gas.system.total_pressure.pressure_quality = GAS_PRESSURE_VALID;
     assert(A_Hmi_Init(&display));
     assert(A_HMI_RTC_CONTROL_ID == 50U);
-    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 52U));
+    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 58U));
     A_Hmi_Task(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx_length == 6U) &&
            (g_test_state.hmi_tx[0] == 0xEEU) &&
@@ -1286,10 +1293,32 @@ static void Test_Hmi(void)
 
     A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 2U);
     assert((g_test_state.hmi_tx_length == 12U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    display.exhaust_refresh_pending_bits = 0U;
+    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 3U);
+    assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
     display.qualification_refresh_pending_bits = 0U;
-    // 首次建立快照后优先回写51号按钮；其余五路在本测试中清空队列后单独验证周期刷新。
+    // 首次建立快照后依次优先回写1号排气按钮和51号测试通过按钮，测试中清空其余初始队列。
+
+    gas.system.cylinder[0].exhaust_cmd = true;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 1U));
+    gas.system.cylinder[0].exhaust_cmd = false;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    display.refresh_slot = 44U;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
+           (g_test_state.hmi_tx[7] == 0U));
+    // 实际排气命令正反变化触发优先回写，普通刷新槽也会周期重申MCU最终状态。
 
     gas.system.cylinder[0].qualification_passed = true;
     display.next_refresh_ms = 0U;
@@ -1301,7 +1330,7 @@ static void Test_Hmi(void)
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
-    display.refresh_slot = 44U;
+    display.refresh_slot = 50U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
@@ -1354,7 +1383,7 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[7] == A_HMI_HIGHLIGHT_FRAME_WARNING));
 
     gas.system.mode = GAS_MODE_STOPPED;
-    display.refresh_slot = 50U;
+    display.refresh_slot = 56U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_TEXT_ID) &&
@@ -1978,6 +2007,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.04三阀七状态、待测试门槛、CAN/RS485双外部通讯、EEPROM日志、运行参数、串口屏状态高亮、事件15条分页与常规10条分页查询测试通过。");
+    puts("V1.05三阀七状态、排气按钮状态同步、待测试门槛、CAN/RS485双外部通讯、EEPROM日志、运行参数、事件15条分页与常规10条分页查询测试通过。");
     return 0;
 }

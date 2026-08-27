@@ -6,12 +6,12 @@ import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 
 
-# 输出目录和现有大彩工程仅用于生成新画面，不修改历史发布工程。
+# 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.04"
+PROJECT_VERSION = "1.05"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
-SOURCE_PROJECT = SCRIPT_DIR / "GasControl_HMI_V1.02"
+SOURCE_PROJECT = PROJECT_DIR
 
 WIDTH = 1024
 HEIGHT = 600
@@ -791,8 +791,8 @@ def create_monitor_screen_file(project_dir: Path) -> None:
         add_text_item(root, f"Test_Valve_{index + 1}", 43 + index, "关闭", 5,
                       "199;224;238", x + 92, 318, 55, 22)
 
-        # 排气按钮使用弹起模式；测试、停用和测试通过使用开关模式。
-        add_button_item(root, f"Exhaust_Button_{index + 1}", 1 + index, False,
+        # 排气按钮使用开关外观并由MCU实际排气命令回写；测试、停用和测试通过也使用开关模式。
+        add_button_item(root, f"Exhaust_Button_{index + 1}", 1 + index, True,
                         x + 83, 356, 68, 70)
         add_button_item(root, f"Test_Button_{index + 1}", 7 + index, True,
                         x + 9, 438, 68, 70)
@@ -1059,21 +1059,25 @@ def create_project_file(project_dir: Path) -> None:
 def copy_project_resources(project_dir: Path) -> None:
     """
     函数名：copy_project_resources。
-    说明：复用原工程已验证的GBK字库并建立标准资源目录，Lua脚本由后续函数生成。
+    说明：保留当前正式工程已经验证的GBK字库并建立标准资源目录，Lua脚本由后续函数生成。
     输入：project_dir 为大彩工程输出目录。
     输出：无。
     """
     for folder in ("images", "output", "sounds", "videos"):
         (project_dir / folder).mkdir(parents=True, exist_ok=True)
-    shutil.copytree(SOURCE_PROJECT / "font", project_dir / "font", dirs_exist_ok=True)
+    if SOURCE_PROJECT.resolve() != project_dir.resolve():
+        shutil.copytree(SOURCE_PROJECT / "font", project_dir / "font", dirs_exist_ok=True)
+    elif not (project_dir / "font").is_dir():
+        raise FileNotFoundError("当前正式大彩工程缺少已验证的font字库目录")
+    # 当前版本在原目录内重复生成时不复制自身字库，避免依赖已经删除的历史工程。
 
 
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.04分页日志画面工程。
+    说明：生成完整的大彩 VisualTFT V1.05正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.04目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.05目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
