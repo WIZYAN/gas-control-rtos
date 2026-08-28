@@ -218,4 +218,12 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context);
  */
 bool A_HmiLog_IsBusy(const A_Hmi_Log_Context *context);
 
+/*
+ * 函数名：A_HmiLog_InvalidateCache。
+ * 说明：取消当前日志扫描或翻页并清除RAM索引，供EEPROM日志开始物理清除时调用。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；筛选条件保留，旧日志索引和待处理读取请求全部失效。
+ */
+void A_HmiLog_InvalidateCache(A_Hmi_Log_Context *context);
+
 #endif

@@ -13,6 +13,9 @@
 #define A_HMI_CONFIG_DIALOG_MASK               (0xF000U) // 确认子画面四项文本对应刷新位图bit12～bit15。
 #define A_HMI_CONFIG_ALL_FIELDS                (0xFFU)   // 恢复默认值确认时表示候选值包含全部字段。
 #define A_HMI_CONFIG_SWITCH_RELEASE_OFFSET_RAW (100U)    // 串口屏保存时自动增加的0.100 MPa回差定点值。
+#define A_HMI_LOG_CLEAR_COUNT_REFRESH          (0x01U)   // Screen7当前日志数量刷新位。
+#define A_HMI_LOG_CLEAR_STATUS_REFRESH         (0x02U)   // Screen7等待、进度或结果文本刷新位。
+#define A_HMI_LOG_CLEAR_ALL_REFRESH            (0x03U)   // Screen7全部动态文本刷新位。
 
 // 参数页内部提示状态，不对外部通信公布。
 typedef enum
@@ -26,7 +29,10 @@ typedef enum
     A_HMI_CONFIG_STATUS_RANGE_ERROR,
     A_HMI_CONFIG_STATUS_RELATION_ERROR,
     A_HMI_CONFIG_STATUS_STORAGE_ERROR,
-    A_HMI_CONFIG_STATUS_DEFAULT_LOADED
+    A_HMI_CONFIG_STATUS_DEFAULT_LOADED,
+    A_HMI_CONFIG_STATUS_LOG_CLEARING,
+    A_HMI_CONFIG_STATUS_LOG_CLEAR_SUCCESS,
+    A_HMI_CONFIG_STATUS_LOG_CLEAR_FAILED
 } A_Hmi_Config_Status;
 
 // 单个输入字段的解析结果，用于区分文本格式错误和数值超范围错误。
@@ -384,6 +390,99 @@ static size_t A_HmiConfig_FormatField(const Gas_Config *config,
 }
 
 /*
+ * 函数名：A_HmiConfig_FormatLogClearCount。
+ * 说明：把日志数量格式化为Screen7使用的“当前日志：N条”GBK文本。
+ * 输入：count为日志数量；text为输出缓存；capacity为缓存容量。
+ * 输出：成功时返回文本字节数，容量不足时返回0。
+ */
+static size_t A_HmiConfig_FormatLogClearCount(uint16_t count,
+                                               char *text,
+                                               size_t capacity)
+{
+    const char prefix[] = "\xB5\xB1\xC7\xB0\xC8\xD5\xD6\xBE\xA3\xBA"; // 当前日志：。
+    const char suffix[] = "\xCC\xF5"; // 条。
+    size_t length = sizeof(prefix) - 1U;
+    size_t number_length;
+
+    if ((text == NULL) || (capacity < (length + sizeof(suffix))))
+    {
+        return 0U;
+    }
+    (void) memcpy(text, prefix, length);
+    number_length = A_HmiConfig_FormatUnsigned(count,
+                                                &text[length],
+                                                capacity - length - (sizeof(suffix) - 1U));
+    if (number_length == 0U)
+    {
+        return 0U;
+    }
+    length += number_length;
+    (void) memcpy(&text[length], suffix, sizeof(suffix) - 1U);
+    return length + sizeof(suffix) - 1U;
+}
+
+/*
+ * 函数名：A_HmiConfig_FormatLogClearStatus。
+ * 说明：把日志清除等待、百分比进度和最终结果格式化为GBK文本。
+ * 输入：status为日志清除状态；progress为0～100进度；text为输出缓存；capacity为容量。
+ * 输出：成功时返回文本字节数，容量不足或参数无效时返回0。
+ */
+static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
+                                                uint8_t progress,
+                                                char *text,
+                                                size_t capacity)
+{
+    const char wait_text[] = "\xB5\xC8\xB4\xFD\xC8\xB7\xC8\xCF"; // 等待确认。
+    const char busy_text[] = "\xD5\xFD\xD4\xDA\xC7\xE5\xB3\xFD\xA3\xBA"; // 正在清除：。
+    const char success_text[] = "\xC7\xE5\xB3\xFD\xB3\xC9\xB9\xA6\xA3\xAC\xB5\xB1\xC7\xB0\x30\xCC\xF5"; // 清除成功，当前0条。
+    const char failed_text[] = "\xC7\xE5\xB3\xFD\xCA\xA7\xB0\xDC\xA3\xAC\xC7\xEB\xD6\xD8\xCA\xD4"; // 清除失败，请重试。
+    const char *fixed_text = wait_text;
+    size_t fixed_length = sizeof(wait_text) - 1U;
+    size_t length;
+    size_t number_length;
+
+    if ((text == NULL) || (capacity == 0U))
+    {
+        return 0U;
+    }
+    if (status == A_HMI_LOG_CLEAR_SUCCESS)
+    {
+        fixed_text = success_text;
+        fixed_length = sizeof(success_text) - 1U;
+    }
+    else if (status == A_HMI_LOG_CLEAR_FAILED)
+    {
+        fixed_text = failed_text;
+        fixed_length = sizeof(failed_text) - 1U;
+    }
+    else if (status == A_HMI_LOG_CLEAR_BUSY)
+    {
+        length = sizeof(busy_text) - 1U;
+        if (capacity < (length + 2U))
+        {
+            return 0U;
+        }
+        (void) memcpy(text, busy_text, length);
+        number_length = A_HmiConfig_FormatUnsigned(progress,
+                                                    &text[length],
+                                                    capacity - length - 1U);
+        if (number_length == 0U)
+        {
+            return 0U;
+        }
+        length += number_length;
+        text[length++] = '%';
+        return length;
+    }
+    if (fixed_length > capacity)
+    {
+        return 0U;
+    }
+    (void) memcpy(text, fixed_text, fixed_length);
+    return fixed_length;
+}
+
+/*
  * 函数名：A_HmiConfig_GetStatusText。
  * 说明：把内部提示状态转换为串口屏GBK文本字节串。
  * 输入：status为内部提示编号；length为文本字节数输出指针。
@@ -423,6 +522,15 @@ static const char *A_HmiConfig_GetStatusText(uint8_t status, size_t *length)
             break;
         case A_HMI_CONFIG_STATUS_DEFAULT_LOADED:
             text = "\xB5\xC8\xB4\xFD\xC8\xB7\xC8\xCF\xBB\xD6\xB8\xB4\xC8\xAB\xB2\xBF\xC4\xAC\xC8\xCF\xB2\xCE\xCA\xFD";
+            break;
+        case A_HMI_CONFIG_STATUS_LOG_CLEARING:
+            text = "\xD5\xFD\xD4\xDA\xC7\xE5\xB3\xFD\xC8\xD5\xD6\xBE\xA3\xAC\xC7\xEB\xCE\xF0\xB6\xCF\xB5\xE7";
+            break;
+        case A_HMI_CONFIG_STATUS_LOG_CLEAR_SUCCESS:
+            text = "\xC8\xD5\xD6\xBE\xC7\xE5\xB3\xFD\xB3\xC9\xB9\xA6";
+            break;
+        case A_HMI_CONFIG_STATUS_LOG_CLEAR_FAILED:
+            text = "\xC8\xD5\xD6\xBE\xC7\xE5\xB3\xFD\xCA\xA7\xB0\xDC";
             break;
         default:
             text = "\xD0\xDE\xB8\xC4\xC8\xCE\xD2\xBB\xB2\xCE\xCA\xFD\xBA\xF3\xBD\xAB\xD7\xD4\xB6\xAF\xB5\xAF\xB3\xF6\xC8\xB7\xC8\xCF\xB4\xB0\xBF\xDA";
@@ -575,6 +683,8 @@ bool A_HmiConfig_Open(A_Hmi_Config_Context *context,
     context->pending_new_text[0] = '\0';
     context->refresh_mask = A_HMI_CONFIG_REFRESH_ALL_MASK;
     context->status = (uint8_t) A_HMI_CONFIG_STATUS_READY;
+    context->log_clear_dialog_active = false;
+    context->log_clear_request_pending = false;
     return true;
 }
 
@@ -846,6 +956,139 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
 }
 
 /*
+ * 函数名：A_HmiConfig_OpenLogClear。
+ * 说明：从密码参数页进入日志清除确认画面，并显示清除前有效日志数量。
+ * 输入：context为参数模块上下文；log_count为当前事件和常规日志总数。
+ * 输出：参数页会话有效且成功建立确认画面状态时返回true，否则返回false。
+ */
+bool A_HmiConfig_OpenLogClear(A_Hmi_Config_Context *context, uint16_t log_count)
+{
+    if ((context == NULL) || (context->hmi == NULL) || !context->active)
+    {
+        return false;
+    }
+
+    context->log_clear_dialog_active = true;
+    context->log_clear_request_pending = false;
+    context->log_clear_count = log_count;
+    context->log_clear_progress = 0U;
+    context->log_clear_status = A_HMI_LOG_CLEAR_WAIT_CONFIRM;
+    context->log_clear_refresh_mask = A_HMI_LOG_CLEAR_ALL_REFRESH;
+    return true;
+}
+
+/*
+ * 函数名：A_HmiConfig_HandleLogClearButton。
+ * 说明：处理日志清除画面的确认和返回按钮；确认只产生一次后台清除请求。
+ * 输入：context为参数模块上下文；button_id和value为串口屏按钮事件。
+ * 输出：按钮属于日志清除画面时返回true，否则返回false。
+ */
+bool A_HmiConfig_HandleLogClearButton(A_Hmi_Config_Context *context,
+                                      uint16_t button_id,
+                                      uint8_t value)
+{
+    if ((context == NULL) ||
+        ((button_id != A_HMI_LOG_CLEAR_CONFIRM_BUTTON_ID) &&
+         (button_id != A_HMI_LOG_CLEAR_BACK_BUTTON_ID)))
+    {
+        return false;
+    }
+    if (button_id == A_HMI_LOG_CLEAR_CONFIRM_BUTTON_ID)
+    {
+        if ((value != 0U) && context->active && context->log_clear_dialog_active &&
+            (context->log_clear_status == A_HMI_LOG_CLEAR_WAIT_CONFIRM) &&
+            !context->log_clear_request_pending)
+        {
+            context->log_clear_request_pending = true;
+            context->log_clear_status = A_HMI_LOG_CLEAR_BUSY;
+            context->log_clear_progress = 0U;
+            context->log_clear_refresh_mask |= A_HMI_LOG_CLEAR_STATUS_REFRESH;
+            A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_LOG_CLEARING);
+        }
+        return true;
+    }
+
+    if (value != 0U)
+    {
+        context->log_clear_dialog_active = false;
+        // 清除开始后的返回只离开进度页，EEPROM后台任务继续完成，不提供中途取消入口。
+    }
+    return true;
+}
+
+/*
+ * 函数名：A_HmiConfig_TakeLogClearRequest。
+ * 说明：取出人员已经二次确认的日志物理清除请求，防止同一次触摸重复执行。
+ * 输入：context为参数模块上下文。
+ * 输出：存在新的清除请求时返回true，否则返回false。
+ */
+bool A_HmiConfig_TakeLogClearRequest(A_Hmi_Config_Context *context)
+{
+    if ((context == NULL) || !context->log_clear_request_pending)
+    {
+        return false;
+    }
+    context->log_clear_request_pending = false;
+    return true;
+}
+
+/*
+ * 函数名：A_HmiConfig_ReportLogClear。
+ * 说明：接收日志模块的清除状态、进度和当前数量，并安排Screen7及参数页提示刷新。
+ * 输入：context为参数模块上下文；status为清除状态；progress为0～100进度；log_count为当前日志数量。
+ * 输出：无；只有内容发生变化时才加入串口屏刷新队列。
+ */
+void A_HmiConfig_ReportLogClear(A_Hmi_Config_Context *context,
+                                A_Hmi_Log_Clear_Status status,
+                                uint8_t progress,
+                                uint16_t log_count)
+{
+    A_Hmi_Config_Status page_status;
+
+    if (context == NULL)
+    {
+        return;
+    }
+    if (progress > 100U)
+    {
+        progress = 100U;
+    }
+    if (context->log_clear_count != log_count)
+    {
+        context->log_clear_count = log_count;
+        context->log_clear_refresh_mask |= A_HMI_LOG_CLEAR_COUNT_REFRESH;
+    }
+    if ((context->log_clear_status != status) ||
+        (context->log_clear_progress != progress))
+    {
+        context->log_clear_status = status;
+        context->log_clear_progress = progress;
+        context->log_clear_refresh_mask |= A_HMI_LOG_CLEAR_STATUS_REFRESH;
+    }
+
+    if (status == A_HMI_LOG_CLEAR_BUSY)
+    {
+        page_status = A_HMI_CONFIG_STATUS_LOG_CLEARING;
+    }
+    else if (status == A_HMI_LOG_CLEAR_SUCCESS)
+    {
+        page_status = A_HMI_CONFIG_STATUS_LOG_CLEAR_SUCCESS;
+    }
+    else if (status == A_HMI_LOG_CLEAR_FAILED)
+    {
+        page_status = A_HMI_CONFIG_STATUS_LOG_CLEAR_FAILED;
+    }
+    else
+    {
+        return;
+    }
+    if (context->status != (uint8_t) page_status)
+    {
+        A_HmiConfig_SetStatus(context, page_status);
+    }
+}
+
+/*
  * 函数名：A_HmiConfig_Task。
  * 说明：按照待刷新位图分时发送一个参数值或确认/结果提示，避免阻塞SCI9。
  * 输入：context为参数模块上下文。
@@ -866,6 +1109,41 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
     }
     if (context->refresh_mask == 0U)
     {
+        if (!context->log_clear_dialog_active ||
+            (context->log_clear_refresh_mask == 0U))
+        {
+            return;
+        }
+    }
+
+    if (context->log_clear_dialog_active &&
+        (context->log_clear_refresh_mask != 0U))
+    {
+        if ((context->log_clear_refresh_mask & A_HMI_LOG_CLEAR_COUNT_REFRESH) != 0U)
+        {
+            control_id = A_HMI_LOG_CLEAR_COUNT_TEXT_ID;
+            length = A_HmiConfig_FormatLogClearCount(context->log_clear_count,
+                                                      text,
+                                                      sizeof(text));
+            slot = 0U;
+        }
+        else
+        {
+            control_id = A_HMI_LOG_CLEAR_STATUS_TEXT_ID;
+            length = A_HmiConfig_FormatLogClearStatus(context->log_clear_status,
+                                                       context->log_clear_progress,
+                                                       text,
+                                                       sizeof(text));
+            slot = 1U;
+        }
+        if ((length != 0U) && A_Hmi_SendText(context->hmi,
+                                             A_HMI_LOG_CLEAR_PAGE_ID,
+                                             control_id,
+                                             text,
+                                             length))
+        {
+            context->log_clear_refresh_mask &= (uint8_t) ~(uint8_t) (1U << slot);
+        }
         return;
     }
 

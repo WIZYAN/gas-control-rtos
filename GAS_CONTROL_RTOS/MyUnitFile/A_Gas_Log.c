@@ -119,6 +119,30 @@ static uint16_t A_GasLog_RecordAddress(uint16_t physical_index)
 }
 
 /*
+ * 函数名：A_GasLog_PageIsErased。
+ * 说明：检查一个AT24C256物理页是否已经全部写成0xFF。
+ * 输入：data为包含64字节读回数据的只读缓存。
+ * 输出：全部字节均为0xFF时返回true，参数无效或存在其他数值时返回false。
+ */
+static bool A_GasLog_PageIsErased(const uint8_t *data)
+{
+    size_t index;
+
+    if (data == NULL)
+    {
+        return false;
+    }
+    for (index = 0U; index < AT24C256_PAGE_SIZE_BYTES; ++index)
+    {
+        if (data[index] != 0xFFU)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
  * 函数名：A_GasLog_DecodeHeader。
  * 说明：校验并解码一份32字节日志管理头。
  * 输入：data 为只读管理头缓存；candidate 为解码结果输出指针。
@@ -576,6 +600,172 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
 }
 
 /*
+ * 函数名：A_GasLog_FinishClear。
+ * 说明：结束日志清除状态机并用当前六瓶状态建立新的事件比较快照。
+ * 输入：context为日志上下文；system为当前只读系统状态；result为成功或失败结果。
+ * 输出：无；清除状态回到空闲，结果和状态快照写入context。
+ */
+static void A_GasLog_FinishClear(A_Gas_Log_Context *context,
+                                 const Gas_System *system,
+                                 A_Gas_Log_Clear_Result result)
+{
+    uint8_t index;
+
+    context->clear_state = A_GAS_LOG_CLEAR_IDLE;
+    context->clear_result = result;
+    if (context->clear_empty_header_committed && (system != NULL))
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            context->previous_state[index] = system->cylinder[index].state;
+        }
+        // 空索引已经生效后，以清除结束时的状态作为新基线，避免生成六条伪状态变化记录。
+    }
+}
+
+/*
+ * 函数名：A_GasLog_RequestClear。
+ * 说明：请求物理清除全部事件和常规日志；只建立任务，不在本函数中长时间擦写EEPROM。
+ * 输入：context为已经初始化的日志上下文。
+ * 输出：成功建立清除任务时返回true，参数无效、日志未就绪或已有清除任务时返回false。
+ */
+bool A_GasLog_RequestClear(A_Gas_Log_Context *context)
+{
+    if ((context == NULL) || !context->ready ||
+        (context->clear_result == A_GAS_LOG_CLEAR_RESULT_BUSY))
+    {
+        return false;
+    }
+
+    context->clear_state = A_GAS_LOG_CLEAR_WRITE_HEADER;
+    context->clear_result = A_GAS_LOG_CLEAR_RESULT_BUSY;
+    context->clear_address = 0U;
+    context->clear_pages_completed = 0U;
+    context->clear_empty_header_copy = (uint8_t) (context->active_header_copy ^ 1U);
+    context->clear_empty_header_committed = false;
+    return true;
+}
+
+/*
+ * 函数名：A_GasLog_ClearTask。
+ * 说明：分步提交空日志头、擦除旧管理头和全部数据页，并逐页读回校验。
+ * 输入：context为日志上下文；system为清除期间当前只读系统状态，用于建立新的状态快照和半小时时段。
+ * 输出：无；清除进度和最终结果保存在context中。
+ */
+void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
+{
+    uint8_t verify[AT24C256_PAGE_SIZE_BYTES];
+    uint32_t next_generation;
+    uint32_t regular_key;
+    uint32_t next_address;
+
+    if ((context == NULL) || (system == NULL) || !context->ready ||
+        (context->clear_result != A_GAS_LOG_CLEAR_RESULT_BUSY))
+    {
+        return;
+    }
+
+    switch (context->clear_state)
+    {
+        case A_GAS_LOG_CLEAR_WRITE_HEADER:
+            next_generation = context->generation + 1UL;
+            regular_key = system->date_time.valid ?
+                          A_GasLog_MakeRegularKey(&system->date_time) :
+                          A_GAS_LOG_LAST_REGULAR_KEY_NONE;
+            if (!A_GasLog_WriteHeader(context,
+                                      context->clear_empty_header_copy,
+                                      next_generation,
+                                      1UL,
+                                      0U,
+                                      0U,
+                                      regular_key))
+            {
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+                break;
+            }
+
+            context->generation = next_generation;
+            context->next_sequence = 1UL;
+            context->write_index = 0U;
+            context->valid_count = 0U;
+            context->last_regular_key = regular_key;
+            context->active_header_copy = context->clear_empty_header_copy;
+            context->clear_empty_header_committed = true;
+            context->clear_address = A_GasLog_HeaderAddress(
+                (uint8_t) (context->clear_empty_header_copy ^ 1U));
+            context->clear_state = A_GAS_LOG_CLEAR_ERASE_OLD_HEADER;
+            // 先提交代数更高的空管理头，后续任意时刻掉电都不会重新引用旧日志数据。
+            break;
+
+        case A_GAS_LOG_CLEAR_ERASE_OLD_HEADER:
+            if (!A_Storage_EraseRange(context->storage,
+                                      context->clear_address,
+                                      AT24C256_PAGE_SIZE_BYTES))
+            {
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+                break;
+            }
+            context->clear_state = A_GAS_LOG_CLEAR_VERIFY_OLD_HEADER;
+            break;
+
+        case A_GAS_LOG_CLEAR_VERIFY_OLD_HEADER:
+            if (!A_Storage_Read(context->storage,
+                                context->clear_address,
+                                verify,
+                                sizeof(verify)) ||
+                !A_GasLog_PageIsErased(verify))
+            {
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+                break;
+            }
+            context->clear_pages_completed = 1U;
+            context->clear_address = A_GAS_LOG_DATA_START_ADDRESS;
+            context->clear_state = A_GAS_LOG_CLEAR_ERASE_DATA;
+            break;
+
+        case A_GAS_LOG_CLEAR_ERASE_DATA:
+            if (!A_Storage_EraseRange(context->storage,
+                                      context->clear_address,
+                                      AT24C256_PAGE_SIZE_BYTES))
+            {
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+                break;
+            }
+            context->clear_state = A_GAS_LOG_CLEAR_VERIFY_DATA;
+            break;
+
+        case A_GAS_LOG_CLEAR_VERIFY_DATA:
+            if (!A_Storage_Read(context->storage,
+                                context->clear_address,
+                                verify,
+                                sizeof(verify)) ||
+                !A_GasLog_PageIsErased(verify))
+            {
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+                break;
+            }
+
+            context->clear_pages_completed++;
+            next_address = (uint32_t) context->clear_address + AT24C256_PAGE_SIZE_BYTES;
+            if (next_address >= AT24C256_CAPACITY_BYTES)
+            {
+                context->clear_pages_completed = A_GAS_LOG_CLEAR_PAGE_COUNT;
+                A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_SUCCESS);
+            }
+            else
+            {
+                context->clear_address = (uint16_t) next_address;
+                context->clear_state = A_GAS_LOG_CLEAR_ERASE_DATA;
+            }
+            break;
+
+        default:
+            A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
+            break;
+    }
+}
+
+/*
  * 函数名：A_GasLog_Task。
  * 说明：在时间有效时记录六瓶状态变化，并按半小时时段保存一条常规运行记录。
  * 输入：context 为日志上下文；system 为包含时间、压力和状态的只读气源系统。
@@ -590,6 +780,10 @@ bool A_GasLog_Task(A_Gas_Log_Context *context, const Gas_System *system)
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
         return false;
+    }
+    if (context->clear_result == A_GAS_LOG_CLEAR_RESULT_BUSY)
+    {
+        return true;
     }
     if (!system->date_time.valid)
     {
@@ -641,6 +835,7 @@ bool A_GasLog_ReadRecord(A_Gas_Log_Context *context,
     uint16_t stored_crc;
 
     if ((context == NULL) || (record == NULL) || !context->ready ||
+        (context->clear_result == A_GAS_LOG_CLEAR_RESULT_BUSY) ||
         (logical_index >= context->valid_count))
     {
         return false;
@@ -685,7 +880,9 @@ bool A_GasLog_ReadRecord(A_Gas_Log_Context *context,
  */
 uint16_t A_GasLog_GetCount(const A_Gas_Log_Context *context)
 {
-    return ((context != NULL) && context->ready) ? context->valid_count : 0U;
+    return ((context != NULL) && context->ready &&
+            (context->clear_result != A_GAS_LOG_CLEAR_RESULT_BUSY)) ?
+           context->valid_count : 0U;
 }
 
 /*
@@ -696,5 +893,52 @@ uint16_t A_GasLog_GetCount(const A_Gas_Log_Context *context)
  */
 bool A_GasLog_IsReady(const A_Gas_Log_Context *context)
 {
-    return ((context != NULL) && context->ready);
+    return ((context != NULL) && context->ready &&
+            (context->clear_result != A_GAS_LOG_CLEAR_RESULT_BUSY));
+}
+
+/*
+ * 函数名：A_GasLog_GetClearResult。
+ * 说明：查询最近一次日志物理清除的当前状态或最终结果。
+ * 输入：context为只读日志上下文。
+ * 输出：返回空闲、清除中、成功或失败；参数无效时返回失败。
+ */
+A_Gas_Log_Clear_Result A_GasLog_GetClearResult(const A_Gas_Log_Context *context)
+{
+    return (context != NULL) ? context->clear_result : A_GAS_LOG_CLEAR_RESULT_FAILED;
+}
+
+/*
+ * 函数名：A_GasLog_GetClearProgress。
+ * 说明：把已完成读回校验的页数转换为0～100的清除百分比。
+ * 输入：context为只读日志上下文。
+ * 输出：返回0～100的百分比；参数无效时返回0。
+ */
+uint8_t A_GasLog_GetClearProgress(const A_Gas_Log_Context *context)
+{
+    uint32_t progress;
+
+    if (context == NULL)
+    {
+        return 0U;
+    }
+    if (context->clear_result == A_GAS_LOG_CLEAR_RESULT_SUCCESS)
+    {
+        return 100U;
+    }
+    progress = ((uint32_t) context->clear_pages_completed * 100UL) /
+               A_GAS_LOG_CLEAR_PAGE_COUNT;
+    return (progress > 100UL) ? 100U : (uint8_t) progress;
+}
+
+/*
+ * 函数名：A_GasLog_IsClearBusy。
+ * 说明：查询日志物理清除状态机是否仍占用EEPROM日志区。
+ * 输入：context为只读日志上下文。
+ * 输出：正在清除时返回true，否则返回false。
+ */
+bool A_GasLog_IsClearBusy(const A_Gas_Log_Context *context)
+{
+    return ((context != NULL) &&
+            (context->clear_result == A_GAS_LOG_CLEAR_RESULT_BUSY));
 }

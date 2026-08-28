@@ -16,6 +16,7 @@
 #define A_GAS_LOG_RECORD_CAPACITY        (1017U)   // 对外有效记录上限，保留一个槽位用于掉电安全提交。
 #define A_GAS_LOG_FORMAT_VERSION         (1U)      // 当前32字节日志记录格式版本。
 #define A_GAS_LOG_HEADER_VERSION         (1U)      // 当前日志管理头格式版本。
+#define A_GAS_LOG_CLEAR_PAGE_COUNT       (510U)    // 物理清除包含1个旧管理头页和509个日志数据页。
 
 // 日志记录类型，保存在每条32字节记录的第0字节。
 typedef enum
@@ -30,6 +31,26 @@ typedef enum
     A_GAS_LOG_EVENT_STATE_CHANGED = 1 // 气瓶业务状态发生变化。
 } A_Gas_Log_Event_Reason;
 
+// 日志物理清除的内部步骤，每次任务调用最多执行一次64字节写入或读回校验。
+typedef enum
+{
+    A_GAS_LOG_CLEAR_IDLE = 0,          // 没有清除任务，日志允许正常记录和读取。
+    A_GAS_LOG_CLEAR_WRITE_HEADER,      // 向备用管理头提交掉电安全的空日志索引。
+    A_GAS_LOG_CLEAR_ERASE_OLD_HEADER,  // 把旧管理头所在64字节页写成0xFF。
+    A_GAS_LOG_CLEAR_VERIFY_OLD_HEADER, // 读回检查旧管理头页已经全部清除。
+    A_GAS_LOG_CLEAR_ERASE_DATA,        // 按64字节页逐步清除0x00C0～0x7FFF数据区。
+    A_GAS_LOG_CLEAR_VERIFY_DATA        // 读回检查当前日志数据页已经全部清除。
+} A_Gas_Log_Clear_State;
+
+// 日志清除对应用层公布的结果，成功或失败状态保持到下一次清除请求。
+typedef enum
+{
+    A_GAS_LOG_CLEAR_RESULT_IDLE = 0, // 上电后尚未执行清除。
+    A_GAS_LOG_CLEAR_RESULT_BUSY,     // 正在提交空索引或逐页擦除、校验。
+    A_GAS_LOG_CLEAR_RESULT_SUCCESS,  // 旧日志物理数据已全部清除并完成读回校验。
+    A_GAS_LOG_CLEAR_RESULT_FAILED    // EEPROM写入或读回校验失败，可重新发起清除。
+} A_Gas_Log_Clear_Result;
+
 // 日志管理应用层上下文，保存EEPROM循环位置、双管理头状态和六瓶状态快照。
 typedef struct
 {
@@ -39,8 +60,14 @@ typedef struct
     uint32_t last_regular_key; // 最近一次常规记录对应的半小时时段键，防止重复记录。
     uint16_t write_index; // 下一条日志写入的物理槽位索引，范围0～1017。
     uint16_t valid_count; // 当前有效日志数量，最大为1017。
+    uint16_t clear_address; // 当前待清除或校验的64字节页起始地址。
+    uint16_t clear_pages_completed; // 已完成物理擦除并读回校验的页数，最大510。
     gas_cylinder_state_t previous_state[GAS_CYLINDER_COUNT]; // 最近已记录的六瓶状态快照。
     uint8_t active_header_copy; // 当前有效管理头副本，0表示A，1表示B。
+    uint8_t clear_empty_header_copy; // 本次清除写入空索引的管理头副本编号。
+    A_Gas_Log_Clear_State clear_state; // 当前非阻塞日志物理清除步骤。
+    A_Gas_Log_Clear_Result clear_result; // 最近一次日志清除结果及忙状态。
+    bool clear_empty_header_committed; // 掉电安全空索引已经写入并读回校验时为true。
     bool ready; // 管理头已经加载或创建且允许记录日志时为true。
 } A_Gas_Log_Context;
 
@@ -61,6 +88,46 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
  * 输出：本周期无须写入或全部处理成功时返回true，EEPROM写入失败时返回false。
  */
 bool A_GasLog_Task(A_Gas_Log_Context *context, const Gas_System *system);
+
+/*
+ * 函数名：A_GasLog_RequestClear。
+ * 说明：请求物理清除全部事件和常规日志；只建立任务，不在本函数中长时间擦写EEPROM。
+ * 输入：context为已经初始化的日志上下文。
+ * 输出：成功建立清除任务时返回true，参数无效、日志未就绪或已有清除任务时返回false。
+ */
+bool A_GasLog_RequestClear(A_Gas_Log_Context *context);
+
+/*
+ * 函数名：A_GasLog_ClearTask。
+ * 说明：分步提交空日志头、擦除旧管理头和全部数据页，并逐页读回校验。
+ * 输入：context为日志上下文；system为清除期间当前只读系统状态，用于建立新的状态快照和半小时时段。
+ * 输出：无；清除进度和最终结果保存在context中。
+ */
+void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system);
+
+/*
+ * 函数名：A_GasLog_GetClearResult。
+ * 说明：查询最近一次日志物理清除的当前状态或最终结果。
+ * 输入：context为只读日志上下文。
+ * 输出：返回空闲、清除中、成功或失败；参数无效时返回失败。
+ */
+A_Gas_Log_Clear_Result A_GasLog_GetClearResult(const A_Gas_Log_Context *context);
+
+/*
+ * 函数名：A_GasLog_GetClearProgress。
+ * 说明：把已完成读回校验的页数转换为0～100的清除百分比。
+ * 输入：context为只读日志上下文。
+ * 输出：返回0～100的百分比；参数无效时返回0。
+ */
+uint8_t A_GasLog_GetClearProgress(const A_Gas_Log_Context *context);
+
+/*
+ * 函数名：A_GasLog_IsClearBusy。
+ * 说明：查询日志物理清除状态机是否仍占用EEPROM日志区。
+ * 输入：context为只读日志上下文。
+ * 输出：正在清除时返回true，否则返回false。
+ */
+bool A_GasLog_IsClearBusy(const A_Gas_Log_Context *context);
 
 /*
  * 函数名：A_GasLog_ReadRecord。

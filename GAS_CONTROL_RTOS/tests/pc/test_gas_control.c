@@ -302,6 +302,23 @@ bool A_Storage_Write(A_Storage_Context *context, uint16_t address, const uint8_t
 }
 
 /*
+ * 函数名：A_Storage_EraseRange。
+ * 说明：把模拟EEPROM指定范围填充为0xFF，供V1.09日志物理清除测试使用。
+ * 输入：context为存储上下文；address为起始地址；length为清除长度。
+ * 输出：范围和上下文有效时返回true，否则返回false。
+ */
+bool A_Storage_EraseRange(A_Storage_Context *context, uint16_t address, size_t length)
+{
+    if ((context == NULL) || !context->ready ||
+        (((size_t) address + length) > sizeof(g_test_state.eeprom)))
+    {
+        return false;
+    }
+    (void) memset(&g_test_state.eeprom[address], 0xFF, length);
+    return true;
+}
+
+/*
  * 函数名：H_Modbus_Init。
  * 说明：初始化主机测试使用的外部 Modbus 模拟硬件。
  * 输入：context 为外部 Modbus 硬件上下文输入输出指针。
@@ -1106,9 +1123,13 @@ static void Test_GasLog(void)
     A_Gas_Control_Context context;
     A_Gas_Log_Context recovered;
     uint8_t record[A_GAS_LOG_RECORD_SIZE];
+    uint8_t protected_data[A_GAS_LOG_HEADER_A_ADDRESS];
     uint8_t index;
     uint16_t log_index;
     uint16_t result;
+    uint16_t clear_step;
+    uint16_t erased_header_address;
+    size_t byte_index;
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -1217,6 +1238,52 @@ static void Test_GasLog(void)
             (uint32_t) record[5]) == 1018UL);
     assert(A_GasLog_Init(&recovered, &context.storage_service, &context.system));
     assert(A_GasLog_GetCount(&recovered) == A_GAS_LOG_RECORD_CAPACITY);
+
+    (void) memcpy(protected_data, g_test_state.eeprom, sizeof(protected_data));
+    assert(A_GasLog_RequestClear(&context.log_service));
+    assert(A_GasLog_IsClearBusy(&context.log_service));
+    assert(!A_GasLog_IsReady(&context.log_service));
+    assert(A_GasLog_GetCount(&context.log_service) == 0U);
+    assert(!A_GasLog_ReadRecord(&context.log_service, 0U, record));
+    for (clear_step = 0U;
+         (clear_step < 1100U) && A_GasLog_IsClearBusy(&context.log_service);
+         ++clear_step)
+    {
+        A_GasLog_ClearTask(&context.log_service, &context.system);
+    }
+    assert(clear_step <= 1021U);
+    assert(A_GasLog_GetClearResult(&context.log_service) ==
+           A_GAS_LOG_CLEAR_RESULT_SUCCESS);
+    assert(A_GasLog_GetClearProgress(&context.log_service) == 100U);
+    assert(A_GasLog_IsReady(&context.log_service));
+    assert(A_GasLog_GetCount(&context.log_service) == 0U);
+    assert(memcmp(protected_data, g_test_state.eeprom, sizeof(protected_data)) == 0);
+
+    erased_header_address = (context.log_service.active_header_copy == 0U) ?
+                            A_GAS_LOG_HEADER_B_ADDRESS : A_GAS_LOG_HEADER_A_ADDRESS;
+    for (byte_index = erased_header_address;
+         byte_index < ((size_t) erased_header_address + AT24C256_PAGE_SIZE_BYTES);
+         ++byte_index)
+    {
+        assert(g_test_state.eeprom[byte_index] == 0xFFU);
+    }
+    for (byte_index = A_GAS_LOG_DATA_START_ADDRESS;
+         byte_index < sizeof(g_test_state.eeprom);
+         ++byte_index)
+    {
+        assert(g_test_state.eeprom[byte_index] == 0xFFU);
+    }
+    // V1.09只清除日志区：参数及通讯模式页保持不变，旧管理头和全部日志槽位均物理写成0xFF。
+
+    assert(A_GasLog_Init(&recovered, &context.storage_service, &context.system));
+    assert(A_GasLog_GetCount(&recovered) == 0U);
+    assert(A_GasLog_Task(&recovered, &context.system));
+    assert(A_GasLog_GetCount(&recovered) == 0U);
+    context.system.cylinder[0].state =
+        (context.system.cylinder[0].state == GAS_CYL_READY) ? GAS_CYL_INIT : GAS_CYL_READY;
+    assert(A_GasLog_Task(&recovered, &context.system));
+    assert(A_GasLog_GetCount(&recovered) == 1U);
+    // 清除成功后当前半小时不立即补记常规日志，下一次真实状态变化从流水号1重新记录。
 }
 
 /*
@@ -1795,6 +1862,10 @@ static void Test_HmiConfig(void)
         {0xEEU,0xB1U,0x11U,0U,5U,0U,109U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t default_frame[] =
         {0xEEU,0xB1U,0x11U,0U,4U,0U,97U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t log_clear_open_frame[] =
+        {0xEEU,0xB1U,0x11U,0U,4U,0U,142U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t log_clear_confirm_frame[] =
+        {0xEEU,0xB1U,0x11U,0U,7U,0U,146U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t protocol_text_frame[] =
         {0xEEU,0xB1U,0x11U,0U,4U,0U,82U,0x11U,'2','.','5',0U,0xFFU,0xFCU,0xFFU,0xFFU};
     A_Gas_Control_Context gas;
@@ -1805,6 +1876,7 @@ static void Test_HmiConfig(void)
     uint16_t control_id;
     size_t length;
     size_t index;
+    uint16_t clear_step;
 
     assert(F_Hmi_Init(&protocol));
     for (index = 0U; index < sizeof(protocol_text_frame); ++index)
@@ -1930,6 +2002,47 @@ static void Test_HmiConfig(void)
     assert((gas.system.cylinder[0].test_deadline_ms -
             gas.runtime_service.platform.millis) == 45000U);
     // 测试阀实际打开后才启动保存的45秒上限，不能把总阀预开启等待计入测试时间。
+
+    gas.system.date_time.year = 2026U;
+    gas.system.date_time.month = 8U;
+    gas.system.date_time.day = 28U;
+    gas.system.date_time.hour = 16U;
+    gas.system.date_time.minute = 10U;
+    gas.system.date_time.second = 0U;
+    gas.system.date_time.valid = true;
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        gas.log_service.previous_state[index] = gas.system.cylinder[index].state;
+    }
+    assert(A_GasLog_Task(&gas.log_service, &gas.system));
+    assert(A_GasLog_GetCount(&gas.log_service) > 0U);
+
+    Test_PushHmiFrame(&gas, log_clear_open_frame, sizeof(log_clear_open_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_config.log_clear_dialog_active);
+    assert(gas.hmi_config.log_clear_status == A_HMI_LOG_CLEAR_WAIT_CONFIRM);
+    assert(!A_GasLog_IsClearBusy(&gas.log_service));
+    Test_PushHmiFrame(&gas, log_clear_confirm_frame, sizeof(log_clear_confirm_frame));
+    A_GasControl_Task(&gas);
+    assert(A_GasLog_IsClearBusy(&gas.log_service));
+    assert(gas.hmi_config.log_clear_status == A_HMI_LOG_CLEAR_BUSY);
+    assert(!A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
+    for (clear_step = 0U;
+         (clear_step < 1100U) && A_GasLog_IsClearBusy(&gas.log_service);
+         ++clear_step)
+    {
+        A_GasControl_Task(&gas);
+    }
+    assert(A_GasLog_GetClearResult(&gas.log_service) ==
+           A_GAS_LOG_CLEAR_RESULT_SUCCESS);
+    assert(gas.hmi_config.log_clear_status == A_HMI_LOG_CLEAR_SUCCESS);
+    assert(gas.hmi_config.log_clear_progress == 100U);
+    assert(gas.hmi_config.log_clear_count == 0U);
+    assert(A_GasLog_GetCount(&gas.log_service) == 0U);
+    assert(A_GasConfig_Load(&gas.storage_service, &stored));
+    assert((stored.manual_exhaust_time_ms == 65535U) &&
+           (stored.test_valve_max_time_ms == 45000U));
+    // Screen4密码入口、Screen7二次确认和后台进度联动不得清除或改写运行参数。
 }
 
 /*
@@ -2394,6 +2507,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.08总测试阀内部联动、阀位双色图标、CAN最终应答、EEPROM日志条件筛选和分页查询测试通过。");
+    puts("V1.09日志物理清除、总测试阀内部联动、CAN最终应答和EEPROM分页查询测试通过。");
     return 0;
 }

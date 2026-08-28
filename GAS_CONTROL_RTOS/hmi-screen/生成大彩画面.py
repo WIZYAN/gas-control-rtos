@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.08"
+PROJECT_VERSION = "1.09"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
 SOURCE_PROJECT = PROJECT_DIR
@@ -394,8 +394,9 @@ def create_config_backgrounds(images_dir: Path) -> None:
     draw.text((38, 489), "操作结果", font=FONT_16, fill=(163, 190, 207))
 
     buttons = (
-        (298, 540, 498, 590, "恢复默认", (24, 83, 112), (69, 214, 255)),
-        (526, 540, 726, 590, "返回主菜单", (24, 83, 112), (69, 214, 255)))
+        (180, 540, 380, 590, "清除全部日志", (105, 32, 42), (255, 91, 105)),
+        (412, 540, 612, 590, "恢复默认", (24, 83, 112), (69, 214, 255)),
+        (644, 540, 844, 590, "返回主菜单", (24, 83, 112), (69, 214, 255)))
     for left, top, right, bottom, label, fill, outline in buttons:
         draw_button(draw, (left, top, right, bottom), label, fill, outline)
     image.save(images_dir / "Screen4.png")
@@ -446,6 +447,46 @@ def create_config_dialog_backgrounds(images_dir: Path) -> None:
         draw_button(down_draw, (left, top, right, bottom), "",
                     pressed_fill, pressed_outline, True)
     down.save(images_dir / "Screen5_down.png")
+
+
+def create_log_clear_backgrounds(images_dir: Path) -> None:
+    """
+    函数名：create_log_clear_backgrounds。
+    说明：生成日志物理清除的独立确认、进度画面及按钮按下态背景。
+    输入：images_dir为大彩工程图片目录。
+    输出：无；生成Screen7.png和Screen7_down.png。
+    """
+    image = Image.new("RGB", (WIDTH, HEIGHT), (8, 18, 31))
+    draw = ImageDraw.Draw(image)
+    dialog = (190, 72, 834, 528)
+    draw.rounded_rectangle(dialog, radius=18, fill=(10, 29, 46),
+                           outline=(255, 91, 105), width=3)
+    draw.rectangle((193, 75, 831, 145), fill=(61, 28, 39))
+    draw.ellipse((238, 176, 310, 248), fill=(105, 32, 42),
+                 outline=(255, 91, 105), width=3)
+    draw_centered(draw, (238, 176, 310, 248), "!", FONT_28_BOLD, (255, 238, 240))
+    draw.rounded_rectangle((338, 178, 786, 246), radius=9,
+                           fill=(7, 24, 39), outline=(47, 135, 173), width=2)
+    draw.rounded_rectangle((238, 278, 786, 352), radius=9,
+                           fill=(62, 28, 38), outline=(177, 61, 75), width=2)
+    draw.rounded_rectangle((238, 370, 786, 414), radius=8,
+                           fill=(7, 24, 39), outline=(47, 135, 173), width=2)
+    buttons = (
+        (278, 444, 498, 504, "返回参数", (45, 60, 76), (124, 170, 196)),
+        (526, 444, 746, 504, "确认清除", (105, 32, 42), (255, 91, 105)))
+    for left, top, right, bottom, _label, fill, outline in buttons:
+        # 按钮文字由VisualTFT按钮控件绘制，背景只保留按钮底色，避免两层文字重合。
+        draw_button(draw, (left, top, right, bottom), "", fill, outline)
+    image.save(images_dir / "Screen7.png")
+
+    down = image.copy()
+    down_draw = ImageDraw.Draw(down)
+    for left, top, right, bottom, _label, fill, outline in buttons:
+        # 按下态同样不固化文字，确保按钮控件始终只显示一层文字。
+        draw_button(down_draw, (left, top, right, bottom), "",
+                    tuple(min(channel + 20, 255) for channel in fill),
+                    tuple(min(channel + 20, 255) for channel in outline), True)
+    down.save(images_dir / "Screen7_down.png")
 
 
 def create_log_backgrounds(images_dir: Path) -> None:
@@ -1077,7 +1118,7 @@ def create_log_filter_screen_file(project_dir: Path) -> None:
 def create_config_screen_file(project_dir: Path) -> None:
     """
     函数名：create_config_screen_file。
-    说明：生成Screen4密码参数页，包含11个文本输入、操作提示和两个页面管理按钮。
+    说明：生成Screen4密码参数页，包含11个文本输入、日志清除入口和两个页面管理按钮。
     输入：project_dir为大彩工程输出目录。
     输出：无。
     """
@@ -1101,9 +1142,11 @@ def create_config_screen_file(project_dir: Path) -> None:
 
     add_text_item(root, "Config_Status", 93, "修改任一参数后将自动弹出确认窗口", 4,
                   "69;214;255", 160, 489, 820, 25)
-    add_button_item(root, "Config_Default", 97, False, 298, 540, 200, 50, "Screen4_down.png")
+    add_button_item(root, "Clear_All_Logs", 142, False, 180, 540, 200, 50,
+                    "Screen4_down.png")
+    add_button_item(root, "Config_Default", 97, False, 412, 540, 200, 50, "Screen4_down.png")
     add_navigation_button(root, "Config_Back", 98, "Screen0", "Screen4_down.png",
-                          526, 540, 200, 50)
+                          644, 540, 200, 50)
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     tree.write(project_dir / "Screen4.tft", encoding="utf-8", xml_declaration=True)
@@ -1138,19 +1181,51 @@ def create_config_dialog_screen_file(project_dir: Path) -> None:
     tree.write(project_dir / "Screen5.tft", encoding="utf-8", xml_declaration=True)
 
 
+def create_log_clear_screen_file(project_dir: Path) -> None:
+    """
+    函数名：create_log_clear_screen_file。
+    说明：生成Screen7日志物理清除的二次确认、数量和进度画面。
+    输入：project_dir为大彩工程输出目录。
+    输出：无；生成Screen7.tft。
+    """
+    root = ET.Element("DrawPage", {
+        "name": "Screen7", "bk_transparent": "0", "bk_color": "8;18;31",
+        "bk_image": "Images\\Screen7.png", "size_option": "0",
+        "width": str(WIDTH), "height": str(HEIGHT)
+    })
+    add_text_item(root, "Log_Clear_Title", 143, "清除全部日志", 10,
+                  "255;238;240", 300, 88, 424, 44, 1, 1)
+    add_text_item(root, "Log_Clear_Count", 144, "当前日志：0条", 8,
+                  "69;214;255", 350, 194, 424, 38, 1, 1)
+    add_text_item(root, "Log_Clear_Warning", 145,
+                  "此操作将永久删除事件日志和常规日志，删除后无法恢复。", 6,
+                  "255;174;183", 258, 294, 508, 42, 1, 1)
+    add_text_item(root, "Log_Clear_Status", 148, "等待确认", 7,
+                  "223;240;249", 250, 378, 524, 30, 1, 1)
+    add_button_item(root, "Log_Clear_Back", 147, False,
+                    278, 444, 220, 60, "Screen7_down.png", "返回参数")
+    add_button_item(root, "Log_Clear_Confirm", 146, False,
+                    526, 444, 220, 60, "Screen7_down.png", "确认清除")
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="  ")
+    tree.write(project_dir / "Screen7.tft", encoding="utf-8", xml_declaration=True)
+
+
 def create_lua_file(project_dir: Path) -> None:
     """
     函数名：create_lua_file。
-    说明：生成控件通知脚本，管理参数确认页和日志条件查询结果页跳转。
+    说明：生成控件通知脚本，管理参数确认、日志清除和日志条件查询结果页跳转。
     输入：project_dir为大彩工程输出目录。
     输出：无；写入VisualTFT工程根目录main.lua。
     """
-    script = """-- 参数确认和日志条件查询页面跳转脚本。
+    script = """-- 参数确认、日志清除和日志条件查询页面跳转脚本。
 -- MCU主动刷新不触发本回调；只处理人员触摸事件。
 function on_control_notify(screen, control, value)
     if screen == 4 then
         if ((control >= 80) and (control <= 90)) or ((control == 97) and (value == 1)) then
             change_screen(5)
+        elseif (control == 142) and (value == 1) then
+            change_screen(7)
         end
     elseif screen == 5 then
         if ((control == 108) or (control == 109)) and (value == 1) then
@@ -1161,6 +1236,10 @@ function on_control_notify(screen, control, value)
             change_screen(2)
         elseif (control == 137) and (value == 1) then
             change_screen(3)
+        end
+    elseif screen == 7 then
+        if (control == 147) and (value == 1) then
+            change_screen(4)
         end
     elseif screen == 2 then
         if (control == 69) and (value == 1) then
@@ -1214,6 +1293,7 @@ def create_project_file(project_dir: Path) -> None:
     ET.SubElement(pages, "Page", {"RelativePath": "Screen4.tft"})
     ET.SubElement(pages, "Page", {"RelativePath": "Screen5.tft"})
     ET.SubElement(pages, "Page", {"RelativePath": "Screen6.tft"})
+    ET.SubElement(pages, "Page", {"RelativePath": "Screen7.tft"})
     ET.SubElement(root, "Images")
     ET.SubElement(root, "Waves")
     tree = ET.ElementTree(root)
@@ -1240,9 +1320,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.08正式画面工程。
+    说明：生成完整的大彩 VisualTFT V1.09正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.08目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.09目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
@@ -1255,6 +1335,7 @@ def main() -> None:
     create_log_filter_backgrounds(PROJECT_DIR / "images")
     create_config_backgrounds(PROJECT_DIR / "images")
     create_config_dialog_backgrounds(PROJECT_DIR / "images")
+    create_log_clear_backgrounds(PROJECT_DIR / "images")
     create_preview(PROJECT_DIR / "images", PROJECT_DIR)
     create_regular_log_preview(PROJECT_DIR / "images", PROJECT_DIR)
     create_menu_screen_file(PROJECT_DIR)
@@ -1264,6 +1345,7 @@ def main() -> None:
     create_log_filter_screen_file(PROJECT_DIR)
     create_config_screen_file(PROJECT_DIR)
     create_config_dialog_screen_file(PROJECT_DIR)
+    create_log_clear_screen_file(PROJECT_DIR)
     create_lua_file(PROJECT_DIR)
     create_project_file(PROJECT_DIR)
     print(PROJECT_DIR)

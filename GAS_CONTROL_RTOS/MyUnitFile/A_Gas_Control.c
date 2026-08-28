@@ -891,6 +891,25 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         success = A_HmiConfig_Open(&context->hmi_config,
                                    &context->config);
     }
+    else if ((button_id == A_HMI_LOG_CLEAR_BUTTON_ID) && (value != 0U))
+    {
+        success = A_HmiConfig_OpenLogClear(&context->hmi_config,
+                                           A_GasLog_GetCount(&context->log_service));
+        if (success && A_GasLog_IsClearBusy(&context->log_service))
+        {
+            A_HmiConfig_ReportLogClear(&context->hmi_config,
+                                       A_HMI_LOG_CLEAR_BUSY,
+                                       A_GasLog_GetClearProgress(&context->log_service),
+                                       0U);
+        }
+        // 已在后台清除时重新进入Screen7只显示当前进度，不允许重复建立第二个擦除任务。
+    }
+    else if (A_HmiConfig_HandleLogClearButton(&context->hmi_config,
+                                              button_id,
+                                              value))
+    {
+        success = true;
+    }
     else if (A_HmiConfig_HandleButton(&context->hmi_config,
                                       button_id,
                                       value,
@@ -1407,6 +1426,64 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
 }
 
 /*
+ * 函数名：A_GasControl_ProcessHmiLogClear。
+ * 说明：接收密码参数页二次确认的日志清除请求，驱动EEPROM逐页状态机并反馈进度和结果。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：无；日志查询缓存、存储报警和Screen7动态文本按最终执行结果更新。
+ */
+static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
+{
+    A_Gas_Log_Clear_Result result;
+
+    if (context == NULL)
+    {
+        return;
+    }
+    if (A_HmiConfig_TakeLogClearRequest(&context->hmi_config))
+    {
+        if (!A_GasLog_RequestClear(&context->log_service))
+        {
+            context->system.alarm_bits |= GAS_ALARM_STORAGE;
+            A_HmiConfig_ReportLogClear(&context->hmi_config,
+                                       A_HMI_LOG_CLEAR_FAILED,
+                                       0U,
+                                       A_GasLog_GetCount(&context->log_service));
+            return;
+        }
+        A_HmiLog_InvalidateCache(&context->hmi_log);
+        // 清除请求一经接受立即废弃RAM分页索引，防止后续使用指向旧物理日志的逻辑位置。
+    }
+
+    A_GasLog_ClearTask(&context->log_service, &context->system);
+    result = A_GasLog_GetClearResult(&context->log_service);
+    if (result == A_GAS_LOG_CLEAR_RESULT_BUSY)
+    {
+        A_HmiConfig_ReportLogClear(&context->hmi_config,
+                                   A_HMI_LOG_CLEAR_BUSY,
+                                   A_GasLog_GetClearProgress(&context->log_service),
+                                   0U);
+    }
+    else if ((context->hmi_config.log_clear_status == A_HMI_LOG_CLEAR_BUSY) &&
+             (result == A_GAS_LOG_CLEAR_RESULT_SUCCESS))
+    {
+        context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
+        A_HmiConfig_ReportLogClear(&context->hmi_config,
+                                   A_HMI_LOG_CLEAR_SUCCESS,
+                                   100U,
+                                   A_GasLog_GetCount(&context->log_service));
+    }
+    else if ((context->hmi_config.log_clear_status == A_HMI_LOG_CLEAR_BUSY) &&
+             (result == A_GAS_LOG_CLEAR_RESULT_FAILED))
+    {
+        context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        A_HmiConfig_ReportLogClear(&context->hmi_config,
+                                   A_HMI_LOG_CLEAR_FAILED,
+                                   A_GasLog_GetClearProgress(&context->log_service),
+                                   A_GasLog_GetCount(&context->log_service));
+    }
+}
+
+/*
  * 函数名：A_GasControl_ProcessExternalLogRead。
  * 说明：执行当前外部通讯提交的日志逻辑序号读取请求，并把32字节记录写入通信数据窗口。
  * 输入：context 为气源控制应用上下文输入输出指针。
@@ -1424,6 +1501,11 @@ static void A_GasControl_ProcessExternalLogRead(A_Gas_Control_Context *context)
         return;
     }
 
+    if (A_GasLog_IsClearBusy(&context->log_service))
+    {
+        A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_BUSY);
+        return;
+    }
     if (!A_GasLog_IsReady(&context->log_service))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
@@ -1873,13 +1955,15 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     A_HmiConfig_InputTask(&context->hmi_config,
                           &context->config);
     A_GasControl_ProcessHmiConfig(context);
+    A_GasControl_ProcessHmiLogClear(context);
     A_GasControl_ManualValveTask(context, now_ms);
     A_GasControl_UpdateCylinderStates(context, now_ms);
     A_GasControl_SwitchTask(context, now_ms);
     A_GasControl_TotalTestTask(context, now_ms);
     A_GasControl_CheckOutputInvariant(context);
     // 状态机处理完成后统一检查硬安全不变量，日志只记录经过安全检查后的最终状态。
-    if (A_GasLog_IsReady(&context->log_service) &&
+    if (!A_GasLog_IsClearBusy(&context->log_service) &&
+        A_GasLog_IsReady(&context->log_service) &&
         !A_GasLog_Task(&context->log_service, &context->system))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;

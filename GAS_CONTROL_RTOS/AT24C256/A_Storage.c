@@ -55,3 +55,17 @@ bool A_Storage_Write(A_Storage_Context *context,
     return ((context != NULL) && context->ready &&
             F_At24c256_Write(&context->device, address, data, length));
 }
+
+/*
+ * 函数名：A_Storage_EraseRange。
+ * 说明：把EEPROM指定地址范围填充为0xFF，由AT24C256功能层负责页边界和写周期处理。
+ * 输入：context为存储上下文；address为起始地址；length为需要清除的字节数。
+ * 输出：指定范围全部成功写为0xFF时返回true，否则返回false。
+ */
+bool A_Storage_EraseRange(A_Storage_Context *context,
+                          uint16_t address,
+                          size_t length)
+{
+    return ((context != NULL) && context->ready &&
+            F_At24c256_EraseRange(&context->device, address, length));
+}

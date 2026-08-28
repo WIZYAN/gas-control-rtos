@@ -21,6 +21,14 @@
 #define A_HMI_CONFIG_DIALOG_OLD_TEXT_ID   (111U) // 独立确认画面当前值文本控件ID。
 #define A_HMI_CONFIG_DIALOG_NEW_TEXT_ID   (112U) // 独立确认画面候选值文本控件ID。
 #define A_HMI_CONFIG_DIALOG_INFO_TEXT_ID  (113U) // 独立确认画面校验结果文本控件ID。
+#define A_HMI_LOG_CLEAR_BUTTON_ID         (142U) // 参数页“清除全部日志”维护按钮ID。
+#define A_HMI_LOG_CLEAR_PAGE_ID           (7U)   // 独立日志清除确认和进度画面ID。
+#define A_HMI_LOG_CLEAR_TITLE_TEXT_ID     (143U) // 日志清除画面标题文本控件ID。
+#define A_HMI_LOG_CLEAR_COUNT_TEXT_ID     (144U) // 清除前或失败后的当前日志数量文本控件ID。
+#define A_HMI_LOG_CLEAR_WARNING_TEXT_ID   (145U) // 日志不可恢复警告文本控件ID。
+#define A_HMI_LOG_CLEAR_CONFIRM_BUTTON_ID (146U) // 确认物理清除全部日志的瞬时按钮ID。
+#define A_HMI_LOG_CLEAR_BACK_BUTTON_ID    (147U) // 返回参数页按钮ID；清除已开始时不会取消后台任务。
+#define A_HMI_LOG_CLEAR_STATUS_TEXT_ID    (148U) // 日志清除等待、进度和最终结果文本控件ID。
 
 // 气源业务层完成参数保存后返回给串口屏参数模块的结果。
 typedef enum
@@ -30,6 +38,15 @@ typedef enum
     A_HMI_CONFIG_RESULT_INVALID_RELATION, // 压力阈值先后关系错误。
     A_HMI_CONFIG_RESULT_STORAGE_FAILED    // EEPROM写入或读回校验失败。
 } A_Hmi_Config_Result;
+
+// 日志清除画面的业务状态，由气源应用层把EEPROM状态机结果映射后回报。
+typedef enum
+{
+    A_HMI_LOG_CLEAR_WAIT_CONFIRM = 0, // 已显示不可恢复警告，等待人员二次确认。
+    A_HMI_LOG_CLEAR_BUSY,             // 正在提交空索引或逐页擦除、读回校验。
+    A_HMI_LOG_CLEAR_SUCCESS,          // 全部旧日志物理数据已清除。
+    A_HMI_LOG_CLEAR_FAILED            // EEPROM操作失败，需要人员重新执行。
+} A_Hmi_Log_Clear_Status;
 
 // 串口屏参数页状态由气源主上下文持有，所有编辑值先暂存，保存成功前不影响运行控制。
 typedef struct
@@ -41,9 +58,15 @@ typedef struct
     uint8_t pending_field;       // 当前待确认字段序号，0～10为单项，0xFF表示恢复全部默认值。
     char pending_old_text[F_HMI_TEXT_MAX_SIZE + 1U]; // 确认子画面显示的当前生效参数文本。
     char pending_new_text[F_HMI_TEXT_MAX_SIZE + 1U]; // 确认子画面显示的候选参数或非法原始输入文本。
+    uint16_t log_clear_count;     // 日志清除画面最近一次显示的有效日志数量。
+    uint8_t log_clear_progress;   // 日志物理清除进度，范围0～100。
+    uint8_t log_clear_refresh_mask; // 位0刷新数量，位1刷新等待、进度或结果。
+    A_Hmi_Log_Clear_Status log_clear_status; // 当前日志清除确认、执行或结果状态。
     bool active;                 // 参数页已经通过密码进入并处于编辑会话。
     bool confirm_pending;        // 候选参数已通过校验，等待人员点击“确认修改”。
     bool save_pending;           // 存在一份等待气源业务层处理的保存请求。
+    bool log_clear_dialog_active; // 已经从密码参数页进入日志清除独立画面。
+    bool log_clear_request_pending; // 人员二次确认后等待气源业务层接收清除请求。
 } A_Hmi_Config_Context;
 
 /*
@@ -116,5 +139,42 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context);
  * 输出：参数页活动时返回true，否则返回false。
  */
 bool A_HmiConfig_IsActive(const A_Hmi_Config_Context *context);
+
+/*
+ * 函数名：A_HmiConfig_OpenLogClear。
+ * 说明：从密码参数页进入日志清除确认画面，并显示清除前有效日志数量。
+ * 输入：context为参数模块上下文；log_count为当前事件和常规日志总数。
+ * 输出：参数页会话有效且成功建立确认画面状态时返回true，否则返回false。
+ */
+bool A_HmiConfig_OpenLogClear(A_Hmi_Config_Context *context, uint16_t log_count);
+
+/*
+ * 函数名：A_HmiConfig_HandleLogClearButton。
+ * 说明：处理日志清除画面的确认和返回按钮；确认只产生一次后台清除请求。
+ * 输入：context为参数模块上下文；button_id和value为串口屏按钮事件。
+ * 输出：按钮属于日志清除画面时返回true，否则返回false。
+ */
+bool A_HmiConfig_HandleLogClearButton(A_Hmi_Config_Context *context,
+                                      uint16_t button_id,
+                                      uint8_t value);
+
+/*
+ * 函数名：A_HmiConfig_TakeLogClearRequest。
+ * 说明：取出人员已经二次确认的日志物理清除请求，防止同一次触摸重复执行。
+ * 输入：context为参数模块上下文。
+ * 输出：存在新的清除请求时返回true，否则返回false。
+ */
+bool A_HmiConfig_TakeLogClearRequest(A_Hmi_Config_Context *context);
+
+/*
+ * 函数名：A_HmiConfig_ReportLogClear。
+ * 说明：接收日志模块的清除状态、进度和当前数量，并安排Screen7及参数页提示刷新。
+ * 输入：context为参数模块上下文；status为清除状态；progress为0～100进度；log_count为当前日志数量。
+ * 输出：无；只有内容发生变化时才加入串口屏刷新队列。
+ */
+void A_HmiConfig_ReportLogClear(A_Hmi_Config_Context *context,
+                                A_Hmi_Log_Clear_Status status,
+                                uint8_t progress,
+                                uint16_t log_count);
 
 #endif

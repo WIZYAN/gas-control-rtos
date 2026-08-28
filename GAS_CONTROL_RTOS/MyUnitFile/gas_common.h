@@ -177,7 +177,7 @@ typedef enum
     GAS_PRESSURE_OUT_OF_RANGE  // 压力超出配置上限但仍可用于红色诊断显示，不参与自动控制。
 } gas_pressure_quality_t;
 
-// 系统内部运行状态；V1.08不提供人工切换，STOPPED只用于严重故障锁定。
+// 系统内部运行状态；当前正式版不提供人工切换，STOPPED只用于严重故障锁定。
 typedef enum
 {
     GAS_MODE_STOPPED = 0, // 内部故障锁定，全部阀门保持关闭并等待排障重启。

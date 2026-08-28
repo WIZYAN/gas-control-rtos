@@ -1369,6 +1369,7 @@ bool A_HmiLog_Request(A_Hmi_Log_Context *context,
                       A_Hmi_Log_Query_Type query_type)
 {
     if ((context == NULL) || !context->ready ||
+        !A_GasLog_IsReady(context->log) ||
         ((query_type != A_HMI_LOG_QUERY_EVENT) &&
          (query_type != A_HMI_LOG_QUERY_REGULAR)))
     {
@@ -1394,6 +1395,7 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
     uint16_t base_page;
 
     if ((context == NULL) || !context->ready ||
+        !A_GasLog_IsReady(context->log) ||
         ((query_type != A_HMI_LOG_QUERY_EVENT) &&
          (query_type != A_HMI_LOG_QUERY_REGULAR)) ||
         ((command != A_HMI_LOG_PAGE_LATEST) &&
@@ -1661,4 +1663,38 @@ bool A_HmiLog_IsBusy(const A_Hmi_Log_Context *context)
             (context->request_pending || context->page_request_pending ||
              (context->filter_refresh_mask != 0U) ||
              (context->state != A_HMI_LOG_QUERY_IDLE)));
+}
+
+/*
+ * 函数名：A_HmiLog_InvalidateCache。
+ * 说明：取消当前日志扫描或翻页并清除RAM索引，供EEPROM日志开始物理清除时调用。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；筛选条件保留，旧日志索引和待处理读取请求全部失效。
+ */
+void A_HmiLog_InvalidateCache(A_Hmi_Log_Context *context)
+{
+    if (context == NULL)
+    {
+        return;
+    }
+
+    context->state = A_HMI_LOG_QUERY_IDLE;
+    context->request_pending = false;
+    context->page_request_pending = false;
+    context->cache_valid = false;
+    context->index_complete = false;
+    context->snapshot_changed = false;
+    context->progress_pending = false;
+    context->row_ready = false;
+    context->current_record_ready = false;
+    context->matched_count = 0U;
+    context->scanned_count = 0U;
+    context->total_count = 0U;
+    context->current_page = 0U;
+    context->requested_page = 0U;
+    context->page_start_index = 0U;
+    context->page_end_index = 0U;
+    context->page_cursor = 0U;
+    context->sent_count = 0U;
+    // 不修改人员已经输入的时间、气瓶和状态筛选条件，下一次查询从空缓存重新建立索引。
 }
