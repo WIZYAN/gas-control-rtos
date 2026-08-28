@@ -253,7 +253,8 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
     }
 
     *state = false;
-    if (!context->supply_state[index] && !context->exhaust_state[index] && !context->test_state[index])
+    if (!context->supply_state[index] && !context->exhaust_state[index] &&
+        !context->test_state[index] && ((index != 0U) || !context->total_test_state))
     {
         return H_GasPlatform_SetValveBoost(context, index, false); // 组内没有线圈工作时关闭残留的 12 V 吸合控制。
     }
@@ -586,6 +587,37 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context,
 }
 
 /*
+ * 函数名：H_GasPlatform_WriteTotalTestValve。
+ * 说明：控制VAL_CAL总测试阀；线圈负端由VAL_CAL驱动，正端复用1号阀组VALP1+。
+ * 输入：context为硬件上下文；on为目标状态；pull_in_time_ms为12 V强吸合时间。
+ * 输出：GPIO命令和1号阀组吸合控制成功执行时返回true，否则返回false。
+ */
+bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
+                                       bool on,
+                                       uint32_t pull_in_time_ms)
+{
+    if (context == NULL)
+    {
+        return false;
+    }
+
+#if (GAS_BOARD_VALVE_OUTPUTS_ENABLED == 0U)
+    if (on)
+    {
+        return false;
+    }
+    // 板级输出未使能时只接受关阀命令。
+#endif
+
+    return H_GasPlatform_WriteValveOutput(context,
+                                           0U,
+                                           VAL_CAL,
+                                           on,
+                                           pull_in_time_ms,
+                                           &context->total_test_state);
+}
+
+/*
  * 函数名：H_GasPlatform_ValveTask。
  * 说明：到达吸合截止时间后关闭对应 VAL_Px，并维护同组下一次强吸合脉冲的最早允许时间。
  * 输入：context 为硬件上下文；now_ms 为当前毫秒计数。
@@ -645,6 +677,7 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         (void) memset(context->supply_state, 0, sizeof(context->supply_state));
         (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
         (void) memset(context->test_state, 0, sizeof(context->test_state));
+        context->total_test_state = false;
         (void) memset(context->boost_state, 0, sizeof(context->boost_state));
         (void) memset(context->boost_deadline_ms, 0, sizeof(context->boost_deadline_ms));
         // 运行中全关不清除强吸合最短间隔，防止停止后立即重启绕过线圈保护。

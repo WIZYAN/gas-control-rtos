@@ -144,8 +144,11 @@ static bool Test_WriteValve(H_Gas_Platform_Context *context,
     {
         context->boost_state[index] = true;
         context->boost_deadline_ms[index] = context->millis + pull_ms;
+        context->boost_interval_active[index] = true;
+        context->boost_available_ms[index] = context->millis + GAS_VALVE_BOOST_MIN_INTERVAL_MS;
     }
-    else if (!context->supply_state[index] && !context->exhaust_state[index] && !context->test_state[index])
+    else if (!context->supply_state[index] && !context->exhaust_state[index] &&
+             !context->test_state[index] && ((index != 0U) || !context->total_test_state))
     {
         context->boost_state[index] = false;
     }
@@ -186,6 +189,36 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context, uint8_t index
 }
 
 /*
+ * 函数名：H_GasPlatform_WriteTotalTestValve。
+ * 说明：模拟VAL_CAL总测试阀，并复用0号阀组的吸合状态。
+ * 输入：context为硬件上下文；on为目标状态；pull_ms为吸合时间。
+ * 输出：参数有效且命令执行时返回true，否则返回false。
+ */
+bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
+                                       bool on,
+                                       uint32_t pull_ms)
+{
+    if ((context == NULL) || (on && (pull_ms == 0U)))
+    {
+        return false;
+    }
+    context->total_test_state = on;
+    if (on)
+    {
+        context->boost_state[0] = true;
+        context->boost_deadline_ms[0] = context->millis + pull_ms;
+        context->boost_interval_active[0] = true;
+        context->boost_available_ms[0] = context->millis + GAS_VALVE_BOOST_MIN_INTERVAL_MS;
+    }
+    else if (!context->supply_state[0] && !context->exhaust_state[0] &&
+             !context->test_state[0])
+    {
+        context->boost_state[0] = false;
+    }
+    return true;
+}
+
+/*
  * 函数名：H_GasPlatform_ValveTask。
  * 说明：到时关闭模拟 12 V 吸合状态。
  * 输入：context 为上下文；now_ms 为当前时间。
@@ -197,6 +230,11 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
     if (context == NULL) return false;
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        if (context->boost_interval_active[index] &&
+            ((int32_t) (now_ms - context->boost_available_ms[index]) >= 0))
+        {
+            context->boost_interval_active[index] = false;
+        }
         if (context->boost_state[index] && ((int32_t) (now_ms - context->boost_deadline_ms[index]) >= 0))
         {
             context->boost_state[index] = false;
@@ -207,7 +245,7 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 
 /*
  * 函数名：H_GasPlatform_AllValvesOff。
- * 说明：清除十八路模拟阀门状态。
+ * 说明：清除十八路分瓶模拟阀门和一路总测试阀状态。
  * 输入：context 为硬件上下文。
  * 输出：无。
  */
@@ -218,6 +256,7 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         (void) memset(context->supply_state, 0, sizeof(context->supply_state));
         (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
         (void) memset(context->test_state, 0, sizeof(context->test_state));
+        context->total_test_state = false;
         (void) memset(context->boost_state, 0, sizeof(context->boost_state));
     }
 }
@@ -545,7 +584,7 @@ static void Test_Advance(A_Gas_Control_Context *context, uint32_t milliseconds)
 
 /*
  * 函数名：Test_SetMaintenanceState。
- * 说明：把六瓶和十八路阀门置于V1.08允许切换通讯及提交Modbus整组参数的维护状态。
+ * 说明：把六瓶、十八路分瓶阀和一路总测试阀置于V1.08允许切换通讯及提交Modbus整组参数的维护状态。
  * 输入：context为气源控制应用上下文输入输出指针。
  * 输出：无；六瓶全部停用，阀门命令、工作瓶索引和切换过程全部清零。
  */
@@ -554,6 +593,7 @@ static void Test_SetMaintenanceState(A_Gas_Control_Context *context)
     uint8_t index;
 
     F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
+    (void) memset(&context->total_test, 0, sizeof(context->total_test));
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
         context->system.cylinder[index].state = GAS_CYL_DISABLED;
@@ -1034,15 +1074,21 @@ static void Test_CanDirectWriteAndControl(void)
 
     Test_RunCanWrite(&context, A_CAN_ADDRESS_TEST_CONTROL_BASE, 1U);
     assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_SUCCESS);
+    assert(!context.system.cylinder[0].test_cmd);
+    assert((context.total_test.pending_open_mask & 0x01U) != 0U);
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
+    assert(context.system.total_test_cmd);
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert(context.system.cylinder[0].exhaust_cmd);
     assert(context.system.cylinder[0].test_cmd);
-    // 同一气瓶同时具备人工阀开启权限时，排气阀和测试阀允许并行开启。
+    // 总阀等待共享VALP1+可用并先吸合，随后分路测试阀才与排气阀并行开启。
 
     Test_RunCanWrite(&context, A_CAN_ADDRESS_EXHAUST_CONTROL_BASE, 0U);
     assert(!context.system.cylinder[0].exhaust_cmd);
     assert(context.system.cylinder[0].test_cmd);
     Test_RunCanWrite(&context, A_CAN_ADDRESS_TEST_CONTROL_BASE, 0U);
     assert(!context.system.cylinder[0].test_cmd);
+    assert(!context.system.total_test_cmd);
 
     assert(context.external_can.last_write_address == A_CAN_ADDRESS_TEST_CONTROL_BASE);
     assert(context.external_can.last_write_value == 0U);
@@ -1221,7 +1267,12 @@ static void Test_QualificationGate(void)
     assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
     assert(!context.system.cylinder[0].qualification_passed);
     assert(A_GasControl_SetTestValve(&context, 0U, true));
+    assert((context.total_test.pending_open_mask & 0x01U) != 0U);
     assert(A_GasControl_SetTestValve(&context, 0U, false));
+    assert((context.total_test.pending_open_mask == 0U) &&
+           !context.system.total_test_cmd &&
+           !context.system.cylinder[0].test_cmd);
+    // 分路尚未实际开启前收到关闭请求，必须撤销等待且不能残留总测试阀命令。
     context.system.mode = GAS_MODE_STOPPED;
     // 本用例只验证单瓶状态门槛，停止自动选瓶，避免刚进入待用便被选择为使用瓶。
 
@@ -1313,16 +1364,39 @@ static void Test_ManualAndDisabled(void)
     assert(context.system.cylinder[0].exhaust_deadline_ms == exhaust_deadline_ms);
     // 排气中再次请求只返回当前成功状态，不得把原定时截止点向后延长。
     assert(A_GasControl_SetTestValve(&context, 0U, true));
+    assert(!context.system.cylinder[0].test_cmd);
+    Test_Advance(&context, 400U);
+    assert(context.system.total_test_cmd && !context.system.cylinder[0].test_cmd);
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert(context.system.cylinder[0].exhaust_cmd &&
            context.system.cylinder[0].test_cmd);
-    Test_Advance(&context, 4899U);
+    Test_Advance(&context, 3999U);
     assert(context.system.cylinder[0].exhaust_cmd &&
            context.system.cylinder[0].test_cmd);
     Test_Advance(&context, 1U);
     assert(!context.system.cylinder[0].exhaust_cmd);
     assert(context.system.cylinder[0].test_cmd);
-    Test_Advance(&context, 55100U);
+    Test_Advance(&context, 56000U);
     assert(!context.system.cylinder[0].test_cmd);
+    assert(!context.system.total_test_cmd);
+
+    assert(A_GasControl_SetTestValve(&context, 0U, true));
+    Test_Advance(&context, 0U);
+    assert(context.system.total_test_cmd);
+    assert(A_GasControl_SetTestValve(&context, 2U, true));
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
+    assert(context.system.cylinder[0].test_cmd &&
+           context.system.cylinder[2].test_cmd &&
+           context.system.total_test_cmd);
+    assert(A_GasControl_SetTestValve(&context, 0U, false));
+    assert(!context.system.cylinder[0].test_cmd &&
+           context.system.cylinder[2].test_cmd &&
+           context.system.total_test_cmd);
+    assert(A_GasControl_SetTestValve(&context, 2U, false));
+    assert(!context.system.cylinder[2].test_cmd &&
+           !context.system.total_test_cmd);
+    // 多路测试共用总阀；关闭其中一路不影响其余分路，最后一路关闭后总阀才关闭。
+
     assert(!A_GasControl_StartExhaust(&context, context.system.active_index));
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, true));
     assert(context.system.cylinder[1].state == GAS_CYL_DISABLED);
@@ -1849,9 +1923,13 @@ static void Test_HmiConfig(void)
     assert(!gas.system.cylinder[0].exhaust_cmd);
     gas.system.cylinder[0].state = GAS_CYL_READY;
     assert(A_GasControl_SetTestValve(&gas, 0U, true));
+    assert(gas.system.cylinder[0].test_deadline_ms == 0U);
+    Test_Advance(&gas, 0U);
+    assert(gas.system.total_test_cmd && !gas.system.cylinder[0].test_cmd);
+    Test_Advance(&gas, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert((gas.system.cylinder[0].test_deadline_ms -
             gas.runtime_service.platform.millis) == 45000U);
-    // 保存后的两项计时必须由业务接口立即使用，不能继续引用旧的5秒和60秒编译期常量。
+    // 测试阀实际打开后才启动保存的45秒上限，不能把总阀预开启等待计入测试时间。
 }
 
 /*
@@ -2316,6 +2394,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.08整机启停入口删除、阀位双色图标、CAN最终应答、EEPROM日志条件筛选和分类分页查询测试通过。");
+    puts("V1.08总测试阀内部联动、阀位双色图标、CAN最终应答、EEPROM日志条件筛选和分页查询测试通过。");
     return 0;
 }

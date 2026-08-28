@@ -14,6 +14,47 @@ static bool A_GasControl_SaveCommMode(A_Storage_Context *storage,
 static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system);
 
 /*
+ * 函数名：A_GasControl_AnyTestValveOn。
+ * 说明：检查六路分支测试阀是否至少有一路已经实际执行开启命令。
+ * 输入：system为只读气源系统状态。
+ * 输出：至少一路测试阀开启时返回true，否则返回false。
+ */
+static bool A_GasControl_AnyTestValveOn(const Gas_System *system)
+{
+    uint8_t index;
+
+    if (system == NULL)
+    {
+        return false;
+    }
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        if (system->cylinder[index].test_cmd)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * 函数名：A_GasControl_ForceAllValvesOff。
+ * 说明：关闭十九路阀门并清除尚未执行的分支测试阀开启请求。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：无；参数有效时同步清零硬件、业务命令和总测试阀联动状态。
+ */
+static void A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
+{
+    if (context == NULL)
+    {
+        return;
+    }
+
+    F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
+    (void) memset(&context->total_test, 0, sizeof(context->total_test));
+}
+
+/*
  * 函数名：A_GasControl_CommRecordCrc16。
  * 说明：计算外部通讯模式EEPROM记录前六字节的Modbus多项式CRC16。
  * 输入：data为只读记录数据；length为参与计算的字节数。
@@ -196,11 +237,7 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
                                            &context->config,
                                            index,
                                            false);
-    test_ok = F_ValveControl_SetTest(&context->runtime_service.platform,
-                                     &context->system,
-                                     &context->config,
-                                     index,
-                                     false);
+    test_ok = A_GasControl_SetTestValve(context, index, false);
     cylinder->exhaust_deadline_ms = 0U;
     cylinder->test_deadline_ms = 0U;
     return (supply_ok && exhaust_ok && test_ok);
@@ -466,18 +503,107 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
         if (cylinder->test_cmd &&
             A_GasControl_TimeReached(now_ms, cylinder->test_deadline_ms))
         {
-            if (!F_ValveControl_SetTest(&context->runtime_service.platform,
-                                        &context->system,
-                                        &context->config,
-                                        index,
-                                        false))
+            if (!A_GasControl_SetTestValve(context, index, false))
             {
                 context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
             }
-            cylinder->test_deadline_ms = 0U;
             // 一分钟上限由MCU强制执行，不依赖串口屏再次发送关闭事件。
         }
     }
+}
+
+/*
+ * 函数名：A_GasControl_TotalTestTask。
+ * 说明：在总测试阀预先吸合并满足共享VALP1+间隔后，分步执行等待中的测试阀开启请求。
+ * 输入：context为气源控制应用上下文输入输出指针；now_ms为当前毫秒时间。
+ * 输出：无；成功时开启分路并启动独立超时，失败时撤销请求并按需关闭总测试阀。
+ */
+static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t now_ms)
+{
+    uint8_t index;
+    uint8_t bit;
+
+    if (context == NULL)
+    {
+        return;
+    }
+
+    if ((context->total_test.pending_open_mask != 0U) &&
+        !context->system.total_test_cmd &&
+        F_ValveControl_TotalTestCanOpen(&context->runtime_service.platform, now_ms))
+    {
+        if (!F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+                                         &context->system,
+                                         &context->config,
+                                         true))
+        {
+            context->total_test.pending_open_mask = 0U;
+            (void) memset(context->total_test.open_not_before_ms,
+                          0,
+                          sizeof(context->total_test.open_not_before_ms));
+            context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
+        }
+        else
+        {
+            for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+            {
+                bit = (uint8_t) (1U << index);
+                if ((context->total_test.pending_open_mask & bit) != 0U)
+                {
+                    context->total_test.open_not_before_ms[index] =
+                        now_ms + GAS_VALVE_BOOST_MIN_INTERVAL_MS;
+                }
+            }
+        }
+        // 共享电源可用后先吸合总阀，所有等待分路统一再等待500 ms才允许打开。
+    }
+    if ((context->total_test.pending_open_mask != 0U) &&
+        !context->system.total_test_cmd)
+    {
+        return;
+    }
+
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        bit = (uint8_t) (1U << index);
+        if (((context->total_test.pending_open_mask & bit) == 0U) ||
+            !A_GasControl_TimeReached(now_ms,
+                                      context->total_test.open_not_before_ms[index]))
+        {
+            continue;
+        }
+
+        context->total_test.pending_open_mask &= (uint8_t) ~bit;
+        context->total_test.open_not_before_ms[index] = 0U;
+        if (F_ValveControl_SetTest(&context->runtime_service.platform,
+                                   &context->system,
+                                   &context->config,
+                                   index,
+                                   true))
+        {
+            context->system.cylinder[index].test_deadline_ms =
+                now_ms + context->config.test_valve_max_time_ms;
+        }
+        else
+        {
+            context->system.cylinder[index].test_deadline_ms = 0U;
+            context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
+        }
+        A_Hmi_RequestTestSync(&context->hmi, index);
+        // 分路真正执行后再回写既有测试按钮，不增加任何新HMI控件。
+    }
+
+    if (!A_GasControl_AnyTestValveOn(&context->system) &&
+        (context->total_test.pending_open_mask == 0U) &&
+        context->system.total_test_cmd &&
+        !F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+                                     &context->system,
+                                     &context->config,
+                                     false))
+    {
+        context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
+    }
+    // 总测试阀只在至少一路实际开启或等待开启期间保持，最后一路结束后立即关闭。
 }
 
 /*
@@ -611,7 +737,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
                                           system->switch_new_index,
                                           true))
             {
-                F_ValveControl_AllOff(&context->runtime_service.platform, system);
+                A_GasControl_ForceAllValvesOff(context);
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
                 system->mode = GAS_MODE_STOPPED;
                 system->switch_state = GAS_SWITCH_IDLE;
@@ -790,6 +916,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
 {
     uint8_t index;
     uint8_t supply_count = 0U;
+    bool any_test_on = false;
     bool conflict = false;
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
@@ -806,11 +933,23 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
         {
             conflict = true;
         }
+        if (cylinder->test_cmd)
+        {
+            any_test_on = true;
+        }
     }
+
+    if ((any_test_on && !context->system.total_test_cmd) ||
+        (!any_test_on && (context->total_test.pending_open_mask == 0U) &&
+         context->system.total_test_cmd))
+    {
+        conflict = true;
+    }
+    // 总测试阀允许在分路等待阶段预先打开，除此之外必须与六路测试阀的或逻辑一致。
 
     if ((supply_count > 1U) || conflict)
     {
-        F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
+        A_GasControl_ForceAllValvesOff(context);
         context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
         context->system.mode = GAS_MODE_STOPPED;
         context->system.switch_state = GAS_SWITCH_IDLE;
@@ -825,15 +964,19 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
 
 /*
  * 函数名：A_GasControl_AllValveCommandsAreOff。
- * 说明：检查六只气瓶的进气阀、排气阀和测试阀软件命令是否已经全部关闭。
+ * 说明：检查十八路分瓶阀和VAL_CAL总测试阀软件命令是否已经全部关闭。
  * 输入：system 为只读气源系统状态指针。
- * 输出：十八路阀门命令全部为关闭时返回 true，参数无效或存在开阀命令时返回 false。
+ * 输出：十九路阀门命令全部为关闭时返回 true，参数无效或存在开阀命令时返回 false。
  */
 static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system)
 {
     uint8_t index;
 
     if (system == NULL)
+    {
+        return false;
+    }
+    if (system->total_test_cmd)
     {
         return false;
     }
@@ -1347,7 +1490,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
     }
     F_ValveControl_Init(&context->runtime_service.platform, system);
-    // 阀门初始化在任何通信和存储业务之前执行，保证上电期间十八路输出保持关闭。
+    // 阀门初始化在任何通信和存储业务之前执行，保证上电期间十八路分瓶阀和总测试阀保持关闭。
 
     sensor_ready = A_ModbusPoll_Init(&context->sensor_poll,
                                      &context->runtime_service.platform,
@@ -1411,7 +1554,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
 
 /*
  * 函数名：A_GasControl_SetExternalCommMode。
- * 说明：在六瓶全部停用且十八路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
+ * 说明：在六瓶全部停用且十九路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
  * 输入：context为应用上下文；mode为目标通讯模式，0表示CAN、1表示RS485/Modbus。
  * 输出：目标接口成功启用并完成持久化时返回true；运行中、初始化失败或存储失败时返回false并恢复原模式。
  */
@@ -1542,11 +1685,13 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
 bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bool on)
 {
     uint32_t now_ms;
+    uint8_t bit;
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
         return false;
     }
+    bit = (uint8_t) (1U << index);
     if (on && ((context->system.mode != GAS_MODE_AUTO) ||
         ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
          (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
@@ -1556,25 +1701,47 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
         return false;
     }
 
-    if (!F_ValveControl_SetTest(&context->runtime_service.platform,
+    if (on)
+    {
+        if (context->system.cylinder[index].test_cmd ||
+            ((context->total_test.pending_open_mask & bit) != 0U))
+        {
+            return true;
+        }
+
+        now_ms = F_GasRuntime_Millis(&context->runtime_service);
+        context->total_test.pending_open_mask |= bit;
+        context->total_test.open_not_before_ms[index] = context->system.total_test_cmd ?
+            now_ms + GAS_VALVE_BOOST_MIN_INTERVAL_MS : 0U;
+        context->system.cylinder[index].test_deadline_ms = 0U;
+        // 周期任务会先等待VALP1+可用并吸合总阀，再延时500 ms真正打开分路测试阀。
+        return true;
+    }
+
+    context->total_test.pending_open_mask &= (uint8_t) ~bit;
+    context->total_test.open_not_before_ms[index] = 0U;
+    if (context->system.cylinder[index].test_cmd &&
+        !F_ValveControl_SetTest(&context->runtime_service.platform,
                                 &context->system,
                                 &context->config,
                                 index,
-                                on))
+                                false))
     {
         return false;
     }
+    context->system.cylinder[index].test_deadline_ms = 0U;
 
-    if (on)
+    if (!A_GasControl_AnyTestValveOn(&context->system) &&
+        (context->total_test.pending_open_mask == 0U) &&
+        context->system.total_test_cmd &&
+        !F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+                                     &context->system,
+                                     &context->config,
+                                     false))
     {
-        now_ms = F_GasRuntime_Millis(&context->runtime_service);
-        context->system.cylinder[index].test_deadline_ms =
-            now_ms + context->config.test_valve_max_time_ms;
+        return false;
     }
-    else
-    {
-        context->system.cylinder[index].test_deadline_ms = 0U;
-    }
+    // 分路先关闭；仅当没有其他实际或等待中的测试阀时才关闭VAL_CAL总测试阀。
     return true;
 }
 
@@ -1709,6 +1876,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     A_GasControl_ManualValveTask(context, now_ms);
     A_GasControl_UpdateCylinderStates(context, now_ms);
     A_GasControl_SwitchTask(context, now_ms);
+    A_GasControl_TotalTestTask(context, now_ms);
     A_GasControl_CheckOutputInvariant(context);
     // 状态机处理完成后统一检查硬安全不变量，日志只记录经过安全检查后的最终状态。
     if (A_GasLog_IsReady(&context->log_service) &&

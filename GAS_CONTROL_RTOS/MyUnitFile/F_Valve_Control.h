@@ -51,7 +51,7 @@ bool F_ValveControl_SetExhaust(H_Gas_Platform_Context *platform,
 
 /*
  * 函数名：F_ValveControl_SetTest。
- * 说明：在自动模式的初始化、待测试、待用或低压待换状态设置测试阀；与供气阀互锁，但允许排气阀同时开启。
+ * 说明：在总测试阀已开启及业务状态允许时设置分路测试阀；与供气阀互锁，但允许排气阀同时开启。
  * 输入：platform 为硬件上下文；system 为系统状态；config 为运行参数；index 为气瓶索引；on 为目标状态。
  * 输出：命令成功执行时返回 true，否则返回 false。
  */
@@ -60,6 +60,26 @@ bool F_ValveControl_SetTest(H_Gas_Platform_Context *platform,
                             const Gas_Config *config,
                             uint8_t index,
                             bool on);
+
+/*
+ * 函数名：F_ValveControl_SetTotalTest。
+ * 说明：设置由六路测试阀内部联动的VAL_CAL总测试阀，不提供独立人工或外部控制入口。
+ * 输入：platform为硬件上下文；system为系统状态；config为运行参数；on为目标状态。
+ * 输出：总测试阀命令成功执行时返回true，否则返回false。
+ */
+bool F_ValveControl_SetTotalTest(H_Gas_Platform_Context *platform,
+                                 Gas_System *system,
+                                 const Gas_Config *config,
+                                 bool on);
+
+/*
+ * 函数名：F_ValveControl_TotalTestCanOpen。
+ * 说明：检查共享VALP1+的1号阀组是否已经满足下一次12 V强吸合间隔。
+ * 输入：platform为只读硬件上下文；now_ms为当前毫秒时间。
+ * 输出：总测试阀可以安全开始强吸合时返回true，否则返回false。
+ */
+bool F_ValveControl_TotalTestCanOpen(const H_Gas_Platform_Context *platform,
+                                     uint32_t now_ms);
 
 /*
  * 函数名：F_ValveControl_AllOff。

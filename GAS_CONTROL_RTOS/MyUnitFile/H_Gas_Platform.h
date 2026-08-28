@@ -20,6 +20,7 @@ typedef struct
     bool supply_state[GAS_CYLINDER_COUNT];         // 六路供气阀最近一次成功写入的逻辑状态。
     bool exhaust_state[GAS_CYLINDER_COUNT];        // 六路排气阀最近一次成功写入的逻辑状态。
     bool test_state[GAS_CYLINDER_COUNT];           // 六路测试阀最近一次成功写入的逻辑状态。
+    bool total_test_state;                         // VAL_CAL总测试阀最近一次成功写入的逻辑状态。
     bool boost_state[GAS_CYLINDER_COUNT];          // 六组 VAL_Px 当前是否处于 12 V 吸合阶段。
     uint32_t boost_deadline_ms[GAS_CYLINDER_COUNT]; // 六组 12 V 吸合阶段的结束时间。
     bool boost_interval_active[GAS_CYLINDER_COUNT]; // 六组强吸合最短间隔计时是否正在生效。
@@ -122,6 +123,16 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context,
                                   uint8_t cylinder_index,
                                   bool on,
                                   uint32_t pull_in_time_ms);
+
+/*
+ * 函数名：H_GasPlatform_WriteTotalTestValve。
+ * 说明：控制VAL_CAL总测试阀负端，并复用VALP1+执行12 V强吸合和约5 V保持。
+ * 输入：context为硬件上下文；on为目标状态；pull_in_time_ms为12 V强吸合时间。
+ * 输出：命令成功写入时返回true，否则返回false。
+ */
+bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
+                                       bool on,
+                                       uint32_t pull_in_time_ms);
 
 /*
  * 函数名：H_GasPlatform_ValveTask。

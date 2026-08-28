@@ -17,6 +17,13 @@
 #include "../modbus/A_Modbus.h"
 #include "../modbus_poll/A_Modbus_Poll.h"
 
+// 总测试阀内部联动上下文，只保存等待总阀建立后再打开的分路测试请求。
+typedef struct
+{
+    uint8_t pending_open_mask;                         // 位0～5分别表示1～6号测试阀等待开启。
+    uint32_t open_not_before_ms[GAS_CYLINDER_COUNT];  // 各分路允许开启的最早毫秒时间。
+} A_Gas_Total_Test_Context;
+
 // 气源控制应用层上下文，拥有单个系统实例及其所需的全部功能层上下文，不依赖模块全局变量。
 typedef struct
 {
@@ -32,6 +39,7 @@ typedef struct
     A_Hmi_Log_Context hmi_log;               // 串口屏事件15条、常规10条分页索引查询实例。
     A_Storage_Context storage_service;       // 软件 IIC 和 AT24C256 存储实例。
     A_Gas_Log_Context log_service;           // AT24C256常规记录和状态事件循环日志实例。
+    A_Gas_Total_Test_Context total_test;      // VAL_CAL总测试阀与六路测试阀的内部联动状态。
 } A_Gas_Control_Context;
 
 /*
@@ -52,7 +60,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context);
 
 /*
  * 函数名：A_GasControl_SetExternalCommMode。
- * 说明：在六瓶全部停用且十八路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
+ * 说明：在六瓶全部停用且十九路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
  * 输入：context为应用上下文；mode为目标通讯模式，0表示CAN、1表示RS485/Modbus。
  * 输出：目标接口成功启用并完成持久化时返回true；维护条件、初始化或存储失败时返回false并恢复原模式。
  */
@@ -77,9 +85,9 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index);
 
 /*
  * 函数名：A_GasControl_SetTestValve。
- * 说明：按照串口屏开关状态打开或关闭指定气瓶测试阀，并按当前超时参数自动关闭；允许排气阀同时开启。
+ * 说明：请求打开或关闭指定气瓶测试阀；内部先联动VAL_CAL总测试阀，再按当前超时参数自动关闭分路。
  * 输入：context 为应用上下文；index 为从 0 开始的气瓶索引。
- * 输出：命令满足状态和互锁条件并成功执行时返回 true，否则返回 false。
+ * 输出：关闭已完成或开启请求已安全接收时返回true，参数、状态或互锁不允许时返回false。
  */
 bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bool on);
 

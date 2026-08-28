@@ -263,6 +263,7 @@ typedef struct
     Gas_Cylinder cylinder[GAS_CYLINDER_COUNT]; // 六只气瓶的独立状态数据。
     Gas_Total_Pressure total_pressure;          // 地址 7 总压力传感器的独立运行数据。
     Gas_Date_Time date_time;                    // 从串口屏 RTC 周期读取的系统日期时间。
+    bool total_test_cmd;                        // VAL_CAL总测试阀命令状态，由六路测试阀内部联动，不接受独立操作。
     gas_mode_t mode;                           // 当前系统运行模式。
     gas_switch_state_t switch_state;           // 自动切瓶状态机当前状态。
     uint8_t active_index;                      // 当前工作瓶索引，0～5；无工作瓶时为 GAS_NO_ACTIVE_CYLINDER。
