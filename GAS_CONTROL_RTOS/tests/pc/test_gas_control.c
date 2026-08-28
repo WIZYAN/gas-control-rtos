@@ -19,6 +19,16 @@ typedef struct
 static Test_State g_test_state; // 主机测试唯一状态实例。
 
 /*
+ * 函数名：Test_PushHmiFrame。
+ * 说明：把一帧串口屏上传数据写入模拟SCI9接收环形缓冲区。
+ * 输入：context为气源应用上下文；frame为只读帧；length为帧长度。
+ * 输出：无；数据写入HMI硬件层接收缓存。
+ */
+static void Test_PushHmiFrame(A_Gas_Control_Context *context,
+                              const uint8_t *frame,
+                              size_t length);
+
+/*
  * 函数名：H_GasPlatform_Init。
  * 说明：初始化模拟气源硬件上下文。
  * 输入：context 为硬件上下文输入输出指针。
@@ -534,6 +544,28 @@ static void Test_Advance(A_Gas_Control_Context *context, uint32_t milliseconds)
 }
 
 /*
+ * 函数名：Test_SetMaintenanceState。
+ * 说明：把六瓶和十八路阀门置于V1.08允许切换通讯及提交Modbus整组参数的维护状态。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：无；六瓶全部停用，阀门命令、工作瓶索引和切换过程全部清零。
+ */
+static void Test_SetMaintenanceState(A_Gas_Control_Context *context)
+{
+    uint8_t index;
+
+    F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        context->system.cylinder[index].state = GAS_CYL_DISABLED;
+        context->system.cylinder[index].qualification_passed = false;
+    }
+    context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
+    context->system.switch_old_index = GAS_NO_ACTIVE_CYLINDER;
+    context->system.switch_new_index = GAS_NO_ACTIVE_CYLINDER;
+    context->system.switch_state = GAS_SWITCH_IDLE;
+}
+
+/*
  * 函数名：Test_ModbusWriteSingle。
  * 说明：构造一帧功能码06请求，通过模拟 SCI0 向外部 Modbus 保持寄存器写入单个数值。
  * 输入：context 为应用上下文；address 为 PDU 寄存器地址；value 为待写入数值。
@@ -636,9 +668,9 @@ static void Test_ConfigV2Migration(void)
 
 /*
  * 函数名：Test_ExternalModbusConfig。
- * 说明：验证外部 SCI0 Modbus 参数地址、停止态门槛、提交结果以及 EEPROM 持久化。
+ * 说明：验证外部SCI0 Modbus废弃启停命令、全瓶停用维护门槛、参数提交和EEPROM持久化。
  * 输入：无。
- * 输出：无；断言运行中提交被拒绝，停止后参数成功应用并可从 EEPROM 读回。
+ * 输出：无；断言非维护状态提交被拒绝，全瓶停用后参数成功应用并可从EEPROM读回。
  */
 static void Test_ExternalModbusConfig(void)
 {
@@ -650,10 +682,10 @@ static void Test_ExternalModbusConfig(void)
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
     assert(A_Can_IsReady(&context.external_can));
-    A_GasControl_Stop(&context);
+    Test_SetMaintenanceState(&context);
     assert(A_GasControl_SetExternalCommMode(&context, GAS_EXTERNAL_COMM_RS485));
-    (void) A_GasControl_StartAuto(&context);
     assert(A_Modbus_IsReady(&context.external_modbus));
+    assert(A_MODBUS_SOFTWARE_VERSION == 0x0202U);
     assert(F_MODBUS_HOLDING_REGISTER_COUNT == 38U);
     assert(A_GAS_CONFIG_REGISTER_COUNT == 10U);
     assert(context.external_modbus.function.holding_register[A_MODBUS_HOLDING_CONFIG_VERSION] ==
@@ -662,11 +694,13 @@ static void Test_ExternalModbusConfig(void)
 
     Test_ModbusWriteSingle(&context,
                            F_MODBUS_HOLDING_BASE_ADDRESS + A_MODBUS_HOLDING_COMMAND,
-                           3U);
+                           A_MODBUS_COMMAND_STOP);
     assert(F_Modbus_GetHoldingRegister(&context.external_modbus.function,
                                        A_MODBUS_HOLDING_RESULT,
                                        &result));
     assert(result == A_MODBUS_RESULT_INVALID_COMMAND);
+
+    context.system.cylinder[0].state = GAS_CYL_INIT;
 
     Test_ModbusWriteSingle(&context,
                            F_MODBUS_HOLDING_BASE_ADDRESS + A_MODBUS_HOLDING_CONFIG_BASE,
@@ -680,7 +714,7 @@ static void Test_ExternalModbusConfig(void)
     assert(result == A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY);
     assert(context.external_modbus.function.holding_register[A_MODBUS_HOLDING_CONFIG_BASE] == 1200U);
 
-    A_GasControl_Stop(&context);
+    Test_SetMaintenanceState(&context);
     Test_ModbusWriteSingle(&context,
                            F_MODBUS_HOLDING_BASE_ADDRESS + A_MODBUS_HOLDING_CONFIG_BASE,
                            1100U);
@@ -803,7 +837,7 @@ static void Test_DefaultCanProtocol(void)
     assert((A_CAN_ADDRESS_COMMAND_RESULT >= 0x0100U) && (A_CAN_ADDRESS_WRITE_SEQUENCE <= 0x01FFU));
     assert((A_CAN_ADDRESS_SWITCH_PRESSURE >= 0x0200U) && (A_CAN_ADDRESS_PRESSURE_MAX <= 0x02FFU));
     assert((A_CAN_ADDRESS_VALVE_PULL_IN_TIME >= 0x0300U) && (A_CAN_ADDRESS_LOG_INDEX <= 0x03FFU));
-    assert(A_CAN_SOFTWARE_VERSION == 0x0205UL);
+    assert(A_CAN_SOFTWARE_VERSION == 0x0206UL);
     assert(A_CAN_ADDRESS_COMMAND_RESULT == (A_CAN_ADDRESS_COMM_MODE + 1U));
     assert(A_CAN_ADDRESS_CONFIG_RESULT == (A_CAN_ADDRESS_COMMAND_RESULT + 1U));
     assert(A_CAN_ADDRESS_CONFIG_VERSION == (A_CAN_ADDRESS_CONFIG_RESULT + 1U));
@@ -934,7 +968,7 @@ static void Test_DefaultCanProtocol(void)
 
 /*
  * 函数名：Test_CanDirectWriteAndControl。
- * 说明：验证V1.06 CAN单参数保存、参数关系拒绝、废弃提交地址以及排气和测试阀最终结果应答。
+ * 说明：验证V1.08 CAN单参数保存、参数关系拒绝、废弃整机启停地址以及单瓶控制最终结果应答。
  * 输入：无。
  * 输出：无；断言功能码6基础码、详细码、EEPROM生效值和阀门实际命令均正确。
  */
@@ -968,6 +1002,12 @@ static void Test_CanDirectWriteAndControl(void)
     Test_RunCanWrite(&context, A_CAN_ADDRESS_CONFIG_COMMIT, 0x0000A55AUL);
     assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_ADDRESS_ERROR);
     assert(g_test_state.can_tx.data[5] == A_CAN_WRITE_DETAIL_DEPRECATED);
+
+    Test_RunCanWrite(&context, A_CAN_ADDRESS_COMMAND, GAS_EXTERNAL_COMMAND_STOP);
+    assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_ADDRESS_ERROR);
+    assert(g_test_state.can_tx.data[5] == A_CAN_WRITE_DETAIL_DEPRECATED);
+    assert(context.system.mode == GAS_MODE_AUTO);
+    // V1.08保留0x0306地址兼容，但任何人工启动或停止请求都不得改变系统运行状态。
 
     context.system.mode = GAS_MODE_AUTO;
     context.system.switch_state = GAS_SWITCH_IDLE;
@@ -1006,7 +1046,7 @@ static void Test_CanDirectWriteAndControl(void)
 
     assert(context.external_can.last_write_address == A_CAN_ADDRESS_TEST_CONTROL_BASE);
     assert(context.external_can.last_write_value == 0U);
-    assert(context.external_can.write_sequence == 7U);
+    assert(context.external_can.write_sequence == 8U);
 }
 
 /*
@@ -1026,7 +1066,7 @@ static void Test_GasLog(void)
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
-    A_GasControl_Stop(&context);
+    Test_SetMaintenanceState(&context);
     assert(A_GasControl_SetExternalCommMode(&context, GAS_EXTERNAL_COMM_RS485));
     assert(A_GasLog_IsReady(&context.log_service));
 
@@ -1291,14 +1331,16 @@ static void Test_ManualAndDisabled(void)
     assert(context.system.active_index == 2U);
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, false));
     assert(context.system.cylinder[1].state == GAS_CYL_INIT);
-    A_GasControl_Stop(&context);
+    F_ValveControl_AllOff(&context.runtime_service.platform, &context.system);
+    context.system.mode = GAS_MODE_STOPPED;
+    // V1.08删除人工整机停止入口，但内部故障锁定仍必须拒绝任何人工开阀。
     assert(!A_GasControl_StartExhaust(&context, 0U));
     assert(!A_GasControl_SetTestValve(&context, 0U, true));
 }
 
 /*
  * 函数名：Test_Hmi。
- * 说明：验证按钮业务映射、系统启停、中文状态、阀门显示、状态高亮、总压力和RTC时间。
+ * 说明：验证按钮业务映射、中文状态、双色阀位图标、状态高亮、总压力和RTC时间。
  * 输入：无。
  * 输出：无。
  */
@@ -1310,13 +1352,15 @@ static void Test_Hmi(void)
     const uint8_t qualification_off_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t event_log_frame[] = {0xEEU,0xB1U,0x11U,0U,2U,0U,61U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t regular_log_frame[] = {0xEEU,0xB1U,0x11U,0U,3U,0U,65U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t stop_frame[] = {0xEEU,0xB1U,0x11U,0U,1U,0U,99U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t auto_frame[] = {0xEEU,0xB1U,0x11U,0U,1U,0U,99U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_time_on_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,131U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_cylinder_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_state_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_date_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,127U,0x11U,
+                                         '2','0','2','6','0','8','2','2',0U,
+                                         0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U};
     const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U};
-    const uint8_t valve_on_text[] = {0xBFU,0xAAU,0xC6U,0xF4U};
-    const uint8_t valve_off_text[] = {0xB9U,0xD8U,0xB1U,0xD5U};
     const char sample_record[] = "2026-08-22 10:00:00;TEST;1;OK;";
     A_Gas_Control_Context gas;
     A_Hmi_Context display;
@@ -1326,6 +1370,21 @@ static void Test_Hmi(void)
     size_t index;
 
     Test_Prepare(&gas);
+    Test_PushHmiFrame(&gas, filter_time_on_frame, sizeof(filter_time_on_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.time_enabled);
+    Test_PushHmiFrame(&gas, filter_cylinder_frame, sizeof(filter_cylinder_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.cylinder_number == 1U);
+    Test_PushHmiFrame(&gas, filter_state_frame, sizeof(filter_state_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == (uint8_t) GAS_CYL_INIT);
+    Test_PushHmiFrame(&gas, filter_date_frame, sizeof(filter_date_frame));
+    A_GasControl_Task(&gas);
+    assert((gas.hmi_log.edit_filter.start.year == 2026U) &&
+           (gas.hmi_log.edit_filter.start.month == 8U) &&
+           (gas.hmi_log.edit_filter.start.day == 22U));
+    // Screen6的开关、循环选择和YYYYMMDD文本必须由MCU条件结构统一保存。
     for (index = 0U; index < sizeof(exhaust_frame); ++index)
     {
         gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = exhaust_frame[index];
@@ -1362,20 +1421,6 @@ static void Test_Hmi(void)
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.query_type == A_HMI_LOG_QUERY_REGULAR);
 
-    for (index = 0U; index < sizeof(stop_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = stop_frame[index];
-    }
-    A_GasControl_Task(&gas);
-    assert((gas.system.mode == GAS_MODE_STOPPED) &&
-           (gas.system.active_index == GAS_NO_ACTIVE_CYLINDER));
-    for (index = 0U; index < sizeof(auto_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = auto_frame[index];
-    }
-    A_GasControl_Task(&gas);
-    assert(gas.system.mode == GAS_MODE_AUTO);
-
     assert(F_Hmi_Init(&hmi));
     for (index = 0U; index < sizeof(test_frame); ++index) hmi.hardware.rx_buffer[hmi.hardware.rx_head++] = test_frame[index];
     F_Hmi_Task(&hmi);
@@ -1383,12 +1428,6 @@ static void Test_Hmi(void)
     assert((id == 7U) && (value == 1U));
     assert(F_Hmi_SendText(&hmi, 0U, 19U, "1.500", 5U));
     assert((g_test_state.hmi_tx_length == 16U) && (g_test_state.hmi_tx[2] == 0x10U));
-    assert(F_Hmi_SendButtonState(&hmi, 1U, A_HMI_SYSTEM_MODE_BUTTON_ID, true));
-    assert((g_test_state.hmi_tx_length == 12U) &&
-           (g_test_state.hmi_tx[2] == 0x10U) &&
-           (g_test_state.hmi_tx[4] == A_HMI_MONITOR_PAGE_ID) &&
-           (g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_BUTTON_ID) &&
-           (g_test_state.hmi_tx[7] == 1U));
     assert(F_Hmi_SendIconFrame(&hmi, 1U, 72U, 2U));
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[0] == 0xEEU) &&
@@ -1416,7 +1455,7 @@ static void Test_Hmi(void)
     gas.system.total_pressure.pressure_quality = GAS_PRESSURE_VALID;
     assert(A_Hmi_Init(&display));
     assert(A_HMI_RTC_CONTROL_ID == 50U);
-    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 70U));
+    assert((A_HMI_HIGHLIGHT_ICON_BASE == 72U) && (A_HMI_REFRESH_SLOT_COUNT == 68U));
     A_Hmi_Task(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx_length == 6U) &&
            (g_test_state.hmi_tx[0] == 0xEEU) &&
@@ -1435,33 +1474,24 @@ static void Test_Hmi(void)
            (gas.system.date_time.minute == 35U) &&
            (gas.system.date_time.second == 42U));
 
+    F_ValveControl_AllOff(&gas.runtime_service.platform, &gas.system);
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
-    assert((g_test_state.hmi_tx[2] == 0x10U) &&
-           (g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_TEXT_ID));
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS);
-    assert((g_test_state.hmi_tx_length == 12U) &&
-           (g_test_state.hmi_tx[2] == 0x10U) &&
-           (g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_BUTTON_ID) &&
-           (g_test_state.hmi_tx[7] == 0U));
-    // 首次刷新必须先同步模式文本，再把MCU自动模式回写为开关弹起状态。
-
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 2U);
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
     display.exhaust_refresh_pending_bits = 0U;
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 3U);
+    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS);
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[6] == A_HMI_TEST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
     display.test_refresh_pending_bits = 0U;
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 4U);
+    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 2U);
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[6] == A_HMI_DISABLE_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
     display.disable_refresh_pending_bits = 0U;
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 5U);
+    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS * 3U);
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[6] == A_HMI_QUALIFIED_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
@@ -1473,11 +1503,21 @@ static void Test_Hmi(void)
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 1U));
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_OPEN));
     gas.system.cylinder[0].exhaust_cmd = false;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_EXHAUST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_CLOSED));
     display.refresh_slot = 44U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
@@ -1490,11 +1530,21 @@ static void Test_Hmi(void)
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_TEST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 1U));
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_TEST_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_OPEN));
     gas.system.cylinder[0].test_cmd = false;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx[6] == A_HMI_TEST_BUTTON_BASE) &&
            (g_test_state.hmi_tx[7] == 0U));
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_TEST_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_CLOSED));
     display.refresh_slot = 50U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
@@ -1581,33 +1631,27 @@ static void Test_Hmi(void)
     assert((g_test_state.hmi_tx[6] == (A_HMI_HIGHLIGHT_ICON_BASE + 5U)) &&
            (g_test_state.hmi_tx[7] == A_HMI_HIGHLIGHT_FRAME_WARNING));
 
-    gas.system.mode = GAS_MODE_STOPPED;
-    display.refresh_slot = 68U;
-    display.next_refresh_ms = 0U;
-    A_Hmi_Refresh(&display, &gas.system, 0U);
-    assert((g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_TEXT_ID) &&
-           (g_test_state.hmi_tx_length == 19U));
-    A_Hmi_Refresh(&display, &gas.system, A_HMI_REFRESH_GAP_MS);
-    assert((g_test_state.hmi_tx_length == 12U) &&
-           (g_test_state.hmi_tx[6] == A_HMI_SYSTEM_MODE_BUTTON_ID) &&
-           (g_test_state.hmi_tx[7] == 1U));
-    // 外部或业务逻辑进入停止后，开关必须由MCU回写为红色按下状态。
-
     gas.system.cylinder[0].supply_cmd = true;
-    display.refresh_slot = 18U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
-    assert((g_test_state.hmi_tx_length == 15U) &&
-           (g_test_state.hmi_tx[6] == A_HMI_SUPPLY_TEXT_BASE));
-    assert(memcmp(&g_test_state.hmi_tx[7], valve_on_text, sizeof(valve_on_text)) == 0);
+    assert((g_test_state.hmi_tx_length == 12U) &&
+           (g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_SUPPLY_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_OPEN));
+    gas.system.cylinder[0].supply_cmd = false;
+    display.next_refresh_ms = 0U;
+    A_Hmi_Refresh(&display, &gas.system, 0U);
+    assert((g_test_state.hmi_tx[6] == A_HMI_SUPPLY_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_CLOSED));
 
     gas.system.cylinder[0].exhaust_cmd = false;
     display.refresh_slot = 24U;
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
-    assert((g_test_state.hmi_tx_length == 15U) &&
-           (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_TEXT_BASE));
-    assert(memcmp(&g_test_state.hmi_tx[7], valve_off_text, sizeof(valve_off_text)) == 0);
+    assert((g_test_state.hmi_tx_length == 12U) &&
+           (g_test_state.hmi_tx[2] == 0x23U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_EXHAUST_ICON_BASE) &&
+           (g_test_state.hmi_tx[7] == A_HMI_VALVE_FRAME_CLOSED));
 
     display.refresh_slot = 36U;
     display.next_refresh_ms = 0U;
@@ -1823,6 +1867,8 @@ static void Test_HmiLogQuery(void)
     uint16_t log_count;
     uint16_t event_count = 0U;
     uint16_t regular_count = 0U;
+    uint16_t filtered_event_count = 0U;
+    uint16_t filtered_regular_count = 0U;
     uint16_t sent_rows;
     uint16_t clear_count;
     uint16_t status_count;
@@ -1875,14 +1921,24 @@ static void Test_HmiLogQuery(void)
         if (record[0] == (uint8_t) A_GAS_LOG_TYPE_EVENT)
         {
             event_count++;
+            if ((record[7] == 8U) && (record[8] == 22U) &&
+                (record[12] == 1U) && (record[14] == (uint8_t) GAS_CYL_INIT))
+            {
+                filtered_event_count++;
+            }
         }
         else if (record[0] == (uint8_t) A_GAS_LOG_TYPE_REGULAR)
         {
             regular_count++;
+            if ((record[7] == 8U) && (record[8] == 23U))
+            {
+                filtered_regular_count++;
+            }
         }
     }
     assert((event_count > A_HMI_EVENT_LOG_VISIBLE_COUNT) &&
-           (regular_count > A_HMI_REGULAR_LOG_VISIBLE_COUNT));
+           (regular_count > A_HMI_REGULAR_LOG_VISIBLE_COUNT) &&
+           (filtered_event_count > 0U) && (filtered_regular_count > 0U));
 
     sent_rows = 0U;
     clear_count = 0U;
@@ -2151,6 +2207,59 @@ static void Test_HmiLogQuery(void)
     assert(gas.hmi_log.current_page == 0U);
     // “最新页”直接返回零起始页0，不重新扫描已经完成的EEPROM日志索引。
 
+    gas.hmi_log.edit_filter.time_enabled = true;
+    gas.hmi_log.edit_filter.start.year = 2026U;
+    gas.hmi_log.edit_filter.start.month = 8U;
+    gas.hmi_log.edit_filter.start.day = 22U;
+    gas.hmi_log.edit_filter.start.hour = 0U;
+    gas.hmi_log.edit_filter.start.minute = 0U;
+    gas.hmi_log.edit_filter.start.second = 0U;
+    gas.hmi_log.edit_filter.end = gas.hmi_log.edit_filter.start;
+    gas.hmi_log.edit_filter.end.hour = 23U;
+    gas.hmi_log.edit_filter.end.minute = 59U;
+    gas.hmi_log.edit_filter.end.second = 59U;
+    gas.hmi_log.edit_filter.cylinder_number = 1U;
+    gas.hmi_log.edit_filter.target_state = (uint8_t) GAS_CYL_INIT;
+    assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
+    for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert(gas.hmi_log.matched_count == filtered_event_count);
+    // 事件查询同时按包含边界的时间、1号瓶和新状态“初始化”筛选。
+
+    gas.hmi_log.edit_filter.start.day = 23U;
+    gas.hmi_log.edit_filter.end.day = 23U;
+    assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_REGULAR));
+    for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert(gas.hmi_log.matched_count == filtered_regular_count);
+    // 常规日志应按23日时间范围匹配，并忽略事件专用的气瓶和进入状态条件。
+
+    gas.hmi_log.edit_filter.start.day = 24U;
+    gas.hmi_log.edit_filter.end.day = 23U;
+    assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
+    for (step = 0U; (step < 256U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
+    {
+        A_HmiLog_Task(&gas.hmi_log);
+    }
+    assert(!A_HmiLog_IsBusy(&gas.hmi_log));
+    assert(gas.hmi_log.filter_error && (gas.hmi_log.scanned_count == 0U));
+    assert((g_test_state.hmi_tx[2] == 0x10U) &&
+           (g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_STATUS_CONTROL_ID) &&
+           (memcmp(&g_test_state.hmi_tx[7],
+                   "\xCA\xB1\xBC\xE4\xB7\xB6\xCE\xA7\xB4\xED\xCE\xF3", 12U) == 0));
+    // 开始晚于结束时不读取EEPROM，结果页直接显示GBK“时间范围错误”。
+    gas.hmi_log.edit_filter.time_enabled = false;
+    gas.hmi_log.edit_filter.start.day = 1U;
+    gas.hmi_log.edit_filter.end.day = 31U;
+    gas.hmi_log.edit_filter.cylinder_number = 0U;
+    gas.hmi_log.edit_filter.target_state = 0U;
+
     saved_next_sequence = gas.log_service.next_sequence;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
@@ -2207,6 +2316,6 @@ int main(void)
     Test_Hmi();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.07三阀七状态、CAN最终应答、四组按钮状态同步、EEPROM日志和分类分页查询测试通过。");
+    puts("V1.08整机启停入口删除、阀位双色图标、CAN最终应答、EEPROM日志条件筛选和分类分页查询测试通过。");
     return 0;
 }

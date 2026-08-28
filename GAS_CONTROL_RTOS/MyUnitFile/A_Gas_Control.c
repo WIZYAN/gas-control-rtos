@@ -658,7 +658,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
 
 /*
  * 函数名：A_GasControl_ProcessHmiButton。
- * 说明：把串口屏阀门、停用、测试合格、系统启停、日志查询和参数页按钮转换为对应业务操作。
+ * 说明：把串口屏阀门、停用、测试合格、日志查询和参数页按钮转换为对应业务操作。
  * 输入：context 为气源控制应用上下文输入输出指针。
  * 输出：无；操作失败时设置人工阀门互锁报警。
  */
@@ -708,6 +708,11 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         success = A_GasControl_SetQualificationPassed(context, index, value != 0U);
         A_Hmi_RequestQualificationSync(&context->hmi, index);
         // 无论请求是否被状态门槛接受，都优先把按钮校正为MCU中的最终测试结论。
+    }
+    else if (A_HmiLog_HandleFilterButton(&context->hmi_log, button_id, value))
+    {
+        success = true;
+        // 条件页选择、事件/常规查询和结果页签由日志模块统一处理。
     }
     else if ((button_id == A_HMI_EVENT_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
@@ -759,22 +764,6 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     {
         success = A_HmiConfig_Open(&context->hmi_config,
                                    &context->config);
-    }
-    else if (button_id == A_HMI_SYSTEM_MODE_BUTTON_ID)
-    {
-        if (value != 0U)
-        {
-            A_GasControl_Stop(context);
-            success = ((context->system.mode == GAS_MODE_STOPPED) &&
-                       A_GasControl_AllValveCommandsAreOff(&context->system));
-            // 开关值1表示安全停止，必须立即关闭全部十八路阀门。
-        }
-        else
-        {
-            (void) A_GasControl_StartAuto(context);
-            success = (context->system.mode == GAS_MODE_AUTO);
-            // 开关值0表示请求自动运行，最终模式仍以业务层实际结果为准。
-        }
     }
     else if (A_HmiConfig_HandleButton(&context->hmi_config,
                                       button_id,
@@ -862,6 +851,30 @@ static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system)
 }
 
 /*
+ * 函数名：A_GasControl_AllCylindersDisabled。
+ * 说明：检查六只气瓶是否都由工作人员置于停用状态，作为外部通讯切换和Modbus整组提交的维护门槛。
+ * 输入：system为只读气源系统状态指针。
+ * 输出：六瓶全部停用时返回true，参数无效或任一气瓶未停用时返回false。
+ */
+static bool A_GasControl_AllCylindersDisabled(const Gas_System *system)
+{
+    uint8_t index;
+
+    if (system == NULL)
+    {
+        return false;
+    }
+    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+    {
+        if (system->cylinder[index].state != GAS_CYL_DISABLED)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
  * 函数名：A_GasControl_InitExternalComm。
  * 说明：按照指定模式初始化CAN或SCI0/RS485外部通讯实例。
  * 输入：context为应用上下文；mode为待启用通讯模式。
@@ -910,47 +923,6 @@ static bool A_GasControl_DeinitExternalComm(A_Gas_Control_Context *context,
 {
     return (mode == GAS_EXTERNAL_COMM_CAN) ? A_Can_Deinit(&context->external_can) :
            ((mode == GAS_EXTERNAL_COMM_RS485) ? A_Modbus_Deinit(&context->external_modbus) : false);
-}
-
-/*
- * 函数名：A_GasControl_TakeExternalCommand。
- * 说明：从当前启用的外部通讯实例取得一条启停命令。
- * 输入：context为应用上下文；command为公共命令输出指针。
- * 输出：存在待处理命令时返回true，否则返回false。
- */
-static bool A_GasControl_TakeExternalCommand(A_Gas_Control_Context *context,
-                                             gas_external_command_t *command)
-{
-    if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
-    {
-        return A_Can_TakeCommand(&context->external_can, command);
-    }
-    else
-    {
-        a_modbus_command_t modbus_command;
-        if (!A_Modbus_TakeCommand(&context->external_modbus, &modbus_command)) { return false; }
-        *command = (gas_external_command_t) modbus_command;
-        return true;
-    }
-}
-
-/*
- * 函数名：A_GasControl_SetExternalCommandResult。
- * 说明：把命令执行结果写回当前启用的外部通讯实例。
- * 输入：context为应用上下文；result为公共命令结果。
- * 输出：无；结果写入CAN地址或Modbus保持寄存器。
- */
-static void A_GasControl_SetExternalCommandResult(A_Gas_Control_Context *context,
-                                                  gas_external_result_t result)
-{
-    if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
-    {
-        A_Can_SetCommandResult(&context->external_can, result);
-    }
-    else
-    {
-        A_Modbus_SetCommandResult(&context->external_modbus, (a_modbus_result_t) result);
-    }
 }
 
 /*
@@ -1156,42 +1128,6 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
 }
 
 /*
- * 函数名：A_GasControl_ProcessExternalCommand。
- * 说明：执行当前外部通讯已经校验的启动或停止命令。
- * 输入：context 为气源控制应用上下文输入输出指针。
- * 输出：无；执行结果写回当前CAN或RS485通讯实例。
- */
-static void A_GasControl_ProcessExternalCommand(A_Gas_Control_Context *context)
-{
-    gas_external_command_t command;
-    bool success = false;
-
-    if ((context == NULL) ||
-        !A_GasControl_TakeExternalCommand(context, &command))
-    {
-        return;
-    }
-
-    if (command == GAS_EXTERNAL_COMMAND_START_AUTO)
-    {
-        success = A_GasControl_StartAuto(context);
-    }
-    else if (command == GAS_EXTERNAL_COMMAND_STOP)
-    {
-        A_GasControl_Stop(context);
-        success = ((context->system.mode == GAS_MODE_STOPPED) &&
-                   A_GasControl_AllValveCommandsAreOff(&context->system));
-    }
-    else
-    {
-        success = false;
-    }
-
-    A_GasControl_SetExternalCommandResult(context,
-        success ? GAS_EXTERNAL_RESULT_SUCCESS : GAS_EXTERNAL_RESULT_REJECTED);
-}
-
-/*
  * 函数名：A_GasControl_ReclassifyPressureQuality。
  * 说明：参数生效后按新的压力合法上限立即重判现有有效样本，避免等待下一轮传感器采样才更新控制资格和显示颜色。
  * 输入：system为气源系统输入输出指针；config为已经生效的新运行参数。
@@ -1227,7 +1163,7 @@ static void A_GasControl_ReclassifyPressureQuality(Gas_System *system,
 
 /*
  * 函数名：A_GasControl_ProcessExternalConfig。
- * 说明：保存并应用外部通讯提交的运行参数；CAN单地址写在稳定运行中直接生效，Modbus仍要求安全停止。
+ * 说明：保存并应用外部通讯提交的运行参数；CAN单地址写直接生效，Modbus整组提交要求六瓶全部停用。
  * 输入：context 为气源控制应用上下文输入输出指针。
  * 输出：无；参数处理结果写入 Modbus，并在成功时同步更新 EEPROM 和参数保持寄存器。
  */
@@ -1242,7 +1178,7 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
     }
 
     if ((context->external_comm_mode == GAS_EXTERNAL_COMM_RS485) &&
-        ((context->system.mode != GAS_MODE_STOPPED) ||
+        (!A_GasControl_AllCylindersDisabled(&context->system) ||
          !A_GasControl_AllValveCommandsAreOff(&context->system)))
     {
         (void) A_GasControl_UpdateExternalConfig(context, &context->config);
@@ -1474,63 +1410,8 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
 }
 
 /*
- * 函数名：A_GasControl_StartAuto。
- * 说明：进入自动供气模式，并在存在合格待用瓶时按顺序打开第一路进气阀。
- * 输入：context 为气源控制应用上下文输入输出指针。
- * 输出：成功进入自动模式且已有或选中工作瓶时返回 true，否则返回 false。
- */
-bool A_GasControl_StartAuto(A_Gas_Control_Context *context)
-{
-    uint32_t now_ms;
-
-    if ((context == NULL) || !context->system.platform_ready)
-    {
-        return false;
-    }
-
-    context->system.mode = GAS_MODE_AUTO;
-    if (context->system.active_index < GAS_CYLINDER_COUNT)
-    {
-        return true;
-    }
-    now_ms = F_GasRuntime_Millis(&context->runtime_service);
-    return A_GasControl_SelectInitialBottle(context, now_ms);
-}
-
-/*
- * 函数名：A_GasControl_Stop。
- * 说明：停止自动供气并关闭六瓶全部十八路电磁阀。
- * 输入：context 为气源控制应用上下文输入输出指针。
- * 输出：无；保留停用状态，其余气瓶重新进入初始化判断。
- */
-void A_GasControl_Stop(A_Gas_Control_Context *context)
-{
-    uint8_t index;
-
-    if (context == NULL)
-    {
-        return;
-    }
-
-    F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
-    context->system.mode = GAS_MODE_STOPPED;
-    context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
-    context->system.switch_state = GAS_SWITCH_IDLE;
-    context->system.switch_old_index = GAS_NO_ACTIVE_CYLINDER;
-    context->system.switch_new_index = GAS_NO_ACTIVE_CYLINDER;
-    context->system.low_sample_count = 0U;
-    for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
-    {
-        if (context->system.cylinder[index].state != GAS_CYL_DISABLED)
-        {
-            context->system.cylinder[index].state = GAS_CYL_INIT;
-        }
-    }
-}
-
-/*
  * 函数名：A_GasControl_SetExternalCommMode。
- * 说明：在系统停止且十八路阀门全部关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
+ * 说明：在六瓶全部停用且十八路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
  * 输入：context为应用上下文；mode为目标通讯模式，0表示CAN、1表示RS485/Modbus。
  * 输出：目标接口成功启用并完成持久化时返回true；运行中、初始化失败或存储失败时返回false并恢复原模式。
  */
@@ -1540,7 +1421,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     gas_external_comm_mode_t previous_mode;
 
     if ((context == NULL) || (mode > GAS_EXTERNAL_COMM_RS485) ||
-        (context->system.mode != GAS_MODE_STOPPED) ||
+        !A_GasControl_AllCylindersDisabled(&context->system) ||
         !A_GasControl_AllValveCommandsAreOff(&context->system))
     {
         return false;
@@ -1821,6 +1702,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     A_Hmi_Task(&context->hmi, &context->system, now_ms);
     // 先采集输入、处理12V吸合计时和接收人机事件，再运行会改变状态及阀门的业务逻辑。
     A_GasControl_ProcessHmiButton(context);
+    A_HmiLog_InputTask(&context->hmi_log);
     A_HmiConfig_InputTask(&context->hmi_config,
                           &context->config);
     A_GasControl_ProcessHmiConfig(context);
@@ -1870,7 +1752,6 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
             context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
         }
     }
-    A_GasControl_ProcessExternalCommand(context);
     A_GasControl_ProcessCanControl(context);
     A_GasControl_ProcessExternalConfig(context);
     A_GasControl_ProcessExternalLogRead(context);

@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.05"
+PROJECT_VERSION = "1.08"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
 SOURCE_PROJECT = PROJECT_DIR
@@ -149,6 +149,25 @@ def create_monitor_highlight_icon(images_dir: Path) -> None:
                     images_dir / "Gas_Cylinder_Highlight.icon")
 
 
+def create_valve_state_icon(images_dir: Path) -> None:
+    """
+    函数名：create_valve_state_icon。
+    说明：生成阀位关闭原色和开启绿色两帧ARGB图标。
+    输入：images_dir为大彩工程图片资源目录。
+    输出：无；生成55×22的Valve_State.icon。
+    """
+    frames = []
+    for text, color in (("关闭", (199, 224, 238)), ("开启", (53, 231, 123))):
+        frame = Image.new("RGBA", (55, 22), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(frame)
+        text_box = draw.textbbox((0, 0), text, font=FONT_18)
+        x = (55 - (text_box[2] - text_box[0])) / 2 - text_box[0]
+        y = (22 - (text_box[3] - text_box[1])) / 2 - text_box[1]
+        draw.text((x, y), text, font=FONT_18, fill=(*color, 255))
+        frames.append(frame)
+    save_dacai_icon(tuple(frames), images_dir / "Valve_State.icon")
+
+
 def create_monitor_backgrounds(images_dir: Path) -> None:
     """
     函数名：create_backgrounds。
@@ -197,9 +216,6 @@ def create_monitor_backgrounds(images_dir: Path) -> None:
         draw_button(draw, (x + 83, 438, x + 151, 508), "正常使用", (29, 91, 90), (51, 157, 143))
 
     draw.rectangle((0, 558, WIDTH, HEIGHT), fill=(10, 24, 39))
-    draw.text((18, 568), "系统模式", font=FONT_14, fill=(142, 181, 204))
-    draw_button(draw, (180, 564, 392, 594), "自动运行", (22, 78, 64), (52, 211, 153))
-    draw.text((410, 568), "切换到安全停止将立即关闭全部十八路阀门", font=FONT_14, fill=(163, 190, 207))
     draw_button(draw, (818, 564, 908, 594), "主菜单", (39, 63, 82), (89, 125, 148))
     draw_button(draw, (916, 564, 1014, 594), "日志查询", (19, 86, 132), (42, 154, 210))
 
@@ -214,7 +230,6 @@ def create_monitor_backgrounds(images_dir: Path) -> None:
         draw_button(down_draw, (x + 83, 356, x + 151, 426), "排气中", (180, 112, 22), (248, 183, 66), True)
         draw_button(down_draw, (x + 9, 438, x + 77, 508), "测试开启", (19, 113, 159), (53, 202, 240), True)
         draw_button(down_draw, (x + 83, 438, x + 151, 508), "已停用", (153, 50, 63), (247, 98, 111), True)
-    draw_button(down_draw, (180, 564, 392, 594), "安全停止", (121, 48, 60), (255, 112, 124), True)
     draw_button(down_draw, (818, 564, 908, 594), "主菜单", (24, 109, 151), (69, 214, 255), True)
     draw_button(down_draw, (916, 564, 1014, 594), "日志查询", (20, 126, 164), (69, 214, 255), True)
     down_image.save(images_dir / "Screen1_down.png")
@@ -447,7 +462,7 @@ def create_log_backgrounds(images_dir: Path) -> None:
     draw_button(event_draw, (210, 17, 365, 67), "事件日志", (19, 86, 132), (42, 154, 210))
     draw_button(event_draw, (375, 17, 530, 67), "常规日志", (39, 63, 82), (89, 125, 148))
     draw_button(event_draw, (676, 17, 835, 67), "刷新事件", (19, 86, 132), (42, 154, 210))
-    draw_button(event_draw, (846, 17, 1008, 67), "主菜单", (39, 63, 82), (89, 125, 148))
+    draw_button(event_draw, (846, 17, 1008, 67), "查询条件", (39, 63, 82), (89, 125, 148))
 
     event_draw.rounded_rectangle((16, 100, 1008, 560), radius=10, fill=(10, 27, 44),
                                  outline=(38, 75, 99), width=2)
@@ -467,7 +482,7 @@ def create_log_backgrounds(images_dir: Path) -> None:
                 (24, 109, 151), (69, 214, 255), True)
     draw_button(event_down_draw, (676, 17, 835, 67), "正在刷新",
                 (180, 112, 22), (248, 183, 66), True)
-    draw_button(event_down_draw, (846, 17, 1008, 67), "主菜单",
+    draw_button(event_down_draw, (846, 17, 1008, 67), "查询条件",
                 (24, 109, 151), (69, 214, 255), True)
     for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
         draw_button(event_down_draw, box, "", (24, 109, 151), (69, 214, 255), True)
@@ -480,7 +495,7 @@ def create_log_backgrounds(images_dir: Path) -> None:
     draw_button(regular_draw, (210, 17, 365, 67), "事件日志", (39, 63, 82), (89, 125, 148))
     draw_button(regular_draw, (375, 17, 530, 67), "常规日志", (19, 86, 132), (42, 154, 210))
     draw_button(regular_draw, (676, 17, 835, 67), "刷新常规", (19, 86, 132), (42, 154, 210))
-    draw_button(regular_draw, (846, 17, 1008, 67), "主菜单", (39, 63, 82), (89, 125, 148))
+    draw_button(regular_draw, (846, 17, 1008, 67), "查询条件", (39, 63, 82), (89, 125, 148))
 
     regular_draw.rounded_rectangle((16, 100, 1008, 560), radius=10, fill=(10, 27, 44),
                                    outline=(38, 75, 99), width=2)
@@ -498,11 +513,77 @@ def create_log_backgrounds(images_dir: Path) -> None:
                 (24, 109, 151), (69, 214, 255), True)
     draw_button(regular_down_draw, (676, 17, 835, 67), "正在刷新",
                 (180, 112, 22), (248, 183, 66), True)
-    draw_button(regular_down_draw, (846, 17, 1008, 67), "主菜单",
+    draw_button(regular_down_draw, (846, 17, 1008, 67), "查询条件",
                 (24, 109, 151), (69, 214, 255), True)
     for box in ((18, 568, 126, 598), (136, 568, 244, 598), (254, 568, 362, 598)):
         draw_button(regular_down_draw, box, "", (24, 109, 151), (69, 214, 255), True)
     regular_down.save(images_dir / "Screen3_down.png")
+
+
+def create_log_filter_backgrounds(images_dir: Path) -> None:
+    """
+    函数名：create_log_filter_backgrounds。
+    说明：生成Screen6日志条件查询页的正常态和按下态背景。
+    输入：images_dir为大彩工程图片资源目录。
+    输出：无；生成Screen6.png和Screen6_down.png。
+    """
+    image = Image.new("RGB", (WIDTH, HEIGHT), (8, 18, 31))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, WIDTH, 86), fill=(12, 29, 48))
+    draw.rectangle((0, 83, WIDTH, 86), fill=(28, 174, 216))
+    draw.text((610, 24), "日期格式 YYYYMMDD，时间格式 HHMMSS",
+              font=FONT_14, fill=(142, 181, 204))
+
+    draw.rounded_rectangle((28, 105, 598, 394), radius=12, fill=(10, 27, 44),
+                           outline=(38, 75, 99), width=2)
+    draw.text((52, 123), "时间范围", font=FONT_22_BOLD, fill=(223, 240, 249))
+    labels = (("开始日期", 158), ("开始时间", 224),
+              ("结束日期", 290), ("结束时间", 356))
+    for label, y in labels:
+        draw.text((58, y), label, font=FONT_16, fill=(142, 181, 204))
+        draw.rounded_rectangle((188, y - 9, 556, y + 35), radius=7,
+                               fill=(7, 23, 38), outline=(35, 92, 121), width=1)
+
+    draw.rounded_rectangle((620, 105, 996, 394), radius=12, fill=(10, 27, 44),
+                           outline=(38, 75, 99), width=2)
+    draw.text((646, 123), "事件条件", font=FONT_22_BOLD, fill=(223, 240, 249))
+    draw.text((648, 185), "时间方式", font=FONT_16, fill=(142, 181, 204))
+    draw_button(draw, (798, 164, 960, 214), "限定时间", (39, 63, 82), (89, 125, 148))
+    draw.text((648, 258), "气瓶编号", font=FONT_16, fill=(142, 181, 204))
+    draw.rounded_rectangle((770, 241, 842, 291), radius=7,
+                           fill=(7, 23, 38), outline=(35, 92, 121), width=1)
+    draw_button(draw, (856, 241, 960, 291), "下一气瓶", (19, 86, 132), (42, 154, 210))
+    draw.text((648, 331), "进入状态", font=FONT_16, fill=(142, 181, 204))
+    draw.rounded_rectangle((770, 314, 842, 364), radius=7,
+                           fill=(7, 23, 38), outline=(35, 92, 121), width=1)
+    draw_button(draw, (856, 314, 960, 364), "下一状态", (19, 86, 132), (42, 154, 210))
+
+    buttons = (
+        (58, 420, 258, 482, "查询事件", (19, 108, 94), (52, 211, 153)),
+        (278, 420, 478, 482, "查询常规", (19, 86, 132), (42, 154, 210)),
+        (498, 420, 678, 482, "清除条件", (83, 67, 43), (194, 145, 61)),
+        (698, 420, 898, 482, "返回主菜单", (39, 63, 82), (89, 125, 148)),
+    )
+    for left, top, right, bottom, label, fill, outline in buttons:
+        draw_button(draw, (left, top, right, bottom), label, fill, outline)
+    draw.text((58, 514), "提示：常规日志只使用时间范围；气瓶和进入状态只筛选事件日志。",
+              font=FONT_14, fill=(130, 170, 193))
+    image.save(images_dir / "Screen6.png")
+
+    down = image.copy()
+    down_draw = ImageDraw.Draw(down)
+    draw_button(down_draw, (798, 164, 960, 214), "全部时间",
+                (19, 108, 94), (52, 211, 153), True)
+    draw_button(down_draw, (856, 241, 960, 291), "下一气瓶",
+                (24, 109, 151), (69, 214, 255), True)
+    draw_button(down_draw, (856, 314, 960, 364), "下一状态",
+                (24, 109, 151), (69, 214, 255), True)
+    for left, top, right, bottom, label, fill, outline in buttons:
+        pressed_fill = tuple(min(channel + 18, 255) for channel in fill)
+        pressed_outline = tuple(min(channel + 18, 255) for channel in outline)
+        draw_button(down_draw, (left, top, right, bottom), label,
+                    pressed_fill, pressed_outline, True)
+    down.save(images_dir / "Screen6_down.png")
 
 
 def create_preview(images_dir: Path, project_dir: Path) -> None:
@@ -712,6 +793,29 @@ def add_parameter_input_item(root, name: str, control_id: int,
     })
 
 
+def add_log_filter_input_item(root, name: str, control_id: int,
+                              text: str, x: int, y: int, maximum_length: int) -> None:
+    """
+    函数名：add_log_filter_input_item。
+    说明：添加日志条件页的YYYYMMDD或HHMMSS纯数字输入控件。
+    输入：root为画面节点；name和control_id为控件标识；text为初值；x、y为坐标；maximum_length为固定位数。
+    输出：无；控件启用大彩数字键盘和B1 11文本上传。
+    """
+    ET.SubElement(root, "item", {
+        "name": name, "id": str(control_id), "type": "text_display", "text": text,
+        "tipinfo": "", "font": "7", "encode": "1", "show_bkg_style": "0",
+        "fore_color": "69;214;255", "bkg_color": "0;0;0", "bkg_image_path": "",
+        "xOffset": str(x), "yOffset": str(y), "width": "350", "height": "38",
+        "input_mode": "1", "variant": "0", "text_type": "0",
+        "text_len_max": str(maximum_length), "password": "0", "focus_rect": "1",
+        "text_align": "1", "text_align_v": "1", "value_limit": "0",
+        "value_precision": "0", "max_value": "99999999", "min_value": "0",
+        "keyboard_init": "1", "keyboard_position": "0", "keyboard_x": "0", "keyboard_y": "0",
+        "art_digit": "0", "art_digit_icon": "", "half_width_dot": "0", "bind_variant": "",
+        "show_condition": "0", "condition_variant": "", "condition_value": "0"
+    })
+
+
 def add_event_record_item(root) -> None:
     """
     函数名：add_event_record_item。
@@ -759,7 +863,7 @@ def add_regular_record_item(root) -> None:
 def create_monitor_screen_file(project_dir: Path) -> None:
     """
     函数名：create_monitor_screen_file。
-    说明：生成包含业务控件、压力双色叠加层、系统启停、导航按钮及72～77号气瓶高亮控件的Screen1实时监控画面。
+    说明：生成包含业务控件、压力双色叠加层、阀位双色图标、导航按钮及72～77号气瓶高亮控件的Screen1实时监控画面。
     输入：project_dir 为大彩工程输出目录。
     输出：无。
     """
@@ -783,13 +887,20 @@ def create_monitor_screen_file(project_dir: Path) -> None:
         add_text_item(root, f"State_{index + 1}", 25 + index, "初始化", 6,
                       "245;249;255", x + 39, 150, 82, 24)
 
-        # 31～48 依次为六路进气阀、排气阀和测试阀的实时反馈文本。
-        add_text_item(root, f"Supply_Valve_{index + 1}", 31 + index, "关闭", 5,
-                      "199;224;238", x + 92, 250, 55, 22)
-        add_text_item(root, f"Exhaust_Valve_{index + 1}", 37 + index, "关闭", 5,
-                      "199;224;238", x + 92, 284, 55, 22)
-        add_text_item(root, f"Test_Valve_{index + 1}", 43 + index, "关闭", 5,
-                      "199;224;238", x + 92, 318, 55, 22)
+        # 31～48使用同一双帧图标，帧0为原色关闭，帧1为绿色开启。
+        for name, control_id, y in (
+                (f"Supply_Valve_{index + 1}", 31 + index, 250),
+                (f"Exhaust_Valve_{index + 1}", 37 + index, 284),
+                (f"Test_Valve_{index + 1}", 43 + index, 318)):
+            ET.SubElement(root, "item", {
+                "name": name, "id": str(control_id), "type": "animation", "icon": "1",
+                "play_finish_notify": "0", "press_notify": "3", "step": "20",
+                "frame_list": "Images\\Valve_State.icon", "transparent_process": "0",
+                "auto_play": "0", "visible": "1", "interval": "1000", "repeat_count": "0",
+                "xOffset": str(x + 92), "yOffset": str(y), "width": "55", "height": "22",
+                "bind_variant": "", "multi_lang": "0", "variant_range": "0",
+                "variant_min": "0", "variant_max": "0", "icon_min": "0", "icon_max": "1"
+            })
 
         # 排气按钮使用开关外观并由MCU实际排气命令回写；测试、停用和测试通过也使用开关模式。
         add_button_item(root, f"Exhaust_Button_{index + 1}", 1 + index, True,
@@ -812,14 +923,9 @@ def create_monitor_screen_file(project_dir: Path) -> None:
         "width": "190", "height": "20", "timer": "60", "increase": "0"
     })
 
-    add_text_item(root, "System_Mode", 94, "自动运行", 5,
-                  "52;211;153", 84, 568, 88, 22)
-    add_button_item(root, "System_Mode_Switch", 99, True,
-                    180, 564, 212, 30, "Screen1_down.png")
-
     add_navigation_button(root, "Back_To_Menu", 59, "Screen0", "Screen1_down.png",
                           818, 564, 90, 30)
-    add_navigation_button(root, "Go_To_Log", 60, "Screen2", "Screen1_down.png",
+    add_navigation_button(root, "Go_To_Log", 60, "Screen6", "Screen1_down.png",
                           916, 564, 98, 30)
 
     tree = ET.ElementTree(root)
@@ -843,7 +949,7 @@ def create_menu_screen_file(project_dir: Path) -> None:
                   "239;248;255", 212, 20, 600, 42, 1, 1)
     add_navigation_button(root, "Open_Monitor", 57, "Screen1", "Screen0_down.png",
                           32, 154, 284, 290)
-    add_navigation_button(root, "Open_Log", 58, "Screen2", "Screen0_down.png",
+    add_navigation_button(root, "Open_Log", 58, "Screen6", "Screen0_down.png",
                           370, 154, 284, 290)
     add_navigation_button(root, "Open_Config", 78, "Screen4", "Screen0_down.png",
                           708, 154, 284, 290, True, "243579")
@@ -871,10 +977,10 @@ def create_event_log_screen_file(project_dir: Path) -> None:
     add_event_record_item(root)
     add_text_item(root, "Event_Log_Query_Status", 63, "事件 0条", 4,
                   "69;214;255", 548, 27, 118, 28)
-    add_navigation_button(root, "Log_Back_To_Menu", 64, "Screen0", "Screen2_down.png",
+    add_navigation_button(root, "Log_Back_To_Filter", 64, "Screen6", "Screen2_down.png",
                           846, 17, 162, 50)
-    add_navigation_button(root, "Event_To_Regular_Log", 69, "Screen3", "Screen2_down.png",
-                          375, 17, 155, 50)
+    add_button_item(root, "Event_To_Regular_Log", 69, False, 375, 17, 155, 50,
+                    "Screen2_down.png")
     add_button_item(root, "Event_Log_Latest", 119, False, 18, 568, 108, 30,
                     "Screen2_down.png", "最新页")
     add_button_item(root, "Event_Log_Previous", 120, False, 136, 568, 108, 30,
@@ -907,10 +1013,10 @@ def create_regular_log_screen_file(project_dir: Path) -> None:
     add_regular_record_item(root)
     add_text_item(root, "Regular_Log_Query_Status", 67, "常规 0条", 4,
                   "69;214;255", 548, 27, 118, 28)
-    add_navigation_button(root, "Regular_Log_Back_To_Menu", 68, "Screen0", "Screen3_down.png",
+    add_navigation_button(root, "Regular_Log_Back_To_Filter", 68, "Screen6", "Screen3_down.png",
                           846, 17, 162, 50)
-    add_navigation_button(root, "Regular_To_Event_Log", 70, "Screen2", "Screen3_down.png",
-                          210, 17, 155, 50)
+    add_button_item(root, "Regular_To_Event_Log", 70, False, 210, 17, 155, 50,
+                    "Screen3_down.png")
     add_button_item(root, "Regular_Log_Latest", 123, False, 18, 568, 108, 30,
                     "Screen3_down.png", "最新页")
     add_button_item(root, "Regular_Log_Previous", 124, False, 136, 568, 108, 30,
@@ -922,6 +1028,50 @@ def create_regular_log_screen_file(project_dir: Path) -> None:
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     tree.write(project_dir / "Screen3.tft", encoding="utf-8", xml_declaration=True)
+
+
+def create_log_filter_screen_file(project_dir: Path) -> None:
+    """
+    函数名：create_log_filter_screen_file。
+    说明：生成Screen6日志条件页，支持时间、气瓶和进入状态选择。
+    输入：project_dir为大彩工程输出目录。
+    输出：无；生成Screen6.tft。
+    """
+    root = ET.Element("DrawPage", {
+        "name": "Screen6", "bk_transparent": "0", "bk_color": "8;18;31",
+        "bk_image": "Images\\Screen6.png", "size_option": "0",
+        "width": str(WIDTH), "height": str(HEIGHT)
+    })
+    add_text_item(root, "Log_Filter_Title", 141, "日志条件查询", 10,
+                  "239;248;255", 26, 18, 360, 42, 0, 1)
+    add_log_filter_input_item(root, "Log_Start_Date", 127, "20000101", 190, 150, 8)
+    add_log_filter_input_item(root, "Log_Start_Time", 128, "000000", 190, 216, 6)
+    add_log_filter_input_item(root, "Log_End_Date", 129, "20991231", 190, 282, 8)
+    add_log_filter_input_item(root, "Log_End_Time", 130, "235959", 190, 348, 6)
+    add_button_item(root, "Log_All_Time", 131, True, 798, 164, 162, 50,
+                    "Screen6_down.png")
+    root[-1].set("init_state", "1")
+    add_button_item(root, "Log_Next_Cylinder", 132, False, 856, 241, 104, 50,
+                    "Screen6_down.png")
+    add_text_item(root, "Log_Cylinder_Filter", 133, "全部", 7,
+                  "69;214;255", 770, 247, 72, 38, 1, 1)
+    add_button_item(root, "Log_Next_State", 134, False, 856, 314, 104, 50,
+                    "Screen6_down.png")
+    add_text_item(root, "Log_State_Filter", 135, "全部", 5,
+                  "69;214;255", 770, 320, 72, 38, 1, 1)
+    add_button_item(root, "Log_Query_Event", 136, False, 58, 420, 200, 62,
+                    "Screen6_down.png")
+    add_button_item(root, "Log_Query_Regular", 137, False, 278, 420, 200, 62,
+                    "Screen6_down.png")
+    add_button_item(root, "Log_Filter_Reset", 138, False, 498, 420, 180, 62,
+                    "Screen6_down.png")
+    add_navigation_button(root, "Log_Filter_Back", 140, "Screen0", "Screen6_down.png",
+                          698, 420, 200, 62)
+    add_text_item(root, "Log_Filter_Status", 139, "条件已就绪", 5,
+                  "69;214;255", 58, 548, 840, 30, 1, 1)
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="  ")
+    tree.write(project_dir / "Screen6.tft", encoding="utf-8", xml_declaration=True)
 
 
 def create_config_screen_file(project_dir: Path) -> None:
@@ -991,12 +1141,12 @@ def create_config_dialog_screen_file(project_dir: Path) -> None:
 def create_lua_file(project_dir: Path) -> None:
     """
     函数名：create_lua_file。
-    说明：生成控件通知脚本，使用户修改任一参数或点击恢复默认后立即进入独立确认画面。
+    说明：生成控件通知脚本，管理参数确认页和日志条件查询结果页跳转。
     输入：project_dir为大彩工程输出目录。
     输出：无；写入VisualTFT工程根目录main.lua。
     """
-    script = """-- 参数设置页面控件通知脚本。
--- MCU主动刷新文本不会触发本回调，只有人员输入或点击恢复默认才进入独立确认画面。
+    script = """-- 参数确认和日志条件查询页面跳转脚本。
+-- MCU主动刷新不触发本回调；只处理人员触摸事件。
 function on_control_notify(screen, control, value)
     if screen == 4 then
         if ((control >= 80) and (control <= 90)) or ((control == 97) and (value == 1)) then
@@ -1005,6 +1155,20 @@ function on_control_notify(screen, control, value)
     elseif screen == 5 then
         if ((control == 108) or (control == 109)) and (value == 1) then
             change_screen(4)
+        end
+    elseif screen == 6 then
+        if (control == 136) and (value == 1) then
+            change_screen(2)
+        elseif (control == 137) and (value == 1) then
+            change_screen(3)
+        end
+    elseif screen == 2 then
+        if (control == 69) and (value == 1) then
+            change_screen(3)
+        end
+    elseif screen == 3 then
+        if (control == 70) and (value == 1) then
+            change_screen(2)
         end
     end
 end
@@ -1049,6 +1213,7 @@ def create_project_file(project_dir: Path) -> None:
     ET.SubElement(pages, "Page", {"RelativePath": "Screen3.tft"})
     ET.SubElement(pages, "Page", {"RelativePath": "Screen4.tft"})
     ET.SubElement(pages, "Page", {"RelativePath": "Screen5.tft"})
+    ET.SubElement(pages, "Page", {"RelativePath": "Screen6.tft"})
     ET.SubElement(root, "Images")
     ET.SubElement(root, "Waves")
     tree = ET.ElementTree(root)
@@ -1075,9 +1240,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.05正式画面工程。
+    说明：生成完整的大彩 VisualTFT V1.08正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.05目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.08目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
@@ -1085,7 +1250,9 @@ def main() -> None:
     create_menu_preview(PROJECT_DIR)
     create_monitor_backgrounds(PROJECT_DIR / "images")
     create_monitor_highlight_icon(PROJECT_DIR / "images")
+    create_valve_state_icon(PROJECT_DIR / "images")
     create_log_backgrounds(PROJECT_DIR / "images")
+    create_log_filter_backgrounds(PROJECT_DIR / "images")
     create_config_backgrounds(PROJECT_DIR / "images")
     create_config_dialog_backgrounds(PROJECT_DIR / "images")
     create_preview(PROJECT_DIR / "images", PROJECT_DIR)
@@ -1094,6 +1261,7 @@ def main() -> None:
     create_monitor_screen_file(PROJECT_DIR)
     create_event_log_screen_file(PROJECT_DIR)
     create_regular_log_screen_file(PROJECT_DIR)
+    create_log_filter_screen_file(PROJECT_DIR)
     create_config_screen_file(PROJECT_DIR)
     create_config_dialog_screen_file(PROJECT_DIR)
     create_lua_file(PROJECT_DIR)

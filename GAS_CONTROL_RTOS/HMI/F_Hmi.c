@@ -293,6 +293,27 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
 }
 
 /*
+ * 函数名：F_Hmi_PeekTextEvent。
+ * 说明：查看待处理文本输入事件的画面和控件ID，但不清除事件槽。
+ * 输入：context为功能层上下文；page_id和control_id为控件标识输出指针。
+ * 输出：存在待处理文本事件时返回true，否则返回false。
+ */
+bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
+                         uint16_t *page_id,
+                         uint16_t *control_id)
+{
+    if ((context == NULL) || (page_id == NULL) || (control_id == NULL) ||
+        !context->text_pending)
+    {
+        return false;
+    }
+
+    *page_id = context->text_page_id;
+    *control_id = context->text_control_id;
+    return true;
+}
+
+/*
  * 函数名：F_Hmi_SendReadRtc。
  * 说明：按大彩协议发送读取串口屏全局 RTC 的 0x82 指令；RTC 控件 ID 不包含在此全局命令中。
  * 输入：context 为 HMI 功能层上下文输入输出指针。

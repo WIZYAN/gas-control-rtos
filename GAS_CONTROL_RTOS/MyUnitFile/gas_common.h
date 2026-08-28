@@ -12,7 +12,7 @@
 #define GAS_NO_ACTIVE_CYLINDER             (0xFFU)   // 当前没有工作瓶时使用的无效索引。
 #define GAS_DEFAULT_EXTERNAL_COMM_MODE     (0U)      // 外部通讯默认模式，0表示CAN，1表示RS485/Modbus。
 
-// EEPROM 中没有有效记录时使用的运行参数默认值；外部 Modbus 可在安全停止状态下修改并持久化。
+// EEPROM中没有有效记录时使用的运行参数默认值；外部Modbus可在六瓶全部停用的维护状态下修改并持久化。
 #define GAS_DEFAULT_SWITCH_PRESSURE_MPA       (1.2F)    // 工作瓶触发低压切换的默认压力，单位 MPa。
 #define GAS_DEFAULT_SWITCH_RELEASE_MPA        (1.3F)    // 低压确认退出回差的默认压力，单位 MPa。
 #define GAS_DEFAULT_VALVE_PULL_IN_TIME_MS     (200UL)   // 电磁阀默认12 V强吸合时间，单位ms。
@@ -140,7 +140,7 @@ typedef enum
     GAS_EXTERNAL_CONFIG_INVALID_RANGE = 3,    // 至少一个参数超出允许范围。
     GAS_EXTERNAL_CONFIG_INVALID_RELATION = 4, // 参数之间的逻辑关系错误。
     GAS_EXTERNAL_CONFIG_STORAGE_FAILED = 5,   // EEPROM保存或读回失败。
-    GAS_EXTERNAL_CONFIG_SYSTEM_BUSY = 6,      // 系统未安全停止。
+    GAS_EXTERNAL_CONFIG_SYSTEM_BUSY = 6,      // 六瓶未全部停用或仍存在开阀命令。
     GAS_EXTERNAL_CONFIG_INVALID_KEY = 7       // 参数提交键值错误。
 } gas_external_config_result_t;
 
@@ -177,10 +177,10 @@ typedef enum
     GAS_PRESSURE_OUT_OF_RANGE  // 压力超出配置上限但仍可用于红色诊断显示，不参与自动控制。
 } gas_pressure_quality_t;
 
-// 系统运行模式，用于区分安全停止状态和自动供气状态。
+// 系统内部运行状态；V1.08不提供人工切换，STOPPED只用于严重故障锁定。
 typedef enum
 {
-    GAS_MODE_STOPPED = 0, // 系统停止，全部阀门保持关闭。
+    GAS_MODE_STOPPED = 0, // 内部故障锁定，全部阀门保持关闭并等待排障重启。
     GAS_MODE_AUTO         // 系统自动监测压力并执行顺序切瓶。
 } gas_mode_t;
 

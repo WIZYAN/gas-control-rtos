@@ -91,6 +91,146 @@ static uint16_t A_HmiLog_ReadU16(const uint8_t *data)
 }
 
 /*
+ * 函数名：A_HmiLog_DaysInMonth。
+ * 说明：计算2000～2099年指定月份的实际天数，并处理闰年二月。
+ * 输入：year为完整年份；month为月份。
+ * 输出：返回该月天数；月份无效时返回0。
+ */
+static uint8_t A_HmiLog_DaysInMonth(uint16_t year, uint8_t month)
+{
+    const uint8_t days[12] = {31U, 28U, 31U, 30U, 31U, 30U,
+                              31U, 31U, 30U, 31U, 30U, 31U};
+    uint8_t result;
+
+    if ((month == 0U) || (month > 12U))
+    {
+        return 0U;
+    }
+    result = days[month - 1U];
+    if ((month == 2U) && ((year % 4U) == 0U))
+    {
+        result = 29U;
+    }
+    return result;
+}
+
+/*
+ * 函数名：A_HmiLog_DateTimeValid。
+ * 说明：校验日志查询日期时间的年月日和时分秒范围。
+ * 输入：value为待校验的日期时间。
+ * 输出：六个字段组成合法时间时返回true，否则返回false。
+ */
+static bool A_HmiLog_DateTimeValid(const A_Hmi_Log_Date_Time *value)
+{
+    uint8_t maximum_day;
+
+    if ((value == NULL) || (value->year < 2000U) || (value->year > 2099U) ||
+        (value->hour > 23U) || (value->minute > 59U) || (value->second > 59U))
+    {
+        return false;
+    }
+    maximum_day = A_HmiLog_DaysInMonth(value->year, value->month);
+    return ((maximum_day > 0U) && (value->day > 0U) && (value->day <= maximum_day));
+}
+
+/*
+ * 函数名：A_HmiLog_DateTimeKey。
+ * 说明：把日期时间组合成YYYYMMDDHHMMSS数值，用于包含边界的时间比较。
+ * 输入：value为已校验的日期时间。
+ * 输出：返回64位十进制时间键。
+ */
+static uint64_t A_HmiLog_DateTimeKey(const A_Hmi_Log_Date_Time *value)
+{
+    return ((uint64_t) value->year * 10000000000ULL) +
+           ((uint64_t) value->month * 100000000ULL) +
+           ((uint64_t) value->day * 1000000ULL) +
+           ((uint64_t) value->hour * 10000ULL) +
+           ((uint64_t) value->minute * 100ULL) + value->second;
+}
+
+/*
+ * 函数名：A_HmiLog_RecordDateTimeKey。
+ * 说明：从32字节日志公共时间区提取YYYYMMDDHHMMSS比较键。
+ * 输入：record为已通过日志格式和CRC校验的记录。
+ * 输出：返回记录时间键。
+ */
+static uint64_t A_HmiLog_RecordDateTimeKey(const uint8_t *record)
+{
+    A_Hmi_Log_Date_Time value;
+
+    value.year = (uint16_t) (2000U + record[6]);
+    value.month = record[7];
+    value.day = record[8];
+    value.hour = record[9];
+    value.minute = record[10];
+    value.second = record[11];
+    return A_HmiLog_DateTimeKey(&value);
+}
+
+/*
+ * 函数名：A_HmiLog_FilterValid。
+ * 说明：校验条件字段范围，并在启用时间筛选时检查开始不晚于结束。
+ * 输入：filter为待校验的查询条件。
+ * 输出：条件可安全用于扫描时返回true，否则返回false。
+ */
+static bool A_HmiLog_FilterValid(const A_Hmi_Log_Filter *filter)
+{
+    if ((filter == NULL) || (filter->cylinder_number > GAS_CYLINDER_COUNT) ||
+        (filter->target_state > (uint8_t) GAS_CYL_WAIT_TEST) ||
+        !A_HmiLog_DateTimeValid(&filter->start) ||
+        !A_HmiLog_DateTimeValid(&filter->end))
+    {
+        return false;
+    }
+    return (!filter->time_enabled ||
+            (A_HmiLog_DateTimeKey(&filter->start) <= A_HmiLog_DateTimeKey(&filter->end)));
+}
+
+/*
+ * 函数名：A_HmiLog_RecordMatchesFilter。
+ * 说明：判断已校验日志是否同时满足类型、时间、气瓶和进入状态条件。
+ * 输入：context为当前查询快照；record为32字节日志。
+ * 输出：记录应加入RAM分页索引时返回true，否则返回false。
+ */
+static bool A_HmiLog_RecordMatchesFilter(const A_Hmi_Log_Context *context,
+                                         const uint8_t *record)
+{
+    uint64_t record_key;
+    uint8_t expected_type;
+
+    if ((context == NULL) || (record == NULL))
+    {
+        return false;
+    }
+    expected_type = (context->query_type == A_HMI_LOG_QUERY_REGULAR) ?
+                    (uint8_t) A_GAS_LOG_TYPE_REGULAR : (uint8_t) A_GAS_LOG_TYPE_EVENT;
+    if (record[0] != expected_type)
+    {
+        return false;
+    }
+    if (context->active_filter.time_enabled)
+    {
+        record_key = A_HmiLog_RecordDateTimeKey(record);
+        if ((record_key < A_HmiLog_DateTimeKey(&context->active_filter.start)) ||
+            (record_key > A_HmiLog_DateTimeKey(&context->active_filter.end)))
+        {
+            return false;
+        }
+    }
+    if (context->query_type == A_HMI_LOG_QUERY_REGULAR)
+    {
+        return true;
+    }
+    if ((context->active_filter.cylinder_number != 0U) &&
+        (record[12] != context->active_filter.cylinder_number))
+    {
+        return false;
+    }
+    return ((context->active_filter.target_state == 0U) ||
+            (record[14] == context->active_filter.target_state));
+}
+
+/*
  * 函数名：A_HmiLog_AppendPressure。
  * 说明：把乘以1000的日志压力编码转换为三位小数MPa文本，无效质量显示为“--”。
  * 输入：row、length和capacity描述目标缓冲；raw为压力原始值；valid为质量有效标志。
@@ -317,6 +457,190 @@ static uint8_t A_HmiLog_GetRecordType(A_Hmi_Log_Query_Type query_type)
 }
 
 /*
+ * 函数名：A_HmiLog_SetDefaultFilter。
+ * 说明：建立“全部时间、全部气瓶、全部进入状态”的初始查询条件。
+ * 输入：filter为查询条件输出指针。
+ * 输出：无；时间输入框边界设为20000101 000000至20991231 235959。
+ */
+static void A_HmiLog_SetDefaultFilter(A_Hmi_Log_Filter *filter)
+{
+    if (filter == NULL)
+    {
+        return;
+    }
+    (void) memset(filter, 0, sizeof(*filter));
+    filter->start.year = 2000U;
+    filter->start.month = 1U;
+    filter->start.day = 1U;
+    filter->end.year = 2099U;
+    filter->end.month = 12U;
+    filter->end.day = 31U;
+    filter->end.hour = 23U;
+    filter->end.minute = 59U;
+    filter->end.second = 59U;
+    filter->time_enabled = false;
+}
+
+/*
+ * 函数名：A_HmiLog_ParseDigits。
+ * 说明：把固定位数的ASCII数字转换为无符号整数。
+ * 输入：text为文本；length为必须完全消费的字节数；value为输出指针。
+ * 输出：所有字节均为0～9时返回true，否则返回false。
+ */
+static bool A_HmiLog_ParseDigits(const char *text, size_t length, uint32_t *value)
+{
+    size_t index;
+    uint32_t result = 0U;
+
+    if ((text == NULL) || (value == NULL) || (length == 0U))
+    {
+        return false;
+    }
+    for (index = 0U; index < length; ++index)
+    {
+        if ((text[index] < '0') || (text[index] > '9'))
+        {
+            return false;
+        }
+        result = (result * 10U) + (uint32_t) (text[index] - '0');
+    }
+    *value = result;
+    return true;
+}
+
+/*
+ * 函数名：A_HmiLog_FormatFilterField。
+ * 说明：把查询页的日期、时间、气瓶、状态或提示格式化为ASCII/GBK文本。
+ * 输入：context为日志上下文；slot为0～7刷新槽；text和capacity为输出缓冲。
+ * 输出：返回有效文本字节数，参数或容量异常时返回0。
+ */
+static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
+                                         uint8_t slot,
+                                         char *text,
+                                         size_t capacity)
+{
+    const char all_text[] = "\xC8\xAB\xB2\xBF"; // 全部。
+    const char number_text[] = "\xBA\xC5"; // 号。
+    const char ready_text[] = "\xCC\xF5\xBC\xFE\xD2\xD1\xBE\xCD\xD0\xF7"; // 条件已就绪。
+    const char input_error_text[] = "\xC8\xD5\xC6\xDA\xBB\xF2\xCA\xB1\xBC\xE4\xB8\xF1\xCA\xBD\xB4\xED\xCE\xF3"; // 日期或时间格式错误。
+    const char reset_text[] = "\xD2\xD1\xBB\xD6\xB8\xB4\xC8\xAB\xB2\xBF\xBC\xC7\xC2\xBC"; // 已恢复全部记录。
+    const A_Hmi_Log_Date_Time *date_time;
+    size_t length = 0U;
+
+    if ((context == NULL) || (text == NULL))
+    {
+        return 0U;
+    }
+    if (slot <= 3U)
+    {
+        date_time = (slot < 2U) ? &context->edit_filter.start : &context->edit_filter.end;
+        if ((slot == 0U) || (slot == 2U))
+        {
+            return (A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->year, 4U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->month, 2U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->day, 2U)) ? length : 0U;
+        }
+        return (A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->hour, 2U) &&
+                A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->minute, 2U) &&
+                A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->second, 2U)) ? length : 0U;
+    }
+    if (slot == 5U)
+    {
+        if (context->edit_filter.cylinder_number == 0U)
+        {
+            return A_HmiLog_AppendBytes(text, &length, capacity,
+                                       all_text, sizeof(all_text) - 1U) ? length : 0U;
+        }
+        return (A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                       context->edit_filter.cylinder_number, 1U) &&
+                A_HmiLog_AppendBytes(text, &length, capacity,
+                                    number_text, sizeof(number_text) - 1U)) ? length : 0U;
+    }
+    if (slot == 6U)
+    {
+        if (context->edit_filter.target_state == 0U)
+        {
+            return A_HmiLog_AppendBytes(text, &length, capacity,
+                                       all_text, sizeof(all_text) - 1U) ? length : 0U;
+        }
+        return A_HmiLog_AppendState(text, &length, capacity,
+                                   context->edit_filter.target_state) ? length : 0U;
+    }
+    if (slot == 7U)
+    {
+        const char *status_text = ready_text;
+        size_t status_length = sizeof(ready_text) - 1U;
+
+        if (context->filter_status == A_HMI_LOG_FILTER_STATUS_INPUT_ERROR)
+        {
+            status_text = input_error_text;
+            status_length = sizeof(input_error_text) - 1U;
+        }
+        else if (context->filter_status == A_HMI_LOG_FILTER_STATUS_RESET)
+        {
+            status_text = reset_text;
+            status_length = sizeof(reset_text) - 1U;
+        }
+        return A_HmiLog_AppendBytes(text, &length, capacity,
+                                   status_text, status_length) ? length : 0U;
+    }
+    return 0U;
+}
+
+/*
+ * 函数名：A_HmiLog_FilterRefreshTask。
+ * 说明：每次最多回写一个Screen6动态控件，避免长帧阻塞SCI9。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：成功启动一帧发送时返回true，否则返回false。
+ */
+static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
+{
+    const uint16_t control_id[8] = {
+        A_HMI_LOG_FILTER_START_DATE_ID, A_HMI_LOG_FILTER_START_TIME_ID,
+        A_HMI_LOG_FILTER_END_DATE_ID, A_HMI_LOG_FILTER_END_TIME_ID,
+        A_HMI_LOG_FILTER_ALL_TIME_BUTTON_ID, A_HMI_LOG_FILTER_CYLINDER_TEXT_ID,
+        A_HMI_LOG_FILTER_STATE_TEXT_ID, A_HMI_LOG_FILTER_STATUS_TEXT_ID
+    };
+    char text[A_HMI_LOG_STATUS_MAX_SIZE];
+    size_t length;
+    uint8_t slot;
+    bool sent;
+
+    if ((context == NULL) || (context->filter_refresh_mask == 0U))
+    {
+        return false;
+    }
+    for (slot = 0U; slot < 8U; ++slot)
+    {
+        if ((context->filter_refresh_mask & (uint16_t) (1U << slot)) == 0U)
+        {
+            continue;
+        }
+        if (slot == 4U)
+        {
+            sent = F_Hmi_SendButtonState(&context->hmi->function,
+                                         A_HMI_LOG_FILTER_PAGE_ID,
+                                         control_id[slot],
+                                         !context->edit_filter.time_enabled);
+        }
+        else
+        {
+            length = A_HmiLog_FormatFilterField(context, slot, text, sizeof(text));
+            sent = ((length > 0U) &&
+                    F_Hmi_SendText(&context->hmi->function,
+                                   A_HMI_LOG_FILTER_PAGE_ID,
+                                   control_id[slot], text, length));
+        }
+        if (sent)
+        {
+            context->filter_refresh_mask &= (uint16_t) ~(uint16_t) (1U << slot);
+        }
+        return sent;
+    }
+    return false;
+}
+
+/*
  * 函数名：A_HmiLog_FormatRegularPressureRow。
  * 说明：把常规记录格式化为“时间；压力内容”两列表格行。
  * 输入：record为已校验的常规日志；row为输出缓冲；capacity为容量。
@@ -469,10 +793,11 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
     context->matched_count = 0U;
     context->scanned_count = 0U;
     context->read_failed = !A_GasLog_IsReady(context->log);
+    context->filter_error = !A_HmiLog_FilterValid(&context->active_filter);
     context->snapshot_changed = false;
     context->progress_pending = false;
     context->index_complete = false;
-    context->cache_valid = !context->read_failed;
+    context->cache_valid = !context->read_failed && !context->filter_error;
     context->page_rendered = false;
     context->table_is_clear = false;
     context->page_request_pending = true;
@@ -481,7 +806,7 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
     context->page_start_index = 0U;
     context->page_end_index = 0U;
     context->page_cursor = 0U;
-    context->total_count = A_GasLog_GetCount(context->log);
+    context->total_count = context->filter_error ? 0U : A_GasLog_GetCount(context->log);
     context->scan_logical_index = context->total_count;
     context->snapshot_next_sequence = context->log->next_sequence;
     context->state = A_HMI_LOG_QUERY_CLEAR;
@@ -529,7 +854,7 @@ static bool A_HmiLog_ScanOneRecord(A_Hmi_Log_Context *context)
     }
     context->scan_logical_index = logical_index;
     context->scanned_count++;
-    if (context->current_record[0] == A_HmiLog_GetRecordType(context->query_type))
+    if (A_HmiLog_RecordMatchesFilter(context, context->current_record))
     {
         if (context->matched_count >= A_HMI_LOG_INDEX_CAPACITY)
         {
@@ -741,12 +1066,18 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
     const char changed_text[] = "\xC8\xD5\xD6\xBE\xD2\xD1\xB8\xFC\xD0\xC2"; // 日志已更新。
     const char error_text[] = "\xB6\xC1\xC8\xA1\xB4\xED\xCE\xF3"; // 读取错误。
     const char rtc_text[] = "\xCA\xB1\xBC\xE4\xCE\xDE\xD0\xA7"; // 时间无效。
+    const char range_text[] = "\xCA\xB1\xBC\xE4\xB7\xB6\xCE\xA7\xB4\xED\xCE\xF3"; // 时间范围错误。
     char status[A_HMI_LOG_STATUS_MAX_SIZE];
     const char *fixed_text = NULL;
     size_t fixed_length = 0U;
     size_t length = 0U;
 
-    if (context->read_failed)
+    if (context->filter_error)
+    {
+        fixed_text = range_text;
+        fixed_length = sizeof(range_text) - 1U;
+    }
+    else if (context->read_failed)
     {
         fixed_text = error_text;
         fixed_length = sizeof(error_text) - 1U;
@@ -878,8 +1209,154 @@ bool A_HmiLog_Init(A_Hmi_Log_Context *context,
     context->system = system;
     context->query_type = A_HMI_LOG_QUERY_EVENT;
     context->pending_type = A_HMI_LOG_QUERY_EVENT;
+    A_HmiLog_SetDefaultFilter(&context->edit_filter);
+    context->active_filter = context->edit_filter;
+    context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
     context->ready = true;
     return true;
+}
+
+/*
+ * 函数名：A_HmiLog_HandleFilterButton。
+ * 说明：处理日志类型页签、全部时间、气瓶、进入状态、查询和重置按钮。
+ * 输入：context为日志查询上下文；button_id和value为按钮控件ID和上传值。
+ * 输出：按钮属于日志条件模块时返回true，否则返回false。
+ */
+bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
+                                 uint16_t button_id,
+                                 uint8_t value)
+{
+    if ((context == NULL) || !context->ready)
+    {
+        return false;
+    }
+    if ((button_id == A_HMI_LOG_FILTER_EVENT_BUTTON_ID) ||
+        (button_id == A_HMI_REGULAR_TO_EVENT_BUTTON_ID))
+    {
+        if (value != 0U)
+        {
+            (void) A_HmiLog_Request(context, A_HMI_LOG_QUERY_EVENT);
+        }
+        return true;
+    }
+    if ((button_id == A_HMI_LOG_FILTER_REGULAR_BUTTON_ID) ||
+        (button_id == A_HMI_EVENT_TO_REGULAR_BUTTON_ID))
+    {
+        if (value != 0U)
+        {
+            (void) A_HmiLog_Request(context, A_HMI_LOG_QUERY_REGULAR);
+        }
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_ALL_TIME_BUTTON_ID)
+    {
+        context->edit_filter.time_enabled = (value == 0U);
+        context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
+        context->filter_refresh_mask |= (uint16_t) ((1U << 4U) | (1U << 7U));
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_CYLINDER_BUTTON_ID)
+    {
+        if (value != 0U)
+        {
+            context->edit_filter.cylinder_number =
+                (uint8_t) ((context->edit_filter.cylinder_number + 1U) %
+                           (GAS_CYLINDER_COUNT + 1U));
+            context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
+            context->filter_refresh_mask |= (uint16_t) ((1U << 5U) | (1U << 7U));
+        }
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_STATE_BUTTON_ID)
+    {
+        if (value != 0U)
+        {
+            context->edit_filter.target_state =
+                (uint8_t) ((context->edit_filter.target_state + 1U) %
+                           ((uint8_t) GAS_CYL_WAIT_TEST + 1U));
+            context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
+            context->filter_refresh_mask |= (uint16_t) ((1U << 6U) | (1U << 7U));
+        }
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_RESET_BUTTON_ID)
+    {
+        if (value != 0U)
+        {
+            A_HmiLog_SetDefaultFilter(&context->edit_filter);
+            context->filter_status = A_HMI_LOG_FILTER_STATUS_RESET;
+            context->filter_refresh_mask |= A_HMI_LOG_FILTER_REFRESH_ALL;
+        }
+        return true;
+    }
+    return false;
+}
+
+/*
+ * 函数名：A_HmiLog_InputTask。
+ * 说明：取出Screen6的YYYYMMDD或HHMMSS文本，校验并更新查询条件。
+ * 输入：context为日志查询上下文输入输出指针。
+ * 输出：无；错误文本会被恢复为上一个合法值。
+ */
+void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
+{
+    A_Hmi_Log_Filter candidate;
+    A_Hmi_Log_Date_Time *date_time;
+    char text[F_HMI_TEXT_MAX_SIZE + 1U];
+    uint16_t page_id;
+    uint16_t control_id;
+    uint8_t slot;
+    uint32_t value;
+    size_t length;
+    bool valid = false;
+
+    if ((context == NULL) || !context->ready || (context->hmi == NULL) ||
+        !A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) ||
+        (page_id != A_HMI_LOG_FILTER_PAGE_ID) ||
+        (control_id < A_HMI_LOG_FILTER_START_DATE_ID) ||
+        (control_id > A_HMI_LOG_FILTER_END_TIME_ID))
+    {
+        return;
+    }
+    length = A_Hmi_TakeTextEvent(context->hmi, &page_id, &control_id,
+                                 text, sizeof(text));
+    if (length == 0U)
+    {
+        return;
+    }
+
+    candidate = context->edit_filter;
+    slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
+    date_time = (slot < 2U) ? &candidate.start : &candidate.end;
+    if (((slot == 0U) || (slot == 2U)) && (length == 8U) &&
+        A_HmiLog_ParseDigits(text, length, &value))
+    {
+        date_time->year = (uint16_t) (value / 10000U);
+        date_time->month = (uint8_t) ((value / 100U) % 100U);
+        date_time->day = (uint8_t) (value % 100U);
+        valid = A_HmiLog_DateTimeValid(date_time);
+    }
+    else if (((slot == 1U) || (slot == 3U)) && (length == 6U) &&
+             A_HmiLog_ParseDigits(text, length, &value))
+    {
+        date_time->hour = (uint8_t) (value / 10000U);
+        date_time->minute = (uint8_t) ((value / 100U) % 100U);
+        date_time->second = (uint8_t) (value % 100U);
+        valid = A_HmiLog_DateTimeValid(date_time);
+    }
+
+    if (valid)
+    {
+        context->edit_filter = candidate;
+        context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
+        context->filter_refresh_mask |= (uint16_t) (1U << 7U);
+    }
+    else
+    {
+        context->filter_status = A_HMI_LOG_FILTER_STATUS_INPUT_ERROR;
+        context->filter_refresh_mask |= (uint16_t) ((1U << slot) | (1U << 7U));
+        // 仅回写本输入框的旧值，其他已编辑条件保持不变。
+    }
 }
 
 /*
@@ -897,6 +1374,8 @@ bool A_HmiLog_Request(A_Hmi_Log_Context *context,
     {
         return false;
     }
+    context->active_filter = context->edit_filter;
+    context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
     context->pending_type = query_type;
     context->request_pending = true;
     return true;
@@ -980,6 +1459,12 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
     {
         A_HmiLog_StartRequest(context);
     }
+    if ((context->state == A_HMI_LOG_QUERY_IDLE) &&
+        !context->page_request_pending && (context->filter_refresh_mask != 0U))
+    {
+        (void) A_HmiLog_FilterRefreshTask(context);
+        return;
+    }
     if ((context->state == A_HMI_LOG_QUERY_IDLE) && context->cache_valid &&
         !context->snapshot_changed &&
         (context->log->next_sequence != context->snapshot_next_sequence))
@@ -1018,7 +1503,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
             if (F_Hmi_SendRecordClear(&context->hmi->function, page_id, record_control_id))
             {
                 context->table_is_clear = true;
-                if (context->read_failed)
+                if (context->read_failed || context->filter_error)
                 {
                     context->page_request_pending = false;
                     context->state = A_HMI_LOG_QUERY_PAGE_INFO;
@@ -1132,7 +1617,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
         case A_HMI_LOG_QUERY_PAGE_INFO:
             if (A_HmiLog_SendPageInfo(context))
             {
-                if (context->read_failed || context->snapshot_changed)
+                if (context->read_failed || context->filter_error || context->snapshot_changed)
                 {
                     context->state = A_HMI_LOG_QUERY_STATUS;
                 }
@@ -1174,5 +1659,6 @@ bool A_HmiLog_IsBusy(const A_Hmi_Log_Context *context)
 {
     return ((context != NULL) && context->ready &&
             (context->request_pending || context->page_request_pending ||
+             (context->filter_refresh_mask != 0U) ||
              (context->state != A_HMI_LOG_QUERY_IDLE)));
 }

@@ -696,6 +696,13 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     {
         return;
     }
+    if (!A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) ||
+        (page_id != A_HMI_CONFIG_PAGE_ID) ||
+        (control_id < A_HMI_CONFIG_TEXT_BASE) ||
+        (control_id >= (A_HMI_CONFIG_TEXT_BASE + A_HMI_CONFIG_TEXT_COUNT)))
+    {
+        return;
+    }
     length = A_Hmi_TakeTextEvent(context->hmi,
                                  &page_id,
                                  &control_id,
@@ -705,13 +712,6 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     {
         return;
     }
-    if ((page_id != A_HMI_CONFIG_PAGE_ID) ||
-        (control_id < A_HMI_CONFIG_TEXT_BASE) ||
-        (control_id >= (A_HMI_CONFIG_TEXT_BASE + A_HMI_CONFIG_TEXT_COUNT)))
-    {
-        return;
-    }
-
     if (!context->active)
     {
         (void) A_HmiConfig_Open(context, current_config);

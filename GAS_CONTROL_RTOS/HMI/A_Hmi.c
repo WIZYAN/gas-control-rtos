@@ -159,36 +159,6 @@ static size_t A_Hmi_FormatCylinderState(gas_cylinder_state_t state,
 }
 
 /*
- * 函数名：A_Hmi_FormatValveState。
- * 说明：把阀门布尔命令状态转换为串口屏控件使用的“开启”或“关闭”GBK 中文文本。
- * 输入：on 为阀门命令状态；text 为输出缓冲区；capacity 为缓冲区容量。
- * 输出：返回写入的 GBK 文本字节数，输入无效或容量不足时返回 0。
- */
-static size_t A_Hmi_FormatValveState(bool on, char *text, size_t capacity)
-{
-    const char *valve_text = on ? "\xBF\xAA\xC6\xF4" :
-                                  "\xB9\xD8\xB1\xD5";
-
-    // 中文采用固定 GBK 字节，避免编译电脑的源文件执行字符集改变实际发送内容。
-    return A_Hmi_CopyGbkText(valve_text, strlen(valve_text), text, capacity);
-}
-
-/*
- * 函数名：A_Hmi_FormatSystemMode。
- * 说明：把系统运行模式转换为实时监控页使用的“自动运行”或“安全停止”GBK中文文本。
- * 输入：mode为当前系统运行模式；text为输出缓冲区；capacity为缓冲区容量。
- * 输出：返回写入的GBK文本字节数，容量不足时返回0。
- */
-static size_t A_Hmi_FormatSystemMode(gas_mode_t mode, char *text, size_t capacity)
-{
-    const char *mode_text = (mode == GAS_MODE_STOPPED) ?
-                            "\xB0\xB2\xC8\xAB\xCD\xA3\xD6\xB9" :
-                            "\xD7\xD4\xB6\xAF\xD4\xCB\xD0\xD0";
-
-    return A_Hmi_CopyGbkText(mode_text, strlen(mode_text), text, capacity);
-}
-
-/*
  * 函数名：A_Hmi_GetHighlightFrame。
  * 说明：把气瓶业务状态映射为实时监控卡片的三帧高亮图标索引。
  * 输入：state为当前气瓶状态。
@@ -370,6 +340,20 @@ size_t A_Hmi_TakeTextEvent(A_Hmi_Context *context,
 }
 
 /*
+ * 函数名：A_Hmi_PeekTextEvent。
+ * 说明：查看串口屏待处理文本输入的画面和控件ID，但不取走文本。
+ * 输入：context为HMI上下文；page_id和control_id为控件标识输出指针。
+ * 输出：存在待处理文本事件时返回true，否则返回false。
+ */
+bool A_Hmi_PeekTextEvent(const A_Hmi_Context *context,
+                         uint16_t *page_id,
+                         uint16_t *control_id)
+{
+    return ((context != NULL) && context->ready &&
+            F_Hmi_PeekTextEvent(&context->function, page_id, control_id));
+}
+
+/*
  * 函数名：A_Hmi_SendText。
  * 说明：向指定串口屏画面的文本控件发送ASCII或GBK字节文本。
  * 输入：context为HMI上下文；page_id和control_id指定控件；text为文本；length为字节数。
@@ -387,7 +371,7 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
 
 /*
  * 函数名：A_Hmi_Refresh。
- * 说明：分时刷新压力、气瓶状态、十八路阀位、四组六路操作按钮、卡片高亮及系统模式。
+ * 说明：分时刷新压力、气瓶状态、十八路双色阀位、四组六路操作按钮及卡片高亮。
  * 输入：context 为 HMI 上下文；system 为只读气源系统；now_ms 为当前毫秒计数。
  * 输出：无；每次最多启动一帧异步发送。
  */
@@ -396,6 +380,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     char text[16];
     uint16_t control_id;
     uint8_t index;
+    uint8_t supply_bits = 0U;
     uint8_t exhaust_bits = 0U;
     uint8_t test_bits = 0U;
     uint8_t disable_bits = 0U;
@@ -412,6 +397,10 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        if (system->cylinder[index].supply_cmd)
+        {
+            supply_bits |= (uint8_t) (1U << index);
+        }
         if (system->cylinder[index].exhaust_cmd)
         {
             exhaust_bits |= (uint8_t) (1U << index);
@@ -429,10 +418,25 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             qualification_bits |= (uint8_t) (1U << index);
         }
     }
+    if (!context->supply_valve_refresh_initialized)
+    {
+        context->supply_valve_refresh_value_bits = supply_bits;
+        context->supply_valve_refresh_pending_bits = supply_bits;
+        context->supply_valve_refresh_initialized = true;
+    }
+    else
+    {
+        changed_bits = (uint8_t) (context->supply_valve_refresh_value_bits ^ supply_bits);
+        context->supply_valve_refresh_value_bits = supply_bits;
+        context->supply_valve_refresh_pending_bits |= changed_bits;
+    }
+    // 进气阀变化时优先切换双色图标；首次全关无需发送，因为画面默认帧就是“关闭”。
+
     if (!context->exhaust_refresh_initialized)
     {
         context->exhaust_refresh_value_bits = exhaust_bits;
         context->exhaust_refresh_pending_bits = (uint8_t) ((1U << GAS_CYLINDER_COUNT) - 1U);
+        context->exhaust_valve_refresh_pending_bits = exhaust_bits;
         context->exhaust_refresh_initialized = true;
     }
     else
@@ -440,6 +444,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         changed_bits = (uint8_t) (context->exhaust_refresh_value_bits ^ exhaust_bits);
         context->exhaust_refresh_value_bits = exhaust_bits;
         context->exhaust_refresh_pending_bits |= changed_bits;
+        context->exhaust_valve_refresh_pending_bits |= changed_bits;
     }
     // 实际排气命令变化时建立优先回写队列，按钮只负责发起定时排气请求，不直接决定阀门状态。
 
@@ -447,6 +452,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         context->test_refresh_value_bits = test_bits;
         context->test_refresh_pending_bits = (uint8_t) ((1U << GAS_CYLINDER_COUNT) - 1U);
+        context->test_valve_refresh_pending_bits = test_bits;
         context->test_refresh_initialized = true;
     }
     else
@@ -454,6 +460,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         changed_bits = (uint8_t) (context->test_refresh_value_bits ^ test_bits);
         context->test_refresh_value_bits = test_bits;
         context->test_refresh_pending_bits |= changed_bits;
+        context->test_valve_refresh_pending_bits |= changed_bits;
     }
     // 测试阀实际命令变化时优先校正按钮，包含CAN控制、自动超时和安全关断等所有来源。
 
@@ -485,52 +492,8 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     }
     // MCU标志发生变化时建立优先回写队列，串口屏本地按钮状态不作为业务判断依据。
 
-    if (!context->mode_refresh_initialized ||
-        (context->mode_refresh_value != system->mode))
-    {
-        context->mode_refresh_value = system->mode;
-        context->mode_refresh_phase = 0U;
-        context->mode_refresh_pending = true;
-        context->mode_refresh_initialized = true;
-        // 任何来源改变MCU运行模式时，文本和开关都从实际模式重新同步。
-    }
     if (!A_Hmi_TimeReached(now_ms, context->next_refresh_ms))
     {
-        return;
-    }
-
-    if (context->mode_refresh_pending)
-    {
-        if (context->mode_refresh_phase == 0U)
-        {
-            length = A_Hmi_FormatSystemMode(context->mode_refresh_value,
-                                            text,
-                                            sizeof(text));
-            sent = (length > 0U) &&
-                   F_Hmi_SendText(&context->function,
-                                  A_HMI_MONITOR_PAGE_ID,
-                                  A_HMI_SYSTEM_MODE_TEXT_ID,
-                                  text,
-                                  length);
-        }
-        else
-        {
-            sent = F_Hmi_SendButtonState(&context->function,
-                                         A_HMI_MONITOR_PAGE_ID,
-                                         A_HMI_SYSTEM_MODE_BUTTON_ID,
-                                         context->mode_refresh_value == GAS_MODE_STOPPED);
-        }
-        if (sent)
-        {
-            context->mode_refresh_phase++;
-            if (context->mode_refresh_phase >= 2U)
-            {
-                context->mode_refresh_pending = false;
-                context->mode_refresh_phase = 0U;
-            }
-            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
-        }
-        // 模式变化优先于普通轮询刷新，开关被拒绝时也会快速回到MCU实际状态。
         return;
     }
 
@@ -622,7 +585,76 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         return;
     }
 
-    // 70个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
+    if (context->supply_valve_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->supply_valve_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_SUPPLY_ICON_BASE + index),
+                                   ((supply_bits & (uint8_t) (1U << index)) != 0U) ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
+        if (sent)
+        {
+            context->supply_valve_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 自动开关进气阀后优先更新颜色，画面只反映MCU命令状态。
+        return;
+    }
+
+    if (context->exhaust_valve_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->exhaust_valve_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_EXHAUST_ICON_BASE + index),
+                                   ((exhaust_bits & (uint8_t) (1U << index)) != 0U) ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
+        if (sent)
+        {
+            context->exhaust_valve_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 排气阀开启、到时关闭或安全关断后优先更新对应双色图标。
+        return;
+    }
+
+    if (context->test_valve_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->test_valve_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_TEST_ICON_BASE + index),
+                                   ((test_bits & (uint8_t) (1U << index)) != 0U) ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
+        if (sent)
+        {
+            context->test_valve_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 测试阀开启、超时关闭或安全关断后优先更新对应双色图标。
+        return;
+    }
+
+    // 68个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
     if (context->refresh_slot < 12U)
     {
         index = (uint8_t) (context->refresh_slot / 2U);
@@ -657,20 +689,29 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 24U)
     {
         index = (uint8_t) (context->refresh_slot - 18U);
-        control_id = (uint16_t) (A_HMI_SUPPLY_TEXT_BASE + index);
-        length = A_Hmi_FormatValveState(system->cylinder[index].supply_cmd, text, sizeof(text));
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_SUPPLY_ICON_BASE + index),
+                                   system->cylinder[index].supply_cmd ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
     }
     else if (context->refresh_slot < 30U)
     {
         index = (uint8_t) (context->refresh_slot - 24U);
-        control_id = (uint16_t) (A_HMI_EXHAUST_TEXT_BASE + index);
-        length = A_Hmi_FormatValveState(system->cylinder[index].exhaust_cmd, text, sizeof(text));
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_EXHAUST_ICON_BASE + index),
+                                   system->cylinder[index].exhaust_cmd ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
     }
     else if (context->refresh_slot < 36U)
     {
         index = (uint8_t) (context->refresh_slot - 30U);
-        control_id = (uint16_t) (A_HMI_TEST_TEXT_BASE + index);
-        length = A_Hmi_FormatValveState(system->cylinder[index].test_cmd, text, sizeof(text));
+        sent = F_Hmi_SendIconFrame(&context->function,
+                                   A_HMI_MONITOR_PAGE_ID,
+                                   (uint16_t) (A_HMI_TEST_ICON_BASE + index),
+                                   system->cylinder[index].test_cmd ?
+                                   A_HMI_VALVE_FRAME_OPEN : A_HMI_VALVE_FRAME_CLOSED);
     }
     else if (context->refresh_slot == 36U)
     {
@@ -742,20 +783,6 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                                      (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
                                      system->cylinder[index].qualification_passed);
         // 周期回写用于串口屏重启、页面切换或偶发丢帧后的最终一致性校正。
-    }
-    else if (context->refresh_slot == 68U)
-    {
-        control_id = A_HMI_SYSTEM_MODE_TEXT_ID;
-        length = A_Hmi_FormatSystemMode(system->mode, text, sizeof(text));
-        // 模式文本周期重申MCU实际状态，不使用串口屏本地状态作为控制依据。
-    }
-    else
-    {
-        sent = F_Hmi_SendButtonState(&context->function,
-                                     A_HMI_MONITOR_PAGE_ID,
-                                     A_HMI_SYSTEM_MODE_BUTTON_ID,
-                                     system->mode == GAS_MODE_STOPPED);
-        // 周期回写开关状态，使串口屏重启或外部通信切换模式后也能自动校正。
     }
 
     if (!sent && (length > 0U))

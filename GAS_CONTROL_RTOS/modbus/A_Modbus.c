@@ -257,9 +257,9 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
 
 /*
  * 函数名：A_Modbus_ProcessCommandWrite。
- * 说明：把命令保持寄存器转换为一条待业务层执行的控制命令。
+ * 说明：清除已经废弃的整机启停寄存器，并对任何非零旧命令返回无效命令结果。
  * 输入：context 为外部 Modbus 应用层上下文输入输出指针。
- * 输出：无；合法命令写入 context，错误结果写入命令结果寄存器。
+ * 输出：无；寄存器立即清零，非零写入在命令结果寄存器中标记为无效。
  */
 static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
 {
@@ -269,28 +269,14 @@ static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
                                        &command_value);
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_COMMAND,
-                                       A_MODBUS_COMMAND_NONE); // 命令锁存后立即清零，避免主循环重复执行。
+                                       A_MODBUS_COMMAND_NONE); // 废弃地址写入后立即清零，避免旧值残留。
 
     if (command_value == A_MODBUS_COMMAND_NONE)
     {
         return;
     }
-    if ((command_value < A_MODBUS_COMMAND_START_AUTO) ||
-        (command_value > A_MODBUS_COMMAND_STOP))
-    {
-        A_Modbus_SetCommandResult(context, A_MODBUS_RESULT_INVALID_COMMAND);
-        return;
-    }
-    if (context->command_pending)
-    {
-        A_Modbus_SetCommandResult(context, A_MODBUS_RESULT_REJECTED);
-        return;
-    }
-
-    context->pending_command = (a_modbus_command_t) command_value;
-    context->command_pending = true;
-    A_Modbus_SetCommandResult(context, A_MODBUS_RESULT_PENDING);
-    // 协议层只锁存请求，实际启动或停止由气源应用层在同一主循环后段执行。
+    A_Modbus_SetCommandResult(context, A_MODBUS_RESULT_INVALID_COMMAND);
+    // V1.08固定自动控制，旧版启动和停止操作码均不再进入业务层。
 }
 
 /*
@@ -489,25 +475,6 @@ void A_Modbus_Task(A_Modbus_Context *context)
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_VERSION,
                                        A_MODBUS_CONFIG_VERSION_VALUE); // 版本寄存器即使被主站写入，也立即恢复为本机固定值。
-}
-
-/*
- * 函数名：A_Modbus_TakeCommand。
- * 说明：取出并清除一条已经通过寄存器校验的外部控制命令。
- * 输入：context 为外部 Modbus 应用层上下文；command 为命令码输出指针。
- * 输出：存在合法待执行命令时返回 true，否则返回 false。
- */
-bool A_Modbus_TakeCommand(A_Modbus_Context *context, a_modbus_command_t *command)
-{
-    if ((context == NULL) || (command == NULL) || !context->command_pending)
-    {
-        return false;
-    }
-
-    *command = context->pending_command;
-    context->command_pending = false;
-    context->pending_command = A_MODBUS_COMMAND_NONE;
-    return true;
 }
 
 /*

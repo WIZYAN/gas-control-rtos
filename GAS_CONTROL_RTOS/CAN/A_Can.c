@@ -271,7 +271,7 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
         case A_CAN_ADDRESS_VALVE_CLOSE_WAIT: *value = context->staged_config.valve_close_wait_ms; return true;
         case A_CAN_ADDRESS_VALVE_OPEN_WAIT: *value = context->staged_config.valve_open_wait_ms; return true;
         case A_CAN_ADDRESS_PRESSURE_FRESH: *value = context->staged_config.pressure_fresh_ms; return true;
-        case A_CAN_ADDRESS_COMMAND: *value = (uint32_t) context->pending_command; return true;
+        case A_CAN_ADDRESS_COMMAND: *value = 0U; return true;
         case A_CAN_ADDRESS_COMMAND_RESULT: *value = (uint32_t) context->command_result; return true;
         case A_CAN_ADDRESS_CONFIG_COMMIT: *value = 0U; return true;
         case A_CAN_ADDRESS_CONFIG_RESULT: *value = (uint32_t) context->config_result; return true;
@@ -500,7 +500,7 @@ static bool A_Can_DecodeControlAddress(uint16_t address,
 
 /*
  * 函数名：A_Can_WriteValue。
- * 说明：处理一条CAN写请求；简单操作立即给出结果，参数、启停和阀门操作等待业务层最终完成后应答。
+ * 说明：处理一条CAN写请求；简单操作立即给出结果，参数和阀门操作等待业务层最终完成后应答。
  * 输入：context为CAN上下文；system为系统状态；comm_mode为通讯模式；request为原写请求；result和detail为立即结果输出。
  * 输出：需要立即发送功能码6响应时返回true；已经建立延迟业务请求时返回false。
  */
@@ -548,24 +548,11 @@ static bool A_Can_WriteValue(A_Can_Context *context,
 
     if (request->data_address == A_CAN_ADDRESS_COMMAND)
     {
-        if ((request->value != GAS_EXTERNAL_COMMAND_START_AUTO) &&
-            (request->value != GAS_EXTERNAL_COMMAND_STOP))
-        {
-            context->command_result = GAS_EXTERNAL_RESULT_INVALID_COMMAND;
-            *result = A_CAN_WRITE_VALUE_ERROR;
-            *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
-            return true;
-        }
-        if (!A_Can_BeginDeferredWrite(context, request))
-        {
-            *result = A_CAN_WRITE_EXECUTION_ERROR;
-            *detail = A_CAN_WRITE_DETAIL_REQUEST_BUSY;
-            return true;
-        }
-        context->pending_command = (gas_external_command_t) request->value;
-        context->command_pending = true;
-        context->command_result = GAS_EXTERNAL_RESULT_PENDING;
-        return false;
+        context->command_result = GAS_EXTERNAL_RESULT_INVALID_COMMAND;
+        *result = A_CAN_WRITE_ADDRESS_ERROR;
+        *detail = A_CAN_WRITE_DETAIL_DEPRECATED;
+        return true;
+        // 地址保留用于旧上位机兼容，但V1.08不再接受任何人工整机启停请求。
     }
 
     if (request->data_address == A_CAN_ADDRESS_CONFIG_COMMIT)
@@ -813,54 +800,6 @@ void A_Can_Task(A_Can_Context *context,
         {
             (void) A_Can_SetImmediateWriteResult(context, &request, result, detail);
         }
-    }
-}
-
-/*
- * 函数名：A_Can_TakeCommand。
- * 说明：取出并清除一条CAN控制命令。
- * 输入：context为CAN上下文；command为命令输出指针。
- * 输出：存在待处理命令时返回true，否则返回false。
- */
-bool A_Can_TakeCommand(A_Can_Context *context, gas_external_command_t *command)
-{
-    if ((context == NULL) || (command == NULL) || !context->command_pending) { return false; }
-    *command = context->pending_command;
-    context->pending_command = GAS_EXTERNAL_COMMAND_NONE;
-    context->command_pending = false;
-    return true;
-}
-
-/*
- * 函数名：A_Can_SetCommandResult。
- * 说明：更新CAN只读整数地址0x0118公布的控制命令结果。
- * 输入：context为CAN上下文；result为命令结果。
- * 输出：无；结果保存到context。
- */
-void A_Can_SetCommandResult(A_Can_Context *context, gas_external_result_t result)
-{
-    if (context == NULL)
-    {
-        return;
-    }
-    context->command_result = result;
-    if (result == GAS_EXTERNAL_RESULT_SUCCESS)
-    {
-        (void) A_Can_CompleteDeferredWrite(context,
-                                           A_CAN_WRITE_SUCCESS,
-                                           A_CAN_WRITE_DETAIL_NONE);
-    }
-    else if (result == GAS_EXTERNAL_RESULT_REJECTED)
-    {
-        (void) A_Can_CompleteDeferredWrite(context,
-                                           A_CAN_WRITE_EXECUTION_ERROR,
-                                           A_CAN_WRITE_DETAIL_STATE_DISALLOWED);
-    }
-    else if (result == GAS_EXTERNAL_RESULT_INVALID_COMMAND)
-    {
-        (void) A_Can_CompleteDeferredWrite(context,
-                                           A_CAN_WRITE_VALUE_ERROR,
-                                           A_CAN_WRITE_DETAIL_VALUE_FORMAT);
     }
 }
 

@@ -51,26 +51,10 @@ void A_GasControl_Init(A_Gas_Control_Context *context);
 void A_GasControl_Task(A_Gas_Control_Context *context);
 
 /*
- * 函数名：A_GasControl_StartAuto。
- * 说明：选择合格备用瓶并启动自动供气模式。
- * 输入：context 为应用上下文输入输出指针。
- * 输出：成功进入自动模式时返回 true，否则返回 false。
- */
-bool A_GasControl_StartAuto(A_Gas_Control_Context *context);
-
-/*
- * 函数名：A_GasControl_Stop。
- * 说明：停止自动控制并关闭当前实例的全部阀门。
- * 输入：context 为应用上下文输入输出指针。
- * 输出：无。
- */
-void A_GasControl_Stop(A_Gas_Control_Context *context);
-
-/*
  * 函数名：A_GasControl_SetExternalCommMode。
- * 说明：在系统停止且十八路阀门全部关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
+ * 说明：在六瓶全部停用且十八路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
  * 输入：context为应用上下文；mode为目标通讯模式，0表示CAN、1表示RS485/Modbus。
- * 输出：目标接口成功启用并完成持久化时返回true；运行中、初始化失败或存储失败时返回false并恢复原模式。
+ * 输出：目标接口成功启用并完成持久化时返回true；维护条件、初始化或存储失败时返回false并恢复原模式。
  */
 bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
                                       gas_external_comm_mode_t mode);

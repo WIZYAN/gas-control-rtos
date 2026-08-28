@@ -14,9 +14,9 @@
 #define A_HMI_DISABLE_BUTTON_BASE     (13U)  // 1～6 号气瓶停用开关控件 ID 起点。
 #define A_HMI_PRESSURE_TEXT_BASE      (19U)  // 六路压力显示控件 ID 起点，使用 19～24。
 #define A_HMI_STATE_TEXT_BASE         (25U)  // 六路状态显示控件 ID 起点，使用 25～30。
-#define A_HMI_SUPPLY_TEXT_BASE        (31U)  // 六路进气阀状态控件 ID 起点，使用 31～36。
-#define A_HMI_EXHAUST_TEXT_BASE       (37U)  // 六路排气阀状态控件 ID 起点，使用 37～42。
-#define A_HMI_TEST_TEXT_BASE          (43U)  // 六路测试阀状态控件 ID 起点，使用 43～48。
+#define A_HMI_SUPPLY_ICON_BASE        (31U)  // 六路进气阀双色状态图标ID起点，使用31～36。
+#define A_HMI_EXHAUST_ICON_BASE       (37U)  // 六路排气阀双色状态图标ID起点，使用37～42。
+#define A_HMI_TEST_ICON_BASE          (43U)  // 六路测试阀双色状态图标ID起点，使用43～48。
 #define A_HMI_TOTAL_PRESSURE_TEXT     (49U)  // 总压力传感器显示控件 ID。
 #define A_HMI_RTC_CONTROL_ID          (50U)  // 串口屏 RTC 时间显示和编辑控件 ID；读取RTC使用全局0x82命令。
 #define A_HMI_QUALIFIED_BUTTON_BASE   (51U)  // 1～6号瓶测试通过开关控件ID起点，使用51～56；1通过、0不通过。
@@ -24,13 +24,13 @@
 #define A_HMI_HIGHLIGHT_FRAME_NORMAL  (0U)   // 图标第0帧：普通透明图层，气瓶卡片不高亮。
 #define A_HMI_HIGHLIGHT_FRAME_ACTIVE  (1U)   // 图标第1帧：绿色使用状态高亮图层。
 #define A_HMI_HIGHLIGHT_FRAME_WARNING (2U)   // 图标第2帧：红色低压警告高亮图层。
+#define A_HMI_VALVE_FRAME_CLOSED      (0U)   // 阀位图标第0帧：使用原有浅色显示“关闭”。
+#define A_HMI_VALVE_FRAME_OPEN        (1U)   // 阀位图标第1帧：使用绿色显示“开启”。
 #define A_HMI_PRESSURE_OVERRANGE_TEXT_BASE (101U) // 六路超量程红色压力控件ID起点，使用101～106。
 #define A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT (107U) // 总压力超量程红色显示控件ID。
-#define A_HMI_SYSTEM_MODE_TEXT_ID      (94U)  // 实时监控页系统模式文本控件ID。
-#define A_HMI_SYSTEM_MODE_BUTTON_ID    (99U)  // 实时监控页整机模式开关ID：0自动运行，1安全停止。
 #define A_HMI_SYSTEM_TITLE_TEXT_ID     (114U) // 实时监控页“六瓶三阀气源控制系统”静态文本控件ID。
 #define A_HMI_REFRESH_GAP_MS          (20UL) // 相邻两个显示控件更新帧的最小间隔。
-#define A_HMI_REFRESH_SLOT_COUNT      (70U)  // 压力双层、状态阀位、高亮、四组六路按钮及系统模式共70个刷新槽。
+#define A_HMI_REFRESH_SLOT_COUNT      (68U)  // 压力双层、状态阀位、高亮及四组六路按钮共68个刷新槽。
 #define A_HMI_RTC_READ_INTERVAL_MS    (1000UL) // 向串口屏读取一次全局 RTC 时间的周期，单位 ms。
 #define A_HMI_RTC_STALE_TIME_MS       (5000UL) // 连续未收到有效 RTC 响应后判定系统时间失效的时限，单位 ms。
 
@@ -40,21 +40,22 @@ typedef struct
     F_Hmi_Context function;        // 大彩协议解析和发送功能实例。
     float pressure_refresh_mpa[GAS_PRESSURE_SENSOR_COUNT]; // 压力双层清除与写入两槽之间使用的数值快照。
     gas_pressure_quality_t pressure_refresh_quality[GAS_PRESSURE_SENSOR_COUNT]; // 与压力数值快照对应的数据质量。
-    gas_mode_t mode_refresh_value; // 最近一次请求同步到串口屏的MCU实际运行模式。
     uint8_t refresh_slot;          // 下一个待刷新的显示控件槽号。
-    uint8_t mode_refresh_phase;    // 模式优先同步阶段：0刷新文本，1回写开关状态。
+    uint8_t supply_valve_refresh_value_bits; // 最近一次观察到的六路MCU实际进气阀命令位图。
+    uint8_t supply_valve_refresh_pending_bits; // 需要优先回写到31～36号进气阀图标的位图。
     uint8_t exhaust_refresh_value_bits;       // 最近一次观察到的六路MCU实际排气命令位图，bit0～bit5对应1～6号瓶。
     uint8_t exhaust_refresh_pending_bits;     // 需要优先回写到1～6号排气按钮的位图。
+    uint8_t exhaust_valve_refresh_pending_bits; // 需要优先回写到37～42号排气阀图标的位图。
     uint8_t test_refresh_value_bits;          // 最近一次观察到的六路MCU实际测试阀命令位图，bit0～bit5对应1～6号瓶。
     uint8_t test_refresh_pending_bits;        // 需要优先回写到7～12号测试阀按钮的位图。
+    uint8_t test_valve_refresh_pending_bits;  // 需要优先回写到43～48号测试阀图标的位图。
     uint8_t disable_refresh_value_bits;       // 最近一次观察到的六路MCU停用状态位图，bit0～bit5对应1～6号瓶。
     uint8_t disable_refresh_pending_bits;     // 需要优先回写到13～18号停用开关的位图。
     uint8_t qualification_refresh_value_bits;   // 最近一次观察到的六路MCU测试通过标志位图，bit0～bit5对应1～6号瓶。
     uint8_t qualification_refresh_pending_bits; // 需要优先回写到51～56号按钮的位图。
     uint32_t next_refresh_ms;      // 下一个显示帧允许发送的时间。
     uint32_t next_rtc_read_ms;     // 下一次允许发送 RTC 读取命令的时间。
-    bool mode_refresh_pending;     // MCU模式变化后是否需要优先刷新文本和开关。
-    bool mode_refresh_initialized; // 是否已建立过模式同步快照。
+    bool supply_valve_refresh_initialized; // 是否已建立过六路实际进气阀命令同步快照。
     bool exhaust_refresh_initialized;      // 是否已建立过六路实际排气命令同步快照。
     bool test_refresh_initialized;         // 是否已建立过六路实际测试阀命令同步快照。
     bool disable_refresh_initialized;      // 是否已建立过六路停用状态同步快照。
@@ -131,6 +132,16 @@ size_t A_Hmi_TakeTextEvent(A_Hmi_Context *context,
                            size_t capacity);
 
 /*
+ * 函数名：A_Hmi_PeekTextEvent。
+ * 说明：查看串口屏待处理文本输入的画面和控件ID，便于按页面分发给功能模块。
+ * 输入：context为HMI上下文；page_id和control_id为控件标识输出指针。
+ * 输出：存在待处理文本事件时返回true，否则返回false。
+ */
+bool A_Hmi_PeekTextEvent(const A_Hmi_Context *context,
+                         uint16_t *page_id,
+                         uint16_t *control_id);
+
+/*
  * 函数名：A_Hmi_SendText。
  * 说明：向指定串口屏画面的文本控件发送ASCII或GBK字节文本。
  * 输入：context为HMI上下文；page_id和control_id指定控件；text为文本；length为字节数。
@@ -144,7 +155,7 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
 
 /*
  * 函数名：A_Hmi_Refresh。
- * 说明：分时刷新压力、气瓶状态、十八路阀位、四组六路操作按钮、卡片高亮及系统模式。
+ * 说明：分时刷新压力、气瓶状态、十八路双色阀位、四组六路操作按钮及卡片高亮。
  * 输入：context 为 HMI 上下文；system 为只读气源系统；now_ms 为当前毫秒计数。
  * 输出：无；每次最多启动一帧异步发送。
  */

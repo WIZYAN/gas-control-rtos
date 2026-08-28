@@ -7,7 +7,7 @@
 #include "F_Can_Protocol.h"
 #include "gas_common.h"
 
-#define A_CAN_SOFTWARE_VERSION             (0x0205UL) // CAN地址表版本；0x0205增加直接参数写入、详细错误码和气瓶人工控制地址。
+#define A_CAN_SOFTWARE_VERSION             (0x0206UL) // CAN地址表版本；0x0206废弃整机人工启停命令，保留地址兼容。
 #define A_CAN_CONFIG_DEFAULT_KEY           (0x00005AA5UL) // 恢复默认参数的确认键值。
 #define A_CAN_CONFIG_VERSION_VALUE         (0x00000002UL) // 当前三阀运行参数结构版本。
 #define A_CAN_LOG_RECORD_SIZE              (32U) // 外部CAN读取的单条日志固定长度。
@@ -31,7 +31,7 @@
 #define A_CAN_ADDRESS_SUPPLY_MASK          (0x0115U) // 六路进气阀命令位图。
 #define A_CAN_ADDRESS_TEST_MASK            (0x0116U) // 六路测试阀命令位图。
 #define A_CAN_ADDRESS_COMM_MODE            (0x0117U) // 当前外部通讯模式，0为CAN、1为RS485。
-#define A_CAN_ADDRESS_COMMAND_RESULT       (0x0118U) // 最近一次控制命令结果。
+#define A_CAN_ADDRESS_COMMAND_RESULT       (0x0118U) // 旧整机启停结果兼容位，V1.08正常读取0。
 #define A_CAN_ADDRESS_CONFIG_RESULT        (0x0119U) // 最近一次参数处理结果。
 #define A_CAN_ADDRESS_CONFIG_VERSION       (0x011AU) // 参数结构版本。
 #define A_CAN_ADDRESS_LOG_RESULT           (0x011BU) // 最近一次日志读取结果。
@@ -57,7 +57,7 @@
 #define A_CAN_ADDRESS_VALVE_CLOSE_WAIT     (0x0303U) // 关闭旧阀后的等待时间，单位ms。
 #define A_CAN_ADDRESS_VALVE_OPEN_WAIT      (0x0304U) // 打开新阀后的等待时间，单位ms。
 #define A_CAN_ADDRESS_PRESSURE_FRESH       (0x0305U) // 压力数据新鲜度，单位ms。
-#define A_CAN_ADDRESS_COMMAND              (0x0306U) // 启停控制命令。
+#define A_CAN_ADDRESS_COMMAND              (0x0306U) // V1.08废弃的整机启停地址；读取为0，写入返回地址已废弃。
 #define A_CAN_ADDRESS_CONFIG_COMMIT        (0x0307U) // V1.06废弃的参数提交地址；读取为0，写入返回地址已废弃。
 #define A_CAN_ADDRESS_CONFIG_DEFAULT       (0x0308U) // 恢复默认参数确认键。
 #define A_CAN_ADDRESS_LOG_COMMAND          (0x0309U) // 日志操作命令，1表示读取。
@@ -119,7 +119,6 @@ typedef struct
     H_Can_Context hardware;                 // CAN0硬件层实例。
     F_Can_Protocol_Context function;        // 自定义29位扩展帧协议功能层实例。
     Gas_Config staged_config;               // 当前已经保存并实际生效的10项CAN公开参数镜像。
-    gas_external_command_t pending_command; // 等待气源应用层执行的启停命令。
     gas_external_result_t command_result;   // 最近一次命令执行结果。
     Gas_Config pending_config;              // 已校验并等待保存应用的参数。
     gas_external_config_result_t config_result; // 最近一次参数处理结果。
@@ -143,7 +142,6 @@ typedef struct
     uint32_t last_write_result;              // 最近一次完成或拒绝的CAN写结果。
     uint32_t last_write_value;               // 最近一次格式正确的CAN写请求原始值。
     uint32_t write_sequence;                 // 格式正确的CAN写请求累计序号。
-    bool command_pending;                    // 存在待执行控制命令。
     bool config_pending;                     // 存在待保存应用的参数。
     bool control_pending;                    // 存在待执行业务层人工控制请求。
     bool deferred_write_pending;             // 存在等待业务层最终处理结果的写请求。
@@ -162,7 +160,7 @@ bool A_Can_Init(A_Can_Context *context, const Gas_Config *config);
 
 /*
  * 函数名：A_Can_Deinit。
- * 说明：关闭CAN0并清除应用层就绪状态，供停止状态切换外部通讯使用。
+ * 说明：关闭CAN0并清除应用层就绪状态，供全瓶停用维护状态切换外部通讯使用。
  * 输入：context为CAN应用层上下文输入输出指针。
  * 输出：CAN已经关闭或成功关闭时返回true，否则返回false。
  */
@@ -177,22 +175,6 @@ bool A_Can_Deinit(A_Can_Context *context);
 void A_Can_Task(A_Can_Context *context,
                 const Gas_System *system,
                 gas_external_comm_mode_t comm_mode);
-
-/*
- * 函数名：A_Can_TakeCommand。
- * 说明：取出并清除一条CAN控制命令。
- * 输入：context为CAN上下文；command为命令输出指针。
- * 输出：存在待处理命令时返回true，否则返回false。
- */
-bool A_Can_TakeCommand(A_Can_Context *context, gas_external_command_t *command);
-
-/*
- * 函数名：A_Can_SetCommandResult。
- * 说明：更新CAN只读整数地址0x0118公布的控制命令结果。
- * 输入：context为CAN上下文；result为命令结果。
- * 输出：无；结果保存到context。
- */
-void A_Can_SetCommandResult(A_Can_Context *context, gas_external_result_t result);
 
 /*
  * 函数名：A_Can_UpdateConfig。

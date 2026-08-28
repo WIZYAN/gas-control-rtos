@@ -9,7 +9,7 @@
 #include "gas_common.h"
 
 #define A_MODBUS_SLAVE_ADDRESS            (1U)      // 外部 SCI0 Modbus 从站地址。
-#define A_MODBUS_SOFTWARE_VERSION         (0x0201U) // 外部寄存器映射的软件版本号。
+#define A_MODBUS_SOFTWARE_VERSION         (0x0202U) // 外部寄存器映射版本；0x0202废弃整机人工启停命令。
 
 // 输入寄存器偏移定义，外部主站使用功能码 04 和 PDU 地址 0x0000～0x0025 读取。
 #define A_MODBUS_INPUT_PRESSURE_BASE      (0U)  // 六路 float32 压力输入寄存器的起始偏移。
@@ -30,7 +30,7 @@
 #define A_MODBUS_INPUT_TEST_MASK           (37U) // 六路测试阀当前命令位图，bit0～bit5对应1～6号瓶。
 
 // 保持寄存器偏移定义，外部主站使用 PDU 地址0x0100～0x0125读写命令、运行参数和日志。
-#define A_MODBUS_HOLDING_COMMAND          (0U) // 外部控制命令保持寄存器偏移。
+#define A_MODBUS_HOLDING_COMMAND          (0U) // V1.08废弃的整机启停寄存器；保留地址并拒绝非零写入。
 #define A_MODBUS_HOLDING_RESULT           (1U) // 外部命令执行结果保持寄存器偏移。
 #define A_MODBUS_HOLDING_CONFIG_COMMIT    (2U) // 参数校验、应用和保存命令寄存器偏移。
 #define A_MODBUS_HOLDING_CONFIG_RESULT    (3U) // 参数处理结果寄存器偏移。
@@ -65,7 +65,7 @@
 #define A_MODBUS_CONFIG_DEFAULT_KEY        (0x5AA5U) // 写入恢复默认寄存器的确认键值。
 #define A_MODBUS_CONFIG_VERSION_VALUE      (0x0002U) // 外部寄存器公布的三阀参数结构版本。
 
-// 外部主站可写入命令寄存器的操作码。
+// 旧版整机启停操作码，仅用于识别并拒绝旧上位机命令，V1.08不再执行。
 typedef enum
 {
     A_MODBUS_COMMAND_NONE = 0,             // 不执行命令。
@@ -92,7 +92,7 @@ typedef enum
     A_MODBUS_CONFIG_RESULT_INVALID_RANGE = 3,    // 至少一个参数超出允许范围。
     A_MODBUS_CONFIG_RESULT_INVALID_RELATION = 4, // 参数之间的阈值关系不正确。
     A_MODBUS_CONFIG_RESULT_STORAGE_FAILED = 5,   // AT24C256 保存或读回校验失败。
-    A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY = 6,      // 系统未停止或阀门状态不允许应用参数。
+    A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY = 6,      // 未满足六瓶全部停用且十八路阀关闭的维护条件。
     A_MODBUS_CONFIG_RESULT_INVALID_KEY = 7       // 参数提交或恢复默认键值错误。
 } a_modbus_config_result_t;
 
@@ -115,13 +115,11 @@ typedef enum
     A_MODBUS_LOG_RESULT_BUSY = 6             // 上一条日志请求尚未由应用层处理。
 } A_Modbus_Log_Result;
 
-// 外部Modbus应用层上下文，拥有SCI0硬件层、从站功能层以及待处理控制、参数和日志请求。
+// 外部Modbus应用层上下文，拥有SCI0硬件层、从站功能层以及待处理参数和日志请求。
 typedef struct
 {
     H_Modbus_Context hardware; // 外部 SCI0/RS485 硬件层实例。
     F_Modbus_Context function; // 外部 Modbus RTU 从站功能层实例。
-    a_modbus_command_t pending_command; // 等待气源应用层执行的命令。
-    bool command_pending; // 存在待取命令的标志。
     Gas_Config pending_config; // 已通过寄存器解码和校验、等待业务层应用的运行参数。
     Gas_Config current_config; // 当前完整13项参数镜像；外部解码只覆盖开放的原有10项。
     bool config_pending; // 存在尚未由气源业务层取走的参数提交请求。
@@ -161,14 +159,6 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system);
  * 输出：无；待执行控制、参数和日志请求及对应结果状态写入context。
  */
 void A_Modbus_Task(A_Modbus_Context *context);
-
-/*
- * 函数名：A_Modbus_TakeCommand。
- * 说明：取出并清除一条已经通过寄存器校验的外部控制命令。
- * 输入：context 为外部 Modbus 应用层上下文；command 为命令码输出指针。
- * 输出：存在合法待执行命令时返回 true，否则返回 false。
- */
-bool A_Modbus_TakeCommand(A_Modbus_Context *context, a_modbus_command_t *command);
 
 /*
  * 函数名：A_Modbus_SetCommandResult。
