@@ -299,6 +299,38 @@ void A_Hmi_RequestExhaustSync(A_Hmi_Context *context, uint8_t index)
 }
 
 /*
+ * 函数名：A_Hmi_RequestTestSync。
+ * 说明：请求优先把指定气瓶的MCU实际测试阀命令回写到串口屏7～12号测试阀按钮。
+ * 输入：context为HMI上下文；index为从0开始的气瓶索引。
+ * 输出：无；参数有效时设置待同步位，实际发送由A_Hmi_Refresh分时完成。
+ */
+void A_Hmi_RequestTestSync(A_Hmi_Context *context, uint8_t index)
+{
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    {
+        return;
+    }
+
+    context->test_refresh_pending_bits |= (uint8_t) (1U << index);
+}
+
+/*
+ * 函数名：A_Hmi_RequestDisableSync。
+ * 说明：请求优先把指定气瓶的MCU停用状态回写到串口屏13～18号停用开关。
+ * 输入：context为HMI上下文；index为从0开始的气瓶索引。
+ * 输出：无；参数有效时设置待同步位，实际发送由A_Hmi_Refresh分时完成。
+ */
+void A_Hmi_RequestDisableSync(A_Hmi_Context *context, uint8_t index)
+{
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    {
+        return;
+    }
+
+    context->disable_refresh_pending_bits |= (uint8_t) (1U << index);
+}
+
+/*
  * 函数名：A_Hmi_RequestQualificationSync。
  * 说明：请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关。
  * 输入：context为HMI上下文；index为从0开始的气瓶索引。
@@ -355,7 +387,7 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
 
 /*
  * 函数名：A_Hmi_Refresh。
- * 说明：分时刷新压力、气瓶状态、十八路阀位、排气与测试通过按钮、卡片高亮及系统模式。
+ * 说明：分时刷新压力、气瓶状态、十八路阀位、四组六路操作按钮、卡片高亮及系统模式。
  * 输入：context 为 HMI 上下文；system 为只读气源系统；now_ms 为当前毫秒计数。
  * 输出：无；每次最多启动一帧异步发送。
  */
@@ -365,6 +397,8 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     uint16_t control_id;
     uint8_t index;
     uint8_t exhaust_bits = 0U;
+    uint8_t test_bits = 0U;
+    uint8_t disable_bits = 0U;
     uint8_t qualification_bits = 0U;
     uint8_t changed_bits;
     size_t length = 0U;
@@ -381,6 +415,14 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         if (system->cylinder[index].exhaust_cmd)
         {
             exhaust_bits |= (uint8_t) (1U << index);
+        }
+        if (system->cylinder[index].test_cmd)
+        {
+            test_bits |= (uint8_t) (1U << index);
+        }
+        if (system->cylinder[index].state == GAS_CYL_DISABLED)
+        {
+            disable_bits |= (uint8_t) (1U << index);
         }
         if (system->cylinder[index].qualification_passed)
         {
@@ -400,6 +442,34 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         context->exhaust_refresh_pending_bits |= changed_bits;
     }
     // 实际排气命令变化时建立优先回写队列，按钮只负责发起定时排气请求，不直接决定阀门状态。
+
+    if (!context->test_refresh_initialized)
+    {
+        context->test_refresh_value_bits = test_bits;
+        context->test_refresh_pending_bits = (uint8_t) ((1U << GAS_CYLINDER_COUNT) - 1U);
+        context->test_refresh_initialized = true;
+    }
+    else
+    {
+        changed_bits = (uint8_t) (context->test_refresh_value_bits ^ test_bits);
+        context->test_refresh_value_bits = test_bits;
+        context->test_refresh_pending_bits |= changed_bits;
+    }
+    // 测试阀实际命令变化时优先校正按钮，包含CAN控制、自动超时和安全关断等所有来源。
+
+    if (!context->disable_refresh_initialized)
+    {
+        context->disable_refresh_value_bits = disable_bits;
+        context->disable_refresh_pending_bits = (uint8_t) ((1U << GAS_CYLINDER_COUNT) - 1U);
+        context->disable_refresh_initialized = true;
+    }
+    else
+    {
+        changed_bits = (uint8_t) (context->disable_refresh_value_bits ^ disable_bits);
+        context->disable_refresh_value_bits = disable_bits;
+        context->disable_refresh_pending_bits |= changed_bits;
+    }
+    // 停用按钮只反映气瓶是否真正处于停用状态，不直接采用CAN或串口屏的请求值。
 
     if (!context->qualification_refresh_initialized)
     {
@@ -486,6 +556,50 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         return;
     }
 
+    if (context->test_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->test_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_TEST_BUTTON_BASE + index),
+                                     (test_bits & (uint8_t) (1U << index)) != 0U);
+        if (sent)
+        {
+            context->test_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 每次只校正一个测试阀按钮，互锁拒绝或一分钟自动关闭后均恢复为MCU实际状态。
+        return;
+    }
+
+    if (context->disable_refresh_pending_bits != 0U)
+    {
+        for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
+        {
+            if ((context->disable_refresh_pending_bits & (uint8_t) (1U << index)) != 0U)
+            {
+                break;
+            }
+        }
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_DISABLE_BUTTON_BASE + index),
+                                     (disable_bits & (uint8_t) (1U << index)) != 0U);
+        if (sent)
+        {
+            context->disable_refresh_pending_bits &= (uint8_t) ~(uint8_t) (1U << index);
+            context->next_refresh_ms = now_ms + A_HMI_REFRESH_GAP_MS;
+        }
+        // 停用和重新启用请求执行后优先回写，失败时也会把屏端开关校正到真实业务状态。
+        return;
+    }
+
     if (context->qualification_refresh_pending_bits != 0U)
     {
         for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
@@ -508,7 +622,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         return;
     }
 
-    // 58个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
+    // 70个刷新槽按顺序轮转，每个任务周期最多发送一项，防止刷新流量堵塞按钮和RTC通信。
     if (context->refresh_slot < 12U)
     {
         index = (uint8_t) (context->refresh_slot / 2U);
@@ -607,11 +721,29 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         index = (uint8_t) (context->refresh_slot - 50U);
         sent = F_Hmi_SendButtonState(&context->function,
                                      A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_TEST_BUTTON_BASE + index),
+                                     system->cylinder[index].test_cmd);
+        // 周期重申测试阀实际命令，确保自动超时、屏幕重启或偶发丢帧后按钮状态一致。
+    }
+    else if (context->refresh_slot < 62U)
+    {
+        index = (uint8_t) (context->refresh_slot - 56U);
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
+                                     (uint16_t) (A_HMI_DISABLE_BUTTON_BASE + index),
+                                     system->cylinder[index].state == GAS_CYL_DISABLED);
+        // 周期重申实际停用状态，重新启用进入初始化后会自动把开关恢复为正常使用。
+    }
+    else if (context->refresh_slot < 68U)
+    {
+        index = (uint8_t) (context->refresh_slot - 62U);
+        sent = F_Hmi_SendButtonState(&context->function,
+                                     A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
                                      system->cylinder[index].qualification_passed);
         // 周期回写用于串口屏重启、页面切换或偶发丢帧后的最终一致性校正。
     }
-    else if (context->refresh_slot == 56U)
+    else if (context->refresh_slot == 68U)
     {
         control_id = A_HMI_SYSTEM_MODE_TEXT_ID;
         length = A_Hmi_FormatSystemMode(system->mode, text, sizeof(text));

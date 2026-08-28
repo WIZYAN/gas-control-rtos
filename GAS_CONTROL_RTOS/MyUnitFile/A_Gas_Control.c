@@ -690,12 +690,16 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     {
         index = (uint8_t) (button_id - A_HMI_TEST_BUTTON_BASE);
         success = A_GasControl_SetTestValve(context, index, value != 0U);
+        A_Hmi_RequestTestSync(&context->hmi, index);
+        // 无论请求是否通过互锁，都以MCU最终测试阀命令校正屏幕开关。
     }
     else if ((button_id >= A_HMI_DISABLE_BUTTON_BASE) &&
              (button_id < (A_HMI_DISABLE_BUTTON_BASE + GAS_CYLINDER_COUNT)))
     {
         index = (uint8_t) (button_id - A_HMI_DISABLE_BUTTON_BASE);
         success = A_GasControl_SetCylinderDisabled(context, index, value != 0U);
+        A_Hmi_RequestDisableSync(&context->hmi, index);
+        // 停用请求被拒绝时也立即恢复按钮，避免本地开关外观与气瓶状态不一致。
     }
     else if ((button_id >= A_HMI_QUALIFIED_BUTTON_BASE) &&
              (button_id < (A_HMI_QUALIFIED_BUTTON_BASE + GAS_CYLINDER_COUNT)))
@@ -1108,11 +1112,13 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
                 success = A_GasControl_SetTestValve(context,
                                                     request.index,
                                                     request.enabled);
+                A_Hmi_RequestTestSync(&context->hmi, request.index);
                 break;
             case A_CAN_CONTROL_DISABLE:
                 success = A_GasControl_SetCylinderDisabled(context,
                                                           request.index,
                                                           request.enabled);
+                A_Hmi_RequestDisableSync(&context->hmi, request.index);
                 break;
             case A_CAN_CONTROL_QUALIFICATION:
                 success = A_GasControl_SetQualificationPassed(context,
