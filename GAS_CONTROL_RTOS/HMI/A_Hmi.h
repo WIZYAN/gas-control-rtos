@@ -81,8 +81,8 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms);
 
 /*
  * 函数名：A_Hmi_TakeButtonEvent。
- * 说明：取出一条串口屏按钮控件事件。
- * 输入：context 为 HMI 上下文；button_id 为控件 ID 输出指针；value 为开关值输出指针。
+ * 说明：取出一条串口屏按钮或下拉菜单选择事件。
+ * 输入：context 为 HMI 上下文；button_id 为控件 ID 输出指针；value 为按钮状态或菜单选中项索引输出指针。
  * 输出：存在待处理事件时返回 true，否则返回 false。
  */
 bool A_Hmi_TakeButtonEvent(A_Hmi_Context *context, uint16_t *button_id, uint8_t *value);

@@ -519,8 +519,9 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
                                          char *text,
                                          size_t capacity)
 {
-    const char all_text[] = "\xC8\xAB\xB2\xBF"; // 全部。
-    const char number_text[] = "\xBA\xC5"; // 号。
+    const char all_cylinder_text[] = "\xC8\xAB\xB2\xBF\xC6\xF8\xC6\xBF"; // 全部气瓶。
+    const char all_state_text[] = "\xC8\xAB\xB2\xBF\xD7\xB4\xCC\xAC"; // 全部状态。
+    const char cylinder_suffix_text[] = "\xBA\xC5\xC6\xF8\xC6\xBF"; // 号气瓶。
     const char ready_text[] = "\xCC\xF5\xBC\xFE\xD2\xD1\xBE\xCD\xD0\xF7"; // 条件已就绪。
     const char input_error_text[] = "\xC8\xD5\xC6\xDA\xBB\xF2\xCA\xB1\xBC\xE4\xB8\xF1\xCA\xBD\xB4\xED\xCE\xF3"; // 日期或时间格式错误。
     const char reset_text[] = "\xD2\xD1\xBB\xD6\xB8\xB4\xC8\xAB\xB2\xBF\xBC\xC7\xC2\xBC"; // 已恢复全部记录。
@@ -549,19 +550,22 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
         if (context->edit_filter.cylinder_number == 0U)
         {
             return A_HmiLog_AppendBytes(text, &length, capacity,
-                                       all_text, sizeof(all_text) - 1U) ? length : 0U;
+                                       all_cylinder_text,
+                                       sizeof(all_cylinder_text) - 1U) ? length : 0U;
         }
         return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                        context->edit_filter.cylinder_number, 1U) &&
                 A_HmiLog_AppendBytes(text, &length, capacity,
-                                    number_text, sizeof(number_text) - 1U)) ? length : 0U;
+                                    cylinder_suffix_text,
+                                    sizeof(cylinder_suffix_text) - 1U)) ? length : 0U;
     }
     if (slot == 6U)
     {
         if (context->edit_filter.target_state == 0U)
         {
             return A_HmiLog_AppendBytes(text, &length, capacity,
-                                       all_text, sizeof(all_text) - 1U) ? length : 0U;
+                                       all_state_text,
+                                       sizeof(all_state_text) - 1U) ? length : 0U;
         }
         return A_HmiLog_AppendState(text, &length, capacity,
                                    context->edit_filter.target_state) ? length : 0U;
@@ -1218,7 +1222,7 @@ bool A_HmiLog_Init(A_Hmi_Log_Context *context,
 
 /*
  * 函数名：A_HmiLog_HandleFilterButton。
- * 说明：处理日志类型页签、全部时间、气瓶、进入状态、查询和重置按钮。
+ * 说明：处理日志类型页签、全部时间、气瓶与进入状态下拉菜单选择、查询和重置按钮。
  * 输入：context为日志查询上下文；button_id和value为按钮控件ID和上传值。
  * 输出：按钮属于日志条件模块时返回true，否则返回false。
  */
@@ -1255,25 +1259,31 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
         context->filter_refresh_mask |= (uint16_t) ((1U << 4U) | (1U << 7U));
         return true;
     }
-    if (button_id == A_HMI_LOG_FILTER_CYLINDER_BUTTON_ID)
+    if (button_id == A_HMI_LOG_FILTER_CYLINDER_TRIGGER_ID)
     {
-        if (value != 0U)
+        // 触发按钮只负责弹出下拉菜单，选中事件由149号菜单控件上传，本身不改变筛选条件。
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_STATE_TRIGGER_ID)
+    {
+        // 触发按钮只负责弹出下拉菜单，选中事件由150号菜单控件上传，本身不改变筛选条件。
+        return true;
+    }
+    if (button_id == A_HMI_LOG_FILTER_CYLINDER_MENU_ID)
+    {
+        if (value <= (uint8_t) GAS_CYLINDER_COUNT)
         {
-            context->edit_filter.cylinder_number =
-                (uint8_t) ((context->edit_filter.cylinder_number + 1U) %
-                           (GAS_CYLINDER_COUNT + 1U));
+            context->edit_filter.cylinder_number = value;
             context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
             context->filter_refresh_mask |= (uint16_t) ((1U << 5U) | (1U << 7U));
         }
         return true;
     }
-    if (button_id == A_HMI_LOG_FILTER_STATE_BUTTON_ID)
+    if (button_id == A_HMI_LOG_FILTER_STATE_MENU_ID)
     {
-        if (value != 0U)
+        if (value <= (uint8_t) GAS_CYL_WAIT_TEST)
         {
-            context->edit_filter.target_state =
-                (uint8_t) ((context->edit_filter.target_state + 1U) %
-                           ((uint8_t) GAS_CYL_WAIT_TEST + 1U));
+            context->edit_filter.target_state = value;
             context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
             context->filter_refresh_mask |= (uint16_t) ((1U << 6U) | (1U << 7U));
         }
@@ -1347,9 +1357,11 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 
     if (valid)
     {
+        candidate.time_enabled = true;
         context->edit_filter = candidate;
         context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
-        context->filter_refresh_mask |= (uint16_t) (1U << 7U);
+        context->filter_refresh_mask |= (uint16_t) ((1U << 4U) | (1U << 7U));
+        // 人员输入任一合法日期或时间即表示使用该范围，同时回写131号按钮为“限定时间”。
     }
     else
     {

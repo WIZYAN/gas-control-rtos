@@ -127,7 +127,7 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
 
 /*
  * 函数名：F_Hmi_ParseFrame。
- * 说明：区分EE B1 11按钮和文本输入上传帧，或解析EE F7 RTC响应帧并锁存对应事件。
+ * 说明：区分EE B1 11按钮和文本输入、EE B1 14下拉菜单选择上传帧，或解析EE F7 RTC响应帧并锁存对应事件。
  * 输入：context 为 HMI 功能层上下文输入输出指针。
  * 输出：无；格式合法且对应事件槽空闲时更新按钮或 RTC 事件字段。
  */
@@ -169,6 +169,20 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
             }
         }
     }
+    else if ((context->rx_length == 14U) &&
+             (context->rx_frame[0] == 0xEEU) &&
+             (context->rx_frame[1] == 0xB1U) &&
+             (context->rx_frame[2] == 0x14U) &&
+             (context->rx_frame[7] == 0x1AU) &&
+             !context->button_pending)
+    {
+        context->button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
+                                         context->rx_frame[6]);
+        context->button_value = context->rx_frame[8];
+        context->button_pending = true;
+        // 0x1A是下拉菜单控件类型；frame[8]为从0开始的选中项索引，frame[9]为按下或弹起状态。
+        // 按下和弹起都会上传且携带相同索引，重复锁存对单项选择幂等，因此不再区分状态值。
+    }
     else
     {
         F_Hmi_ParseRtcFrame(context);
@@ -194,9 +208,9 @@ bool F_Hmi_Init(F_Hmi_Context *context)
 
 /*
  * 函数名：F_Hmi_Task。
- * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮控件上传帧。
+ * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
  * 输入：context 为 HMI 功能层上下文输入输出指针。
- * 输出：无；解析成功后在上下文中锁存一条按钮事件。
+ * 输出：无；解析成功后在上下文中锁存一条按钮或下拉菜单选择事件。
  */
 void F_Hmi_Task(F_Hmi_Context *context)
 {
@@ -242,8 +256,8 @@ void F_Hmi_Task(F_Hmi_Context *context)
 
 /*
  * 函数名：F_Hmi_TakeButtonEvent。
- * 说明：取出一条已经解析完成的按钮控件事件。
- * 输入：context 为功能层上下文；button_id 为控件 ID 输出指针；value 为控件状态输出指针。
+ * 说明：取出一条已经解析完成的按钮或下拉菜单选择事件。
+ * 输入：context 为功能层上下文；button_id 为控件 ID 输出指针；value 为按钮状态或菜单选中项索引输出指针。
  * 输出：存在待处理事件时返回 true，否则返回 false。
  */
 bool F_Hmi_TakeButtonEvent(F_Hmi_Context *context, uint16_t *button_id, uint8_t *value)

@@ -1949,11 +1949,11 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     A_ModbusPoll_Task(&context->sensor_poll, &context->system, &context->config, now_ms);
     F_ValveControl_Task(&context->runtime_service.platform, &context->system, now_ms);
     A_Hmi_Task(&context->hmi, &context->system, now_ms);
-    // 先采集输入、处理12V吸合计时和接收人机事件，再运行会改变状态及阀门的业务逻辑。
-    A_GasControl_ProcessHmiButton(context);
     A_HmiLog_InputTask(&context->hmi_log);
     A_HmiConfig_InputTask(&context->hmi_config,
                           &context->config);
+    A_GasControl_ProcessHmiButton(context);
+    // 先提交本周期收到的文本输入，再处理查询或确认按钮，保证按钮建立的快照使用最后一次输入值。
     A_GasControl_ProcessHmiConfig(context);
     A_GasControl_ProcessHmiLogClear(context);
     A_GasControl_ManualValveTask(context, now_ms);

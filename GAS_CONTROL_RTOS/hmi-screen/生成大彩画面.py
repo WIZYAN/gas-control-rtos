@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.09"
+PROJECT_VERSION = "1.10"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
 SOURCE_PROJECT = PROJECT_DIR
@@ -71,6 +71,55 @@ def draw_button(draw: ImageDraw.ImageDraw, box, label: str, fill, outline, press
         draw.rounded_rectangle((left + 3, top + 3, right - 3, bottom - 3), radius=6,
                                outline=(255, 255, 255), width=1)
     draw_centered(draw, box, label, FONT_16, (245, 249, 255))
+
+
+def draw_dropdown_trigger(draw: ImageDraw.ImageDraw, box, fill, outline,
+                          pressed: bool = False) -> None:
+    """
+    函数名：draw_dropdown_trigger。
+    说明：绘制覆盖当前值和箭头的组合式下拉选择框，动态文字由文本控件叠加显示。
+    输入：draw 为绘图对象；box 为按钮坐标；fill 和 outline 为颜色；pressed 为按下态标志。
+    输出：无。
+    """
+    left, top, right, bottom = box
+    draw.rounded_rectangle(box, radius=8, fill=fill, outline=outline, width=2)
+    if pressed:
+        draw.rounded_rectangle((left + 3, top + 3, right - 3, bottom - 3), radius=6,
+                               outline=(255, 255, 255), width=1)
+    separator_x = right - 42
+    draw.line((separator_x, top + 8, separator_x, bottom - 8), fill=outline, width=1)
+    triangle_x = right - 27
+    triangle_y = top + (bottom - top) / 2
+    draw.polygon([(triangle_x, triangle_y - 4), (triangle_x + 12, triangle_y - 4),
+                  (triangle_x + 6, triangle_y + 5)], fill=(69, 214, 255))
+
+
+def create_log_filter_menu_assets(images_dir: Path) -> None:
+    """
+    函数名：create_log_filter_menu_assets。
+    说明：生成日志条件页两个图片文字菜单的正常态和按下态面板。
+    输入：images_dir为大彩工程图片资源目录。
+    输出：生成气瓶7项和状态8项菜单各自的正常、按下PNG资源。
+    """
+    menu_specs = (("Log_Cylinder_Menu", 7, 40), ("Log_State_Menu", 8, 40))
+    images_dir.mkdir(parents=True, exist_ok=True)
+    for name, item_count, item_height in menu_specs:
+        width = 230
+        height = item_count * item_height
+        for pressed, suffix in ((False, ""), (True, "_down")):
+            image = Image.new("RGB", (width, height), (8, 18, 31))
+            draw = ImageDraw.Draw(image)
+            panel_fill = (12, 34, 53) if not pressed else (17, 65, 91)
+            panel_outline = (42, 154, 210) if not pressed else (69, 214, 255)
+            draw.rounded_rectangle((1, 1, width - 2, height - 2), radius=9,
+                                   fill=panel_fill, outline=panel_outline, width=2)
+            for item in range(1, item_count):
+                y = item * item_height
+                draw.line((10, y, width - 10, y), fill=(38, 75, 99), width=1)
+            if pressed:
+                draw.rounded_rectangle((4, 4, width - 5, height - 5), radius=7,
+                                       outline=(151, 229, 255), width=1)
+            image.save(images_dir / f"{name}{suffix}.png")
 
 
 def build_monitor_highlight_frames() -> tuple[Image.Image, Image.Image, Image.Image]:
@@ -348,7 +397,7 @@ def create_menu_preview(project_dir: Path) -> None:
         preview = source_image.copy()
     preview_draw = ImageDraw.Draw(preview)
     draw_centered(preview_draw, (212, 20, 812, 62),
-                  "六瓶三阀气源控制系统", FONT_28_BOLD, (239, 248, 255))
+                  "气源控制系统", FONT_28_BOLD, (239, 248, 255))
     preview.save(project_dir / "主菜单实际预览.png")
 
 
@@ -591,13 +640,11 @@ def create_log_filter_backgrounds(images_dir: Path) -> None:
     draw.text((648, 185), "时间方式", font=FONT_16, fill=(142, 181, 204))
     draw_button(draw, (798, 164, 960, 214), "限定时间", (39, 63, 82), (89, 125, 148))
     draw.text((648, 258), "气瓶编号", font=FONT_16, fill=(142, 181, 204))
-    draw.rounded_rectangle((770, 241, 842, 291), radius=7,
-                           fill=(7, 23, 38), outline=(35, 92, 121), width=1)
-    draw_button(draw, (856, 241, 960, 291), "下一气瓶", (19, 86, 132), (42, 154, 210))
+    draw_dropdown_trigger(draw, (770, 241, 960, 291),
+                          (7, 27, 44), (42, 154, 210))
     draw.text((648, 331), "进入状态", font=FONT_16, fill=(142, 181, 204))
-    draw.rounded_rectangle((770, 314, 842, 364), radius=7,
-                           fill=(7, 23, 38), outline=(35, 92, 121), width=1)
-    draw_button(draw, (856, 314, 960, 364), "下一状态", (19, 86, 132), (42, 154, 210))
+    draw_dropdown_trigger(draw, (770, 314, 960, 364),
+                          (7, 27, 44), (42, 154, 210))
 
     buttons = (
         (58, 420, 258, 482, "查询事件", (19, 108, 94), (52, 211, 153)),
@@ -615,10 +662,10 @@ def create_log_filter_backgrounds(images_dir: Path) -> None:
     down_draw = ImageDraw.Draw(down)
     draw_button(down_draw, (798, 164, 960, 214), "全部时间",
                 (19, 108, 94), (52, 211, 153), True)
-    draw_button(down_draw, (856, 241, 960, 291), "下一气瓶",
-                (24, 109, 151), (69, 214, 255), True)
-    draw_button(down_draw, (856, 314, 960, 364), "下一状态",
-                (24, 109, 151), (69, 214, 255), True)
+    draw_dropdown_trigger(down_draw, (770, 241, 960, 291),
+                          (24, 109, 151), (69, 214, 255), True)
+    draw_dropdown_trigger(down_draw, (770, 314, 960, 364),
+                          (24, 109, 151), (69, 214, 255), True)
     for left, top, right, bottom, label, fill, outline in buttons:
         pressed_fill = tuple(min(channel + 18, 255) for channel in fill)
         pressed_outline = tuple(min(channel + 18, 255) for channel in outline)
@@ -642,7 +689,7 @@ def create_preview(images_dir: Path, project_dir: Path) -> None:
     pressures = ["2.36", "2.50", "1.42", "--", "3.05", "2.75"]
     states = ["使用", "待用", "低压警告", "停用", "待用", "待用"]
 
-    draw.text((22, 23), "六瓶三阀气源控制系统", font=FONT_28_BOLD,
+    draw.text((22, 23), "气源控制系统", font=FONT_28_BOLD,
               fill=(239, 248, 255))
     draw_centered(draw, (689, 34, 763, 66), "2.31", FONT_28_BOLD, (69, 214, 255))
     draw_centered(draw, (826, 38, 1004, 63), "2026-08-21 16:30:00", FONT_16, (223, 240, 249))
@@ -783,6 +830,65 @@ def add_button_item(root, name: str, control_id: int, switch_style: bool,
     })
 
 
+def add_menu_trigger_item(root, name: str, control_id: int, menu_control_id: int,
+                          text_control_id: int, x: int, y: int,
+                          width: int, height: int) -> None:
+    """
+    函数名：add_menu_trigger_item。
+    说明：添加弹出菜单的触发按钮，触摸用途为弹出菜单并关联菜单控件和显示文本控件。
+    输入：root为画面节点；name和control_id为控件标识；menu_control_id为菜单控件ID；
+          text_control_id为菜单选中值输出到的文本控件ID；其余为触摸区坐标。
+    输出：无。
+    """
+    ET.SubElement(root, "item", {
+        "name": name, "id": str(control_id), "type": "button", "button_type": "4",
+        "focus": "0", "notify_disable": "0", "key_code": "a", "key_type": "0",
+        "init_state": "0", "button_style": "0", "longpress_delay": "0",
+        "url_down": "Images\\Screen6_down.png", "url_up": "",
+        "popup_menu_id": str(menu_control_id), "input_text_id": str(text_control_id),
+        "switch": "", "switch_effect": "0", "switch_area": "0",
+        "switch_area_left": "0", "switch_area_right": "0", "switch_area_top": "0",
+        "switch_area_bottom": "0", "action": "", "xOffset": str(x), "yOffset": str(y),
+        "width": str(width), "height": str(height), "cut_up": "0", "cut_up_offset_x": "0",
+        "cut_up_offset_y": "0", "cut_down": "1", "cut_down_offset_x": str(x),
+        "cut_down_offset_y": str(y), "custom_data_up": "", "custom_data_down": "",
+        "external_data_up": "", "external_data_down": "", "external_data_delay": "100",
+        "child_screen": "0", "need_login": "0", "login_password": "888888",
+        "show_text_state": "0", "font": "7",
+        "font_color_up": "255;255;255", "font_color_down": "255;255;255",
+        "text_state_up": "", "text_state_down": "",
+        "bind_variant": "", "show_condition": "0", "condition_variant": "", "condition_value": "0"
+    })
+
+
+def add_menu_item(root, name: str, control_id: int, options: str,
+                  x: int, y: int, width: int, height: int,
+                  up_image: str, down_image: str) -> None:
+    """
+    函数名：add_menu_item。
+    说明：添加弹出式下拉菜单控件，采用图片与文字外观绘制圆角面板和选项文字，
+          选项竖向排列（direction=0，从上到下每个选项占一行），选项按0起始索引上传
+          并输出到关联文本控件。
+    输入：root为画面节点；name和control_id为控件标识；options为分号分隔的菜单数据；
+          坐标和尺寸指定弹出面板位置与大小；up_image和down_image为菜单皮肤资源。
+    输出：无。
+    """
+    ET.SubElement(root, "item", {
+        "name": name, "id": str(control_id), "type": "menu",
+        "url_up": f"Images\\{up_image}", "url_down": f"Images\\{down_image}",
+        "xOffset": str(x), "yOffset": str(y), "width": str(width), "height": str(height),
+        "cut_up": "0", "cut_up_offset_x": "0", "cut_up_offset_y": "0",
+        "cut_down": "0", "cut_down_offset_x": "0", "cut_down_offset_y": "0",
+        "style": "0", "direction": "0", "notify": "0", "count": str(options.count(";")),
+        "multi_lang": "0", "options": options,
+        "options1": "", "options2": "", "options3": "", "options4": "",
+        "options5": "", "options6": "", "options7": "", "options8": "", "options9": "",
+        "menu_type": "2", "font": "7", "bk_color": "10;27;44",
+        "fore_color": "223;240;249", "bind_variant": "",
+        "show_condition": "0", "condition_variant": "", "condition_value": "0"
+    })
+
+
 def add_navigation_button(root, name: str, control_id: int, target_screen: str,
                           down_image: str, x: int, y: int, width: int, height: int,
                           need_login: bool = False, login_password: str = "888888") -> None:
@@ -912,7 +1018,7 @@ def create_monitor_screen_file(project_dir: Path) -> None:
         "name": "Screen1", "bk_transparent": "0", "bk_color": "8;18;31",
         "bk_image": "Images\\Screen1.png", "size_option": "0", "width": str(WIDTH), "height": str(HEIGHT)
     })
-    add_text_item(root, "System_Title", 114, "六瓶三阀气源控制系统", 10,
+    add_text_item(root, "System_Title", 114, "气源控制系统", 10,
                   "239;248;255", 22, 23, 390, 34, 0, 1)
 
     # 高亮图标必须先于文字和按钮加入，使动态数据及触摸控件始终位于高亮图层上方。
@@ -986,7 +1092,7 @@ def create_menu_screen_file(project_dir: Path) -> None:
         "bk_image": "Images\\Screen0.png", "size_option": "0",
         "width": str(WIDTH), "height": str(HEIGHT)
     })
-    add_text_item(root, "Menu_System_Title", 115, "六瓶三阀气源控制系统", 10,
+    add_text_item(root, "Menu_System_Title", 115, "气源控制系统", 10,
                   "239;248;255", 212, 20, 600, 42, 1, 1)
     add_navigation_button(root, "Open_Monitor", 57, "Screen1", "Screen0_down.png",
                           32, 154, 284, 290)
@@ -1092,14 +1198,20 @@ def create_log_filter_screen_file(project_dir: Path) -> None:
     add_button_item(root, "Log_All_Time", 131, True, 798, 164, 162, 50,
                     "Screen6_down.png")
     root[-1].set("init_state", "1")
-    add_button_item(root, "Log_Next_Cylinder", 132, False, 856, 241, 104, 50,
-                    "Screen6_down.png")
-    add_text_item(root, "Log_Cylinder_Filter", 133, "全部", 7,
-                  "69;214;255", 770, 247, 72, 38, 1, 1)
-    add_button_item(root, "Log_Next_State", 134, False, 856, 314, 104, 50,
-                    "Screen6_down.png")
-    add_text_item(root, "Log_State_Filter", 135, "全部", 5,
-                  "69;214;255", 770, 320, 72, 38, 1, 1)
+    add_menu_trigger_item(root, "Log_Cylinder_Menu_Trigger", 132, 149, 133,
+                          770, 241, 190, 50)
+    add_text_item(root, "Log_Cylinder_Filter", 133, "全部气瓶", 7,
+                  "69;214;255", 782, 247, 136, 38, 1, 1)
+    add_menu_trigger_item(root, "Log_State_Menu_Trigger", 134, 150, 135,
+                          770, 314, 190, 50)
+    add_text_item(root, "Log_State_Filter", 135, "全部状态", 5,
+                  "69;214;255", 782, 320, 136, 38, 1, 1)
+    add_menu_item(root, "Log_Cylinder_Menu", 149,
+                  "全部气瓶;1号气瓶;2号气瓶;3号气瓶;4号气瓶;5号气瓶;6号气瓶;",
+                  730, 128, 230, 280, "Log_Cylinder_Menu.png", "Log_Cylinder_Menu_down.png")
+    add_menu_item(root, "Log_State_Menu", 150,
+                  "全部状态;初始化;待用;使用;低压待换;低压警告;停用;待测试;",
+                  730, 88, 230, 320, "Log_State_Menu.png", "Log_State_Menu_down.png")
     add_button_item(root, "Log_Query_Event", 136, False, 58, 420, 200, 62,
                     "Screen6_down.png")
     add_button_item(root, "Log_Query_Regular", 137, False, 278, 420, 200, 62,
@@ -1320,9 +1432,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.09正式画面工程。
+    说明：生成完整的大彩 VisualTFT V1.10正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.09目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.10目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
@@ -1333,6 +1445,7 @@ def main() -> None:
     create_valve_state_icon(PROJECT_DIR / "images")
     create_log_backgrounds(PROJECT_DIR / "images")
     create_log_filter_backgrounds(PROJECT_DIR / "images")
+    create_log_filter_menu_assets(PROJECT_DIR / "images")
     create_config_backgrounds(PROJECT_DIR / "images")
     create_config_dialog_backgrounds(PROJECT_DIR / "images")
     create_log_clear_backgrounds(PROJECT_DIR / "images")

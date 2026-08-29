@@ -36,10 +36,12 @@
 #define A_HMI_LOG_FILTER_END_DATE_ID           (129U) // 结束日期输入，格式YYYYMMDD。
 #define A_HMI_LOG_FILTER_END_TIME_ID           (130U) // 结束时间输入，格式HHMMSS。
 #define A_HMI_LOG_FILTER_ALL_TIME_BUTTON_ID    (131U) // 全部时间开关：1忽略起止时间。
-#define A_HMI_LOG_FILTER_CYLINDER_BUTTON_ID    (132U) // 循环选择全部或1～6号气瓶。
-#define A_HMI_LOG_FILTER_CYLINDER_TEXT_ID      (133U) // 当前气瓶筛选条件文本。
-#define A_HMI_LOG_FILTER_STATE_BUTTON_ID       (134U) // 循环选择全部或1～7号进入状态。
-#define A_HMI_LOG_FILTER_STATE_TEXT_ID         (135U) // 当前进入状态筛选条件文本。
+#define A_HMI_LOG_FILTER_CYLINDER_TRIGGER_ID   (132U) // 气瓶下拉菜单触发按钮，只弹出菜单不改变条件。
+#define A_HMI_LOG_FILTER_CYLINDER_TEXT_ID      (133U) // 当前气瓶筛选条件文本，由屏端菜单选中值或MCU回写。
+#define A_HMI_LOG_FILTER_STATE_TRIGGER_ID      (134U) // 状态下拉菜单触发按钮，只弹出菜单不改变条件。
+#define A_HMI_LOG_FILTER_STATE_TEXT_ID         (135U) // 当前进入状态筛选条件文本，由屏端菜单选中值或MCU回写。
+#define A_HMI_LOG_FILTER_CYLINDER_MENU_ID      (149U) // 气瓶下拉菜单控件，选中索引0～6对应全部及1～6号瓶。
+#define A_HMI_LOG_FILTER_STATE_MENU_ID         (150U) // 状态下拉菜单控件，选中索引0～7对应全部及七种状态。
 #define A_HMI_LOG_FILTER_EVENT_BUTTON_ID       (136U) // 按当前条件查询事件日志。
 #define A_HMI_LOG_FILTER_REGULAR_BUTTON_ID     (137U) // 按当前时间条件查询常规日志。
 #define A_HMI_LOG_FILTER_RESET_BUTTON_ID       (138U) // 恢复全部时间、全部气瓶和全部状态。

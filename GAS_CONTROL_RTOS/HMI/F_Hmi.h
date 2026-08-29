@@ -30,9 +30,9 @@ typedef struct
     uint8_t rx_frame[F_HMI_FRAME_MAX_SIZE]; // 当前正在组装的接收帧。
     uint16_t rx_length;                     // 当前接收帧已有字节数。
     bool receiving;                         // 是否已经收到 0xEE 帧头。
-    bool button_pending;                    // 是否存在尚未取走的按钮事件。
-    uint16_t button_id;                     // 最近一次按钮控件 ID。
-    uint8_t button_value;                   // 按钮上传状态值，0 表示关闭，非 0 表示开启或按下。
+    bool button_pending;                    // 是否存在尚未取走的按钮或下拉菜单选择事件。
+    uint16_t button_id;                     // 最近一次按钮或下拉菜单控件 ID。
+    uint8_t button_value;                   // 按钮上传状态值；下拉菜单时为选中项索引。
     bool text_pending;                      // 是否存在尚未取走的文本输入事件。
     uint16_t text_page_id;                  // 最近一次文本输入事件所属画面ID。
     uint16_t text_control_id;               // 最近一次文本输入控件ID。
@@ -53,16 +53,16 @@ bool F_Hmi_Init(F_Hmi_Context *context);
 
 /*
  * 函数名：F_Hmi_Task。
- * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮控件上传帧。
+ * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
  * 输入：context 为 HMI 功能层上下文输入输出指针。
- * 输出：无；解析成功后在上下文中锁存一条按钮事件。
+ * 输出：无；解析成功后在上下文中锁存一条按钮或下拉菜单选择事件。
  */
 void F_Hmi_Task(F_Hmi_Context *context);
 
 /*
  * 函数名：F_Hmi_TakeButtonEvent。
- * 说明：取出一条已经解析完成的按钮控件事件。
- * 输入：context 为功能层上下文；button_id 为控件 ID 输出指针；value 为控件状态输出指针。
+ * 说明：取出一条已经解析完成的按钮或下拉菜单选择事件。
+ * 输入：context 为功能层上下文；button_id 为控件 ID 输出指针；value 为按钮状态或菜单选中项索引输出指针。
  * 输出：存在待处理事件时返回 true，否则返回 false。
  */
 bool F_Hmi_TakeButtonEvent(F_Hmi_Context *context, uint16_t *button_id, uint8_t *value);

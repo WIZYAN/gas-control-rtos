@@ -1494,11 +1494,18 @@ static void Test_Hmi(void)
     const uint8_t event_log_frame[] = {0xEEU,0xB1U,0x11U,0U,2U,0U,61U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t regular_log_frame[] = {0xEEU,0xB1U,0x11U,0U,3U,0U,65U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t filter_time_on_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,131U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_cylinder_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_state_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_cylinder_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_state_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_cylinder_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_state_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t filter_date_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,127U,0x11U,
                                          '2','0','2','6','0','8','2','2',0U,
                                          0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_end_date_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,129U,0x11U,
+                                             '2','0','2','6','0','8','2','3',0U,
+                                             0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_event_query_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,136U,0x10U,
+                                                1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U};
     const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U};
@@ -1514,51 +1521,53 @@ static void Test_Hmi(void)
     Test_PushHmiFrame(&gas, filter_time_on_frame, sizeof(filter_time_on_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.edit_filter.time_enabled);
-    Test_PushHmiFrame(&gas, filter_cylinder_frame, sizeof(filter_cylinder_frame));
+    Test_PushHmiFrame(&gas, filter_cylinder_trigger_frame, sizeof(filter_cylinder_trigger_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.cylinder_number == 0U);
+    Test_PushHmiFrame(&gas, filter_state_trigger_frame, sizeof(filter_state_trigger_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == 0U);
+    // V1.10触发按钮只弹出下拉菜单，自身不改变筛选条件。
+    Test_PushHmiFrame(&gas, filter_cylinder_menu_frame, sizeof(filter_cylinder_menu_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.edit_filter.cylinder_number == 1U);
-    Test_PushHmiFrame(&gas, filter_state_frame, sizeof(filter_state_frame));
+    Test_PushHmiFrame(&gas, filter_state_menu_frame, sizeof(filter_state_menu_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.edit_filter.target_state == (uint8_t) GAS_CYL_INIT);
+    gas.hmi_log.edit_filter.time_enabled = false;
     Test_PushHmiFrame(&gas, filter_date_frame, sizeof(filter_date_frame));
     A_GasControl_Task(&gas);
     assert((gas.hmi_log.edit_filter.start.year == 2026U) &&
            (gas.hmi_log.edit_filter.start.month == 8U) &&
-           (gas.hmi_log.edit_filter.start.day == 22U));
-    // Screen6的开关、循环选择和YYYYMMDD文本必须由MCU条件结构统一保存。
-    for (index = 0U; index < sizeof(exhaust_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = exhaust_frame[index];
-    }
+           (gas.hmi_log.edit_filter.start.day == 22U) &&
+           gas.hmi_log.edit_filter.time_enabled);
+    // 输入任一合法日期或时间后必须自动启用限定时间，避免已输入的范围被“全部时间”忽略。
+    Test_PushHmiFrame(&gas, filter_end_date_frame, sizeof(filter_end_date_frame));
+    Test_PushHmiFrame(&gas, filter_event_query_frame, sizeof(filter_event_query_frame));
+    A_GasControl_Task(&gas);
+    assert((gas.hmi_log.active_filter.end.year == 2026U) &&
+           (gas.hmi_log.active_filter.end.month == 8U) &&
+           (gas.hmi_log.active_filter.end.day == 23U));
+    // 输入框失焦帧和查询按钮同批到达时，查询快照必须采用本批刚提交的最后一个输入值。
+    // Screen6的开关、下拉菜单选择和YYYYMMDD文本由MCU条件结构统一保存。
+    Test_PushHmiFrame(&gas, exhaust_frame, sizeof(exhaust_frame));
     A_GasControl_Task(&gas);
     assert(gas.system.cylinder[0].exhaust_cmd);
 
     gas.system.cylinder[0].state = GAS_CYL_WAIT_TEST;
     gas.system.cylinder[0].qualification_passed = false;
     Test_SeedPressure(&gas, 0U, 5.0F);
-    for (index = 0U; index < sizeof(qualification_on_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = qualification_on_frame[index];
-    }
+    Test_PushHmiFrame(&gas, qualification_on_frame, sizeof(qualification_on_frame));
     A_GasControl_Task(&gas);
     assert(gas.system.cylinder[0].qualification_passed);
-    for (index = 0U; index < sizeof(qualification_off_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = qualification_off_frame[index];
-    }
+    Test_PushHmiFrame(&gas, qualification_off_frame, sizeof(qualification_off_frame));
     A_GasControl_Task(&gas);
     assert(!gas.system.cylinder[0].qualification_passed);
 
-    for (index = 0U; index < sizeof(event_log_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = event_log_frame[index];
-    }
+    Test_PushHmiFrame(&gas, event_log_frame, sizeof(event_log_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.query_type == A_HMI_LOG_QUERY_EVENT);
-    for (index = 0U; index < sizeof(regular_log_frame); ++index)
-    {
-        gas.hmi.function.hardware.rx_buffer[gas.hmi.function.hardware.rx_head++] = regular_log_frame[index];
-    }
+    Test_PushHmiFrame(&gas, regular_log_frame, sizeof(regular_log_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.query_type == A_HMI_LOG_QUERY_REGULAR);
 
@@ -1827,6 +1836,81 @@ static void Test_PushHmiFrame(A_Gas_Control_Context *context,
         hardware->rx_buffer[hardware->rx_head] = frame[index];
         hardware->rx_head = (uint16_t) ((hardware->rx_head + 1U) % H_HMI_RX_BUFFER_SIZE);
     }
+}
+
+/*
+ * 函数名：Test_HmiLogMenuSelect。
+ * 说明：验证Screen6气瓶和进入状态下拉菜单选中值、越界拒绝、触发按钮忽略和清除条件恢复。
+ * 输入：无。
+ * 输出：无；通过断言检查B1 14下拉菜单帧到筛选条件的映射。
+ */
+static void Test_HmiLogMenuSelect(void)
+{
+    const uint8_t cylinder_menu_six_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,6U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t state_menu_seven_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,7U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t state_menu_release_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,2U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t cylinder_menu_invalid_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,7U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t state_menu_invalid_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,8U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t cylinder_menu_all_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,0U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t state_menu_all_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,0U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t reset_frame[] =
+        {0xEEU,0xB1U,0x11U,0U,6U,0U,138U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t direct_menu_frame[] =
+        {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,4U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    A_Gas_Control_Context gas;
+    F_Hmi_Context hmi;
+    uint16_t id;
+    uint8_t value;
+    size_t index;
+
+    Test_Prepare(&gas);
+    Test_PushHmiFrame(&gas, cylinder_menu_six_frame, sizeof(cylinder_menu_six_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.cylinder_number == 6U);
+    Test_PushHmiFrame(&gas, state_menu_seven_frame, sizeof(state_menu_seven_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == (uint8_t) GAS_CYL_WAIT_TEST);
+    // 弹起状态同样携带选中索引，重复锁存同一值对筛选条件幂等。
+    Test_PushHmiFrame(&gas, state_menu_release_frame, sizeof(state_menu_release_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == (uint8_t) GAS_CYL_READY);
+    // 超出菜单定义范围的索引必须被拒绝，防止脏数据污染查询条件。
+    Test_PushHmiFrame(&gas, cylinder_menu_invalid_frame, sizeof(cylinder_menu_invalid_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.cylinder_number == 6U);
+    Test_PushHmiFrame(&gas, state_menu_invalid_frame, sizeof(state_menu_invalid_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == (uint8_t) GAS_CYL_READY);
+    // 选中索引0对应“全部”，与业务层默认值保持一致。
+    Test_PushHmiFrame(&gas, cylinder_menu_all_frame, sizeof(cylinder_menu_all_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.cylinder_number == 0U);
+    Test_PushHmiFrame(&gas, state_menu_all_frame, sizeof(state_menu_all_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.edit_filter.target_state == 0U);
+    Test_PushHmiFrame(&gas, reset_frame, sizeof(reset_frame));
+    A_GasControl_Task(&gas);
+    assert((gas.hmi_log.edit_filter.cylinder_number == 0U) &&
+           (gas.hmi_log.edit_filter.target_state == 0U) &&
+           (gas.hmi_log.filter_status == A_HMI_LOG_FILTER_STATUS_RESET));
+    assert((gas.system.alarm_bits & GAS_ALARM_MANUAL_VALVE_ABORTED) == 0UL);
+
+    assert(F_Hmi_Init(&hmi));
+    for (index = 0U; index < sizeof(direct_menu_frame); ++index)
+    {
+        hmi.hardware.rx_buffer[hmi.hardware.rx_head++] = direct_menu_frame[index];
+    }
+    F_Hmi_Task(&hmi);
+    assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
+    assert((id == A_HMI_LOG_FILTER_CYLINDER_MENU_ID) && (value == 4U));
+    // B1 14下拉菜单帧解析为“控件ID＋选中项索引”，由应用层按控件ID分流处理。
 }
 
 /*
@@ -2505,8 +2589,9 @@ int main(void)
     Test_StateAndSwitch();
     Test_ManualAndDisabled();
     Test_Hmi();
+    Test_HmiLogMenuSelect();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.09日志物理清除、总测试阀内部联动、CAN最终应答和EEPROM分页查询测试通过。");
+    puts("V1.10日期查询快照、下拉菜单筛选、日志物理清除、总测试阀联动和CAN最终应答测试通过。");
     return 0;
 }
