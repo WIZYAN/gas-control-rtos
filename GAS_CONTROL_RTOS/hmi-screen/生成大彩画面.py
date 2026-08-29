@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.10"
+PROJECT_VERSION = "1.11"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
 SOURCE_PROJECT = PROJECT_DIR
@@ -420,7 +420,7 @@ def create_config_backgrounds(images_dir: Path) -> None:
     right_fields = (
         ("低压确认样本数", "次", "1～255"), ("关闭阀等待", "ms", "0～65535"),
         ("打开阀等待", "ms", "0～65535"), ("手动排气时间", "s", "3.000～65.535"),
-        ("测试阀最长开启", "s", "5～60"))
+        ("测试阀最长开启", "min", "5～60"))
 
     def draw_field(column_x: int, y: int, label: str, unit: str, hint: str) -> None:
         draw.rounded_rectangle((column_x, y, column_x + 464, y + 48), radius=7,
@@ -919,11 +919,14 @@ def add_navigation_button(root, name: str, control_id: int, target_screen: str,
 
 
 def add_parameter_input_item(root, name: str, control_id: int,
-                             text: str, x: int, y: int) -> None:
+                             text: str, x: int, y: int,
+                             minimum: int = 0, maximum: int = 65535,
+                             precision: int = 3, enforce_limit: bool = False) -> None:
     """
     函数名：add_parameter_input_item。
     说明：添加启用大彩系统数字键盘和控件值上传的GBK文本输入控件。
-    输入：root为画面节点；name和control_id为控件标识；text为初值；x、y为位置。
+    输入：root为画面节点；name和control_id为控件标识；text为初值；x、y为位置；
+          minimum、maximum、precision和enforce_limit为屏端数值限制。
     输出：无。
     """
     ET.SubElement(root, "item", {
@@ -933,7 +936,8 @@ def add_parameter_input_item(root, name: str, control_id: int,
         "xOffset": str(x), "yOffset": str(y), "width": "130", "height": "36",
         "input_mode": "1", "variant": "0", "text_type": "0", "text_len_max": "10",
         "password": "0", "focus_rect": "1", "text_align": "1", "text_align_v": "1",
-        "value_limit": "0", "value_precision": "3", "max_value": "65535", "min_value": "0",
+        "value_limit": "1" if enforce_limit else "0", "value_precision": str(precision),
+        "max_value": str(maximum), "min_value": str(minimum),
         "keyboard_init": "1", "keyboard_position": "0", "keyboard_x": "0", "keyboard_y": "0",
         "art_digit": "0", "art_digit_icon": "", "half_width_dot": "0", "bind_variant": "",
         "show_condition": "0", "condition_variant": "", "condition_value": "0"
@@ -1242,7 +1246,7 @@ def create_config_screen_file(project_dir: Path) -> None:
     add_text_item(root, "Config_Page_Title", 118, "运行参数设置", 10,
                   "239;248;255", 24, 20, 280, 44, 0, 1)
     defaults = ("1.200", "1.500", "2.000", "25.000", "100", "1000",
-                "3", "500", "500", "5.000", "60")
+                "3", "500", "500", "5.000", "10")
     for index, value in enumerate(defaults):
         if index < 6:
             x = 304
@@ -1250,7 +1254,12 @@ def create_config_screen_file(project_dir: Path) -> None:
         else:
             x = 816
             y = 106 + (index - 6) * 67
-        add_parameter_input_item(root, f"Config_Value_{index + 1}", 80 + index, value, x, y)
+        if index == 10:
+            add_parameter_input_item(root, f"Config_Value_{index + 1}", 80 + index,
+                                     value, x, y, 5, 60, 0, True)
+        else:
+            add_parameter_input_item(root, f"Config_Value_{index + 1}", 80 + index,
+                                     value, x, y)
 
     add_text_item(root, "Config_Status", 93, "修改任一参数后将自动弹出确认窗口", 4,
                   "69;214;255", 160, 489, 820, 25)
@@ -1432,9 +1441,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.10正式画面工程。
+    说明：生成完整的大彩 VisualTFT V1.11正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.10目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.11目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)

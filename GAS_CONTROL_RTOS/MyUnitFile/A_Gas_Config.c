@@ -3,13 +3,14 @@
 #include <stddef.h>
 #include <string.h>
 
-#define A_GAS_CONFIG_STORAGE_VALUE_COUNT (13U) // EEPROM V3记录保存的全部参数数量。
-#define A_GAS_CONFIG_RECORD_SIZE          (36U) // V3记录总长度，小于AT24C256的64字节单页容量。
+#define A_GAS_CONFIG_STORAGE_VALUE_COUNT (13U) // EEPROM V4记录保存的全部参数数量。
+#define A_GAS_CONFIG_RECORD_SIZE          (36U) // V4记录仍为36字节，不移动后续通讯方式记录。
 #define A_GAS_CONFIG_PAYLOAD_OFFSET       (8U)  // 参数区在记录中的起始字节偏移。
 #define A_GAS_CONFIG_PAYLOAD_SIZE         (26U) // 13个无符号16位参数占用的字节数。
-#define A_GAS_CONFIG_LEGACY_VERSION       (0x0002U) // 已发布的10项参数记录版本，用于兼容迁移。
-#define A_GAS_CONFIG_LEGACY_PAYLOAD_SIZE  (20U) // V2记录的10项参数区长度。
-#define A_GAS_CONFIG_LEGACY_RECORD_SIZE   (30U) // V2记录的总长度。
+#define A_GAS_CONFIG_V3_VERSION           (0x0003U) // V3末项以5000～60000毫秒保存。
+#define A_GAS_CONFIG_V2_VERSION           (0x0002U) // 已发布的10项参数记录版本。
+#define A_GAS_CONFIG_V2_PAYLOAD_SIZE      (20U) // V2记录的10项参数区长度。
+#define A_GAS_CONFIG_V2_RECORD_SIZE       (30U) // V2记录的总长度。
 
 /*
  * 函数名：A_GasConfig_WriteU16。
@@ -71,7 +72,7 @@ static uint16_t A_GasConfig_PressureToRaw(float pressure_mpa)
 
 /*
  * 函数名：A_GasConfig_EncodePayload。
- * 说明：保留原有10项顺序并在末尾追加3项HMI安全参数，编码EEPROM V3参数区。
+ * 说明：保留原有13项顺序，V4末项改为测试阀最长开启分钟数。
  * 输入：config 为只读运行参数；payload 为26字节输出缓存。
  * 输出：无；编码后的参数写入 payload。
  */
@@ -92,7 +93,8 @@ static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload
     values[9] = (uint16_t) config->pressure_fresh_ms;
     values[10] = A_GasConfig_PressureToRaw(config->low_warning_pressure_mpa);
     values[11] = (uint16_t) config->manual_exhaust_time_ms;
-    values[12] = (uint16_t) config->test_valve_max_time_ms;
+    values[12] = (uint16_t) (config->test_valve_max_time_ms /
+                             GAS_MILLISECONDS_PER_MINUTE);
     // 前10项顺序保持V2兼容，新增3项仅写入EEPROM，不增加外部CAN或Modbus地址。
 
     for (index = 0U; index < A_GAS_CONFIG_STORAGE_VALUE_COUNT; ++index)
@@ -103,7 +105,7 @@ static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload
 
 /*
  * 函数名：A_GasConfig_DecodePayload。
- * 说明：把EEPROM参数区的前10项公共参数转换为运行参数结构体，供V2和V3共同使用。
+ * 说明：把EEPROM参数区的前10项公共参数转换为运行参数结构体，供V2、V3和V4共同使用。
  * 输入：payload 为至少20字节的只读参数区；config 为运行参数输出指针。
  * 输出：无；解码后的参数写入 config。
  */
@@ -130,18 +132,46 @@ static void A_GasConfig_DecodeCommonPayload(const uint8_t *payload, Gas_Config *
 }
 
 /*
- * 函数名：A_GasConfig_DecodeV3Payload。
- * 说明：先解码与V2兼容的10项参数，再解码V3追加的三项HMI安全参数。
- * 输入：payload 为26字节V3参数区；config 为运行参数输出指针。
+ * 函数名：A_GasConfig_DecodeV4Payload。
+ * 说明：解码V4参数，末项分钟数转换为运行时毫秒数。
+ * 输入：payload 为26字节V4参数区；config 为运行参数输出指针。
  * 输出：无；13项解码结果写入config。
  */
-static void A_GasConfig_DecodeV3Payload(const uint8_t *payload, Gas_Config *config)
+static void A_GasConfig_DecodeV4Payload(const uint8_t *payload, Gas_Config *config)
 {
     A_GasConfig_DecodeCommonPayload(payload, config);
     config->low_warning_pressure_mpa =
         (float) A_GasConfig_ReadU16(&payload[20]) / GAS_CONFIG_PRESSURE_SCALE;
     config->manual_exhaust_time_ms = A_GasConfig_ReadU16(&payload[22]);
-    config->test_valve_max_time_ms = A_GasConfig_ReadU16(&payload[24]);
+    config->test_valve_max_time_ms =
+        (uint32_t) A_GasConfig_ReadU16(&payload[24]) * GAS_MILLISECONDS_PER_MINUTE;
+}
+
+/*
+ * 函数名：A_GasConfig_DecodeV3Payload。
+ * 说明：解码旧V3参数，并把原界面秒数按相同数值迁移为分钟数。
+ * 输入：payload 为26字节V3参数区；config 为运行参数输出指针。
+ * 输出：旧测试阀字段有效时返回true；否则返回false。
+ */
+static bool A_GasConfig_DecodeV3Payload(const uint8_t *payload, Gas_Config *config)
+{
+    uint16_t legacy_test_time_ms;
+    uint32_t migrated_minutes;
+
+    A_GasConfig_DecodeCommonPayload(payload, config);
+    config->low_warning_pressure_mpa =
+        (float) A_GasConfig_ReadU16(&payload[20]) / GAS_CONFIG_PRESSURE_SCALE;
+    config->manual_exhaust_time_ms = A_GasConfig_ReadU16(&payload[22]);
+    legacy_test_time_ms = A_GasConfig_ReadU16(&payload[24]);
+    if ((legacy_test_time_ms < 5000U) || (legacy_test_time_ms > 60000U))
+    {
+        return false;
+    }
+
+    migrated_minutes = ((uint32_t) legacy_test_time_ms + 500U) / 1000U;
+    config->test_valve_max_time_ms = migrated_minutes * GAS_MILLISECONDS_PER_MINUTE;
+    // 正式界面只会产生整秒值；四舍五入兼容可能由旧调试程序保存的零散毫秒值。
+    return true;
 }
 
 /*
@@ -207,7 +237,8 @@ A_Gas_Config_Validation A_GasConfig_Validate(const Gas_Config *config)
         (config->manual_exhaust_time_ms < GAS_MANUAL_EXHAUST_TIME_MIN_MS) ||
         (config->manual_exhaust_time_ms > GAS_MANUAL_EXHAUST_TIME_MAX_MS) ||
         (config->test_valve_max_time_ms < GAS_TEST_VALVE_MAX_TIME_MIN_MS) ||
-        (config->test_valve_max_time_ms > GAS_TEST_VALVE_MAX_TIME_MAX_MS))
+        (config->test_valve_max_time_ms > GAS_TEST_VALVE_MAX_TIME_MAX_MS) ||
+        ((config->test_valve_max_time_ms % GAS_MILLISECONDS_PER_MINUTE) != 0U))
     {
         return A_GAS_CONFIG_INVALID_RANGE;
     }
@@ -226,7 +257,7 @@ A_Gas_Config_Validation A_GasConfig_Validate(const Gas_Config *config)
 
 /*
  * 函数名：A_GasConfig_Load。
- * 说明：读取带版本和CRC16的参数记录；V2有效记录自动补入三项默认值并迁移为V3。
+ * 说明：读取带版本和CRC16的参数记录；V2、V3有效记录自动迁移为V4。
  * 输入：storage 为已经初始化的存储上下文；config 为运行参数输出指针。
  * 输出：记录标识、版本、CRC 和参数均有效时返回 true，否则返回 false。
  */
@@ -259,10 +290,15 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
     {
         record_size = A_GAS_CONFIG_RECORD_SIZE;
     }
-    else if ((version == A_GAS_CONFIG_LEGACY_VERSION) &&
-             (payload_size == A_GAS_CONFIG_LEGACY_PAYLOAD_SIZE))
+    else if ((version == A_GAS_CONFIG_V3_VERSION) &&
+             (payload_size == A_GAS_CONFIG_PAYLOAD_SIZE))
     {
-        record_size = A_GAS_CONFIG_LEGACY_RECORD_SIZE;
+        record_size = A_GAS_CONFIG_RECORD_SIZE;
+    }
+    else if ((version == A_GAS_CONFIG_V2_VERSION) &&
+             (payload_size == A_GAS_CONFIG_V2_PAYLOAD_SIZE))
+    {
+        record_size = A_GAS_CONFIG_V2_RECORD_SIZE;
     }
     else
     {
@@ -283,20 +319,27 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
 
     if (version == A_GAS_CONFIG_RECORD_VERSION)
     {
-        A_GasConfig_DecodeV3Payload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config);
+        A_GasConfig_DecodeV4Payload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config);
+    }
+    else if (version == A_GAS_CONFIG_V3_VERSION)
+    {
+        if (!A_GasConfig_DecodeV3Payload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config))
+        {
+            return false;
+        }
     }
     else
     {
         A_GasConfig_LoadDefaults(config);
         A_GasConfig_DecodeCommonPayload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config);
-        // V2没有新增三项，沿用已确认默认值；校验通过后尽力原址升级，不因迁移写失败丢失旧参数。
+        // V2没有新增三项，沿用V1.11默认值；校验通过后尽力原址升级。
     }
 
     if (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID)
     {
         return false;
     }
-    if (version == A_GAS_CONFIG_LEGACY_VERSION)
+    if (version != A_GAS_CONFIG_RECORD_VERSION)
     {
         (void) A_GasConfig_Save(storage, config);
     }

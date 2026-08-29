@@ -679,7 +679,7 @@ static uint16_t Test_RecordCrc16(const uint8_t *data, size_t length)
 
 /*
  * 函数名：Test_ConfigV2Migration。
- * 说明：验证旧10项V2参数和0x0020通讯模式在首次启动时安全迁移为V3与0x0030记录。
+ * 说明：验证旧10项V2参数和0x0020通讯模式在首次启动时安全迁移为V4与0x0030记录。
  * 输入：无。
  * 输出：无；断言旧参数、RS485模式和三项新增默认值均被保留。
  */
@@ -718,9 +718,70 @@ static void Test_ConfigV2Migration(void)
     assert((context.config.low_warning_pressure_mpa > 1.999F) &&
            (context.config.low_warning_pressure_mpa < 2.001F));
     assert((context.config.manual_exhaust_time_ms == 5000U) &&
-           (context.config.test_valve_max_time_ms == 60000U));
-    assert((g_test_state.eeprom[4] == 0U) && (g_test_state.eeprom[5] == 3U));
+           (context.config.test_valve_max_time_ms == 600000U));
+    assert((g_test_state.eeprom[4] == 0U) && (g_test_state.eeprom[5] == 4U));
     assert(memcmp(&g_test_state.eeprom[0x0030U], "GCOM", 4U) == 0);
+}
+
+/*
+ * 函数名：Test_ConfigV3Migration。
+ * 说明：验证V3测试阀秒数按相同界面数值迁移为V4分钟数并原址重写。
+ * 输入：无。
+ * 输出：无；断言旧45秒设置升级为45分钟，其他13项参数保持有效。
+ */
+static void Test_ConfigV3Migration(void)
+{
+    const uint16_t values[13] = {1200U, 1300U, 200U, 1500U, 25000U,
+                                 1000U, 3U, 500U, 500U, 2500U,
+                                 2000U, 5000U, 45000U};
+    A_Gas_Control_Context context;
+    Gas_Config stored;
+    uint8_t *record = &g_test_state.eeprom[0x0000U];
+    uint16_t crc;
+    uint8_t index;
+
+    (void) memset(&g_test_state, 0, sizeof(g_test_state));
+    record[0] = 'G'; record[1] = 'C'; record[2] = 'F'; record[3] = 'G';
+    record[4] = 0U; record[5] = 3U; record[6] = 0U; record[7] = 26U;
+    for (index = 0U; index < 13U; ++index)
+    {
+        record[8U + index * 2U] = (uint8_t) (values[index] >> 8U);
+        record[9U + index * 2U] = (uint8_t) values[index];
+    }
+    crc = Test_RecordCrc16(record, 34U);
+    record[34] = (uint8_t) (crc >> 8U);
+    record[35] = (uint8_t) crc;
+
+    A_GasControl_Init(&context);
+    assert(context.config.test_valve_max_time_ms == (45U * GAS_MILLISECONDS_PER_MINUTE));
+    assert((g_test_state.eeprom[4] == 0U) && (g_test_state.eeprom[5] == 4U));
+    assert((g_test_state.eeprom[32] == 0U) && (g_test_state.eeprom[33] == 45U));
+    assert(A_GasConfig_Load(&context.storage_service, &stored));
+    assert(stored.test_valve_max_time_ms == (45U * GAS_MILLISECONDS_PER_MINUTE));
+}
+
+/*
+ * 函数名：Test_TestValveTimeRange。
+ * 说明：验证V1.11测试阀5～60整分钟范围及10分钟默认值。
+ * 输入：无。
+ * 输出：无；通过参数校验结果断言分钟边界。
+ */
+static void Test_TestValveTimeRange(void)
+{
+    Gas_Config config;
+
+    A_GasConfig_LoadDefaults(&config);
+    assert(config.test_valve_max_time_ms == (10U * GAS_MILLISECONDS_PER_MINUTE));
+    config.test_valve_max_time_ms = 4U * GAS_MILLISECONDS_PER_MINUTE;
+    assert(A_GasConfig_Validate(&config) == A_GAS_CONFIG_INVALID_RANGE);
+    config.test_valve_max_time_ms = 5U * GAS_MILLISECONDS_PER_MINUTE;
+    assert(A_GasConfig_Validate(&config) == A_GAS_CONFIG_VALID);
+    config.test_valve_max_time_ms = 60U * GAS_MILLISECONDS_PER_MINUTE;
+    assert(A_GasConfig_Validate(&config) == A_GAS_CONFIG_VALID);
+    config.test_valve_max_time_ms = 61U * GAS_MILLISECONDS_PER_MINUTE;
+    assert(A_GasConfig_Validate(&config) == A_GAS_CONFIG_INVALID_RANGE);
+    config.test_valve_max_time_ms = (5U * GAS_MILLISECONDS_PER_MINUTE) + 1U;
+    assert(A_GasConfig_Validate(&config) == A_GAS_CONFIG_INVALID_RANGE);
 }
 
 /*
@@ -1443,10 +1504,12 @@ static void Test_ManualAndDisabled(void)
     Test_Advance(&context, 1U);
     assert(!context.system.cylinder[0].exhaust_cmd);
     assert(context.system.cylinder[0].test_cmd);
-    Test_Advance(&context, 56000U);
+    Test_Advance(&context, 596000U);
     assert(!context.system.cylinder[0].test_cmd);
     assert(!context.system.total_test_cmd);
 
+    Test_Prepare(&context);
+    // 十分钟超时会使模拟压力样本自然过期；后续多路联动和停用场景使用独立初始状态。
     assert(A_GasControl_SetTestValve(&context, 0U, true));
     Test_Advance(&context, 0U);
     assert(context.system.total_test_cmd);
@@ -1504,6 +1567,12 @@ static void Test_Hmi(void)
     const uint8_t filter_end_date_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,129U,0x11U,
                                              '2','0','2','6','0','8','2','3',0U,
                                              0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_range_start_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,127U,0x11U,
+                                                '2','0','2','6','0','8','2','9',0U,
+                                                0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t filter_range_end_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,129U,0x11U,
+                                              '2','0','2','6','0','8','3','0',0U,
+                                              0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t filter_event_query_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,136U,0x10U,
                                                 1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU};
@@ -1549,6 +1618,18 @@ static void Test_Hmi(void)
            (gas.hmi_log.active_filter.end.month == 8U) &&
            (gas.hmi_log.active_filter.end.day == 23U));
     // 输入框失焦帧和查询按钮同批到达时，查询快照必须采用本批刚提交的最后一个输入值。
+    Test_PushHmiFrame(&gas, filter_range_start_frame, sizeof(filter_range_start_frame));
+    Test_PushHmiFrame(&gas, filter_range_end_frame, sizeof(filter_range_end_frame));
+    Test_PushHmiFrame(&gas, filter_event_query_frame, sizeof(filter_event_query_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi_log.active_filter.time_enabled &&
+           (gas.hmi_log.active_filter.start.year == 2026U) &&
+           (gas.hmi_log.active_filter.start.month == 8U) &&
+           (gas.hmi_log.active_filter.start.day == 29U) &&
+           (gas.hmi_log.active_filter.end.year == 2026U) &&
+           (gas.hmi_log.active_filter.end.month == 8U) &&
+           (gas.hmi_log.active_filter.end.day == 30U));
+    // 开始、结束日期与查询按钮连续到达时必须完整入队，查询范围不能退回旧日期而包含8月28日记录。
     // Screen6的开关、下拉菜单选择和YYYYMMDD文本由MCU条件结构统一保存。
     Test_PushHmiFrame(&gas, exhaust_frame, sizeof(exhaust_frame));
     A_GasControl_Task(&gas);
@@ -1917,7 +1998,7 @@ static void Test_HmiLogMenuSelect(void)
  * 函数名：Test_HmiConfig。
  * 说明：验证B1文本解析、单字段自动确认、取消、运行中持久化和计时参数立即应用。
  * 输入：无。
- * 输出：无；通过断言检查HMI专属三项和EEPROM V3记录。
+ * 输出：无；通过断言检查HMI专属三项和EEPROM V4记录。
  */
 static void Test_HmiConfig(void)
 {
@@ -1940,6 +2021,10 @@ static void Test_HmiConfig(void)
         {0xEEU,0xB1U,0x11U,0U,4U,0U,89U,0x11U,'6','5','.','5','3','6',0U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t test_time_frame[] =
         {0xEEU,0xB1U,0x11U,0U,4U,0U,90U,0x11U,'4','5',0U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t invalid_test_time_low_frame[] =
+        {0xEEU,0xB1U,0x11U,0U,4U,0U,90U,0x11U,'4',0U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t invalid_test_time_high_frame[] =
+        {0xEEU,0xB1U,0x11U,0U,4U,0U,90U,0x11U,'6','1',0U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t confirm_frame[] =
         {0xEEU,0xB1U,0x11U,0U,5U,0U,108U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t cancel_frame[] =
@@ -2043,13 +2128,23 @@ static void Test_HmiConfig(void)
     Test_PushHmiFrame(&gas, cancel_frame, sizeof(cancel_frame));
     A_GasControl_Task(&gas);
 
+    Test_PushHmiFrame(&gas, invalid_test_time_low_frame, sizeof(invalid_test_time_low_frame));
+    A_GasControl_Task(&gas);
+    assert(!gas.hmi_config.confirm_pending &&
+           (gas.config.test_valve_max_time_ms == GAS_DEFAULT_TEST_VALVE_MAX_TIME_MS));
+    Test_PushHmiFrame(&gas, invalid_test_time_high_frame, sizeof(invalid_test_time_high_frame));
+    A_GasControl_Task(&gas);
+    assert(!gas.hmi_config.confirm_pending &&
+           (gas.config.test_valve_max_time_ms == GAS_DEFAULT_TEST_VALVE_MAX_TIME_MS));
+
     Test_PushHmiFrame(&gas, test_time_frame, sizeof(test_time_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_config.confirm_pending &&
-           (gas.hmi_config.edit_config.test_valve_max_time_ms == 45000U));
+           (gas.hmi_config.edit_config.test_valve_max_time_ms ==
+            (45U * GAS_MILLISECONDS_PER_MINUTE)));
     Test_PushHmiFrame(&gas, confirm_frame, sizeof(confirm_frame));
     A_GasControl_Task(&gas);
-    assert(gas.config.test_valve_max_time_ms == 45000U);
+    assert(gas.config.test_valve_max_time_ms == (45U * GAS_MILLISECONDS_PER_MINUTE));
 
     Test_PushHmiFrame(&gas, default_frame, sizeof(default_frame));
     A_GasControl_Task(&gas);
@@ -2068,7 +2163,7 @@ static void Test_HmiConfig(void)
     assert((stored.low_warning_pressure_mpa > 3.499F) &&
            (stored.low_warning_pressure_mpa < 3.501F));
     assert((stored.manual_exhaust_time_ms == 65535U) &&
-           (stored.test_valve_max_time_ms == 45000U) &&
+           (stored.test_valve_max_time_ms == (45U * GAS_MILLISECONDS_PER_MINUTE)) &&
            (stored.pressure_fresh_ms == 2500U));
 
     gas.system.cylinder[0].state = GAS_CYL_READY;
@@ -2084,8 +2179,12 @@ static void Test_HmiConfig(void)
     assert(gas.system.total_test_cmd && !gas.system.cylinder[0].test_cmd);
     Test_Advance(&gas, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert((gas.system.cylinder[0].test_deadline_ms -
-            gas.runtime_service.platform.millis) == 45000U);
-    // 测试阀实际打开后才启动保存的45秒上限，不能把总阀预开启等待计入测试时间。
+            gas.runtime_service.platform.millis) == (45U * GAS_MILLISECONDS_PER_MINUTE));
+    // 测试阀实际打开后才启动保存的45分钟上限，不能把总阀预开启等待计入测试时间。
+    Test_Advance(&gas, (45U * GAS_MILLISECONDS_PER_MINUTE) - 1U);
+    assert(gas.system.cylinder[0].test_cmd && gas.system.total_test_cmd);
+    Test_Advance(&gas, 1U);
+    assert(!gas.system.cylinder[0].test_cmd && !gas.system.total_test_cmd);
 
     gas.system.date_time.year = 2026U;
     gas.system.date_time.month = 8U;
@@ -2125,7 +2224,7 @@ static void Test_HmiConfig(void)
     assert(A_GasLog_GetCount(&gas.log_service) == 0U);
     assert(A_GasConfig_Load(&gas.storage_service, &stored));
     assert((stored.manual_exhaust_time_ms == 65535U) &&
-           (stored.test_valve_max_time_ms == 45000U));
+           (stored.test_valve_max_time_ms == (45U * GAS_MILLISECONDS_PER_MINUTE)));
     // Screen4密码入口、Screen7二次确认和后台进度联动不得清除或改写运行参数。
 }
 
@@ -2580,6 +2679,8 @@ static void Test_HmiLogQuery(void)
 int main(void)
 {
     Test_ConfigV2Migration();
+    Test_ConfigV3Migration();
+    Test_TestValveTimeRange();
     Test_TotalPressurePoll();
     Test_DefaultCanProtocol();
     Test_CanDirectWriteAndControl();
@@ -2592,6 +2693,6 @@ int main(void)
     Test_HmiLogMenuSelect();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.10日期查询快照、下拉菜单筛选、日志物理清除、总测试阀联动和CAN最终应答测试通过。");
+    puts("V1.11测试阀分钟配置、V2/V3迁移、日志查询、总测试阀联动和通讯回归测试通过。");
     return 0;
 }

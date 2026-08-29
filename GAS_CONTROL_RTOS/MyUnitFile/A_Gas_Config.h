@@ -7,7 +7,7 @@
 #include "../AT24C256/A_Storage.h"
 
 #define A_GAS_CONFIG_STORAGE_ADDRESS (0x0000U) // AT24C256 中运行参数记录的起始字节地址。
-#define A_GAS_CONFIG_RECORD_VERSION  (0x0003U) // EEPROM 当前13项三阀参数记录的数据结构版本。
+#define A_GAS_CONFIG_RECORD_VERSION  (0x0004U) // EEPROM当前V4记录；测试阀最长开启字段改以分钟保存。
 #define A_GAS_CONFIG_REGISTER_COUNT  (10U)     // 外部CAN和Modbus继续开放的原有参数数量，不含三项HMI安全参数。
 
 // 运行参数校验结果，用于区分单项越界和参数之间的逻辑关系错误。

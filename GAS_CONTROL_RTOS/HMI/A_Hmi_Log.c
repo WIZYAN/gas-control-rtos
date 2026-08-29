@@ -1320,54 +1320,57 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
     size_t length;
     bool valid = false;
 
-    if ((context == NULL) || !context->ready || (context->hmi == NULL) ||
-        !A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) ||
-        (page_id != A_HMI_LOG_FILTER_PAGE_ID) ||
-        (control_id < A_HMI_LOG_FILTER_START_DATE_ID) ||
-        (control_id > A_HMI_LOG_FILTER_END_TIME_ID))
+    if ((context == NULL) || !context->ready || (context->hmi == NULL))
     {
         return;
     }
-    length = A_Hmi_TakeTextEvent(context->hmi, &page_id, &control_id,
-                                 text, sizeof(text));
-    if (length == 0U)
+    while (A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) &&
+           (page_id == A_HMI_LOG_FILTER_PAGE_ID) &&
+           (control_id >= A_HMI_LOG_FILTER_START_DATE_ID) &&
+           (control_id <= A_HMI_LOG_FILTER_END_TIME_ID))
     {
-        return;
-    }
+        length = A_Hmi_TakeTextEvent(context->hmi, &page_id, &control_id,
+                                     text, sizeof(text));
+        if (length == 0U)
+        {
+            return;
+        }
 
-    candidate = context->edit_filter;
-    slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
-    date_time = (slot < 2U) ? &candidate.start : &candidate.end;
-    if (((slot == 0U) || (slot == 2U)) && (length == 8U) &&
-        A_HmiLog_ParseDigits(text, length, &value))
-    {
-        date_time->year = (uint16_t) (value / 10000U);
-        date_time->month = (uint8_t) ((value / 100U) % 100U);
-        date_time->day = (uint8_t) (value % 100U);
-        valid = A_HmiLog_DateTimeValid(date_time);
-    }
-    else if (((slot == 1U) || (slot == 3U)) && (length == 6U) &&
-             A_HmiLog_ParseDigits(text, length, &value))
-    {
-        date_time->hour = (uint8_t) (value / 10000U);
-        date_time->minute = (uint8_t) ((value / 100U) % 100U);
-        date_time->second = (uint8_t) (value % 100U);
-        valid = A_HmiLog_DateTimeValid(date_time);
-    }
+        candidate = context->edit_filter;
+        slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
+        date_time = (slot < 2U) ? &candidate.start : &candidate.end;
+        valid = false;
+        if (((slot == 0U) || (slot == 2U)) && (length == 8U) &&
+            A_HmiLog_ParseDigits(text, length, &value))
+        {
+            date_time->year = (uint16_t) (value / 10000U);
+            date_time->month = (uint8_t) ((value / 100U) % 100U);
+            date_time->day = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(date_time);
+        }
+        else if (((slot == 1U) || (slot == 3U)) && (length == 6U) &&
+                 A_HmiLog_ParseDigits(text, length, &value))
+        {
+            date_time->hour = (uint8_t) (value / 10000U);
+            date_time->minute = (uint8_t) ((value / 100U) % 100U);
+            date_time->second = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(date_time);
+        }
 
-    if (valid)
-    {
-        candidate.time_enabled = true;
-        context->edit_filter = candidate;
-        context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
-        context->filter_refresh_mask |= (uint16_t) ((1U << 4U) | (1U << 7U));
-        // 人员输入任一合法日期或时间即表示使用该范围，同时回写131号按钮为“限定时间”。
-    }
-    else
-    {
-        context->filter_status = A_HMI_LOG_FILTER_STATUS_INPUT_ERROR;
-        context->filter_refresh_mask |= (uint16_t) ((1U << slot) | (1U << 7U));
-        // 仅回写本输入框的旧值，其他已编辑条件保持不变。
+        if (valid)
+        {
+            candidate.time_enabled = true;
+            context->edit_filter = candidate;
+            context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
+            context->filter_refresh_mask |= (uint16_t) ((1U << 4U) | (1U << 7U));
+            // 人员输入任一合法日期或时间即表示使用该范围，同时回写131号按钮为“限定时间”。
+        }
+        else
+        {
+            context->filter_status = A_HMI_LOG_FILTER_STATUS_INPUT_ERROR;
+            context->filter_refresh_mask |= (uint16_t) ((1U << slot) | (1U << 7U));
+            // 仅回写本输入框的旧值，其他已编辑条件保持不变。
+        }
     }
 }
 

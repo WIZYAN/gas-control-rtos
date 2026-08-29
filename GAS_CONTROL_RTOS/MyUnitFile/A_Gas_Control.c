@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#define A_GAS_CONTROL_COMM_RECORD_ADDRESS (0x0030U) // V3参数记录之后的外部通讯模式记录起始地址。
+#define A_GAS_CONTROL_COMM_RECORD_ADDRESS (0x0030U) // 36字节参数记录之后的外部通讯模式记录起始地址。
 #define A_GAS_CONTROL_COMM_LEGACY_ADDRESS (0x0020U) // V2工程使用的旧模式地址，仅用于启动迁移。
 #define A_GAS_CONTROL_COMM_RECORD_SIZE    (8U)      // 模式记录固定长度，包含标识、版本、模式和CRC16。
 #define A_GAS_CONTROL_COMM_RECORD_VERSION (1U)      // 外部通讯模式记录格式版本。
@@ -137,7 +137,7 @@ static bool A_GasControl_LoadCommMode(A_Storage_Context *storage,
     }
 
     (void) A_GasControl_SaveCommMode(storage, *mode);
-    // 必须先把旧模式迁到0x0030，随后V2参数升级为V3时才可安全覆盖0x0020～0x0023。
+    // 必须先把旧模式迁到0x0030，随后V2参数升级为当前记录时才可安全覆盖0x0020～0x0023。
     return true;
 }
 

@@ -10,6 +10,16 @@
 #define F_HMI_FRAME_MAX_SIZE (64U)  // 单帧大彩接收指令允许的最大缓存长度。
 #define F_HMI_TX_MAX_SIZE    (192U) // 日志表格单行和普通文本共用的最大发送帧长度。
 #define F_HMI_TEXT_MAX_SIZE  (16U)  // 参数输入控件允许上传的最大ASCII文本长度，另留一字节结束符。
+#define F_HMI_TEXT_EVENT_QUEUE_SIZE (8U) // 连续失焦和查询时暂存的文本输入事件数量。
+
+// 一条由B1 11文本控件上传的完整输入事件。
+typedef struct
+{
+    uint16_t page_id;                              // 文本输入事件所属画面ID。
+    uint16_t control_id;                           // 文本输入控件ID。
+    char value[F_HMI_TEXT_MAX_SIZE + 1U];          // ASCII内容，始终追加字符串结束符。
+    uint8_t length;                                // value中的有效ASCII字节数。
+} F_Hmi_Text_Event;
 
 // 大彩串口屏 RTC 响应解析结果，年份已经由两位 BCD 转换为 2000～2099 完整年份。
 typedef struct
@@ -33,11 +43,9 @@ typedef struct
     bool button_pending;                    // 是否存在尚未取走的按钮或下拉菜单选择事件。
     uint16_t button_id;                     // 最近一次按钮或下拉菜单控件 ID。
     uint8_t button_value;                   // 按钮上传状态值；下拉菜单时为选中项索引。
-    bool text_pending;                      // 是否存在尚未取走的文本输入事件。
-    uint16_t text_page_id;                  // 最近一次文本输入事件所属画面ID。
-    uint16_t text_control_id;               // 最近一次文本输入控件ID。
-    char text_value[F_HMI_TEXT_MAX_SIZE + 1U]; // 最近一次文本输入内容，始终追加字符串结束符。
-    uint8_t text_length;                    // 文本输入内容的有效ASCII字节数。
+    F_Hmi_Text_Event text_queue[F_HMI_TEXT_EVENT_QUEUE_SIZE]; // 文本输入FIFO，保持串口到达顺序。
+    uint8_t text_queue_head;                // FIFO当前待读事件位置。
+    uint8_t text_queue_count;               // FIFO内尚未被应用层取走的事件数量。
     F_Hmi_Rtc_Time rtc_time;                // 最近一次通过校验的串口屏 RTC 时间。
     bool rtc_time_pending;                  // 是否存在尚未被应用层取走的 RTC 时间。
     uint8_t tx_frame[F_HMI_TX_MAX_SIZE];    // 异步发送期间保持不变的发送缓冲区。
@@ -55,7 +63,7 @@ bool F_Hmi_Init(F_Hmi_Context *context);
  * 函数名：F_Hmi_Task。
  * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
  * 输入：context 为 HMI 功能层上下文输入输出指针。
- * 输出：无；解析成功后在上下文中锁存一条按钮或下拉菜单选择事件。
+ * 输出：无；解析成功后锁存按钮/下拉菜单事件，并按顺序写入文本输入FIFO。
  */
 void F_Hmi_Task(F_Hmi_Context *context);
 
@@ -81,7 +89,7 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
 
 /*
  * 函数名：F_Hmi_PeekTextEvent。
- * 说明：查看待处理文本输入事件的画面和控件ID，但不取走文本。
+ * 说明：查看文本输入FIFO队首事件的画面和控件ID，但不取走文本。
  * 输入：context为功能层上下文；page_id和control_id为控件标识输出指针。
  * 输出：存在待处理文本事件时返回true，否则返回false。
  */

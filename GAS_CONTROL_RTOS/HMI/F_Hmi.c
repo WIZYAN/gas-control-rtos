@@ -135,6 +135,7 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
 {
     uint16_t text_end;
     uint16_t text_length;
+    uint8_t text_queue_tail;
 
     if ((context->rx_length >= 14U) &&
         (context->rx_frame[0] == 0xEEU) &&
@@ -149,23 +150,29 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
             context->button_pending = true;
             // 0x10是按钮控件类型；单事件槽在应用层取走前不覆盖尚未处理的操作。
         }
-        else if ((context->rx_frame[7] == 0x11U) && !context->text_pending)
+        else if ((context->rx_frame[7] == 0x11U) &&
+                 (context->text_queue_count < F_HMI_TEXT_EVENT_QUEUE_SIZE))
         {
             text_end = (uint16_t) (context->rx_length - 5U);
             text_length = (uint16_t) (text_end - 8U);
             if ((context->rx_frame[text_end] == 0U) &&
                 (text_length <= F_HMI_TEXT_MAX_SIZE))
             {
-                context->text_page_id = (uint16_t) (((uint16_t) context->rx_frame[3] << 8U) |
-                                                     context->rx_frame[4]);
-                context->text_control_id =
+                text_queue_tail = (uint8_t) ((context->text_queue_head +
+                                              context->text_queue_count) %
+                                             F_HMI_TEXT_EVENT_QUEUE_SIZE);
+                context->text_queue[text_queue_tail].page_id =
+                    (uint16_t) (((uint16_t) context->rx_frame[3] << 8U) |
+                                context->rx_frame[4]);
+                context->text_queue[text_queue_tail].control_id =
                     (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
                                 context->rx_frame[6]);
-                (void) memcpy(context->text_value, &context->rx_frame[8], text_length);
-                context->text_value[text_length] = '\0';
-                context->text_length = (uint8_t) text_length;
-                context->text_pending = true;
-                // 0x11是文本控件类型；只接受限定长度且以NUL结束的ASCII参数文本。
+                (void) memcpy(context->text_queue[text_queue_tail].value,
+                              &context->rx_frame[8], text_length);
+                context->text_queue[text_queue_tail].value[text_length] = '\0';
+                context->text_queue[text_queue_tail].length = (uint8_t) text_length;
+                context->text_queue_count++;
+                // 0x11是文本控件类型；只接受限定长度且以NUL结束的ASCII参数文本，并按顺序入队。
             }
         }
     }
@@ -285,30 +292,34 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
                            char *text,
                            size_t capacity)
 {
+    const F_Hmi_Text_Event *event;
     size_t length;
 
     if ((context == NULL) || (page_id == NULL) || (control_id == NULL) ||
-        (text == NULL) || !context->text_pending)
+        (text == NULL) || (context->text_queue_count == 0U))
     {
         return 0U;
     }
 
-    length = context->text_length;
+    event = &context->text_queue[context->text_queue_head];
+    length = event->length;
     if (capacity <= length)
     {
         return 0U;
     }
 
-    *page_id = context->text_page_id;
-    *control_id = context->text_control_id;
-    (void) memcpy(text, context->text_value, length + 1U);
-    context->text_pending = false;
+    *page_id = event->page_id;
+    *control_id = event->control_id;
+    (void) memcpy(text, event->value, length + 1U);
+    context->text_queue_head = (uint8_t) ((context->text_queue_head + 1U) %
+                                          F_HMI_TEXT_EVENT_QUEUE_SIZE);
+    context->text_queue_count--;
     return length;
 }
 
 /*
  * 函数名：F_Hmi_PeekTextEvent。
- * 说明：查看待处理文本输入事件的画面和控件ID，但不清除事件槽。
+ * 说明：查看文本输入FIFO队首事件的画面和控件ID，但不清除事件。
  * 输入：context为功能层上下文；page_id和control_id为控件标识输出指针。
  * 输出：存在待处理文本事件时返回true，否则返回false。
  */
@@ -317,13 +328,13 @@ bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
                          uint16_t *control_id)
 {
     if ((context == NULL) || (page_id == NULL) || (control_id == NULL) ||
-        !context->text_pending)
+        (context->text_queue_count == 0U))
     {
         return false;
     }
 
-    *page_id = context->text_page_id;
-    *control_id = context->text_control_id;
+    *page_id = context->text_queue[context->text_queue_head].page_id;
+    *control_id = context->text_queue[context->text_queue_head].control_id;
     return true;
 }
 

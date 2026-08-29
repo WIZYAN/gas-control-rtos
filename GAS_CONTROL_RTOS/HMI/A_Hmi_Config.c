@@ -351,7 +351,8 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
             break;
         case 10U:
             if ((value < 5U) || (value > 60U)) { return A_HMI_CONFIG_INPUT_RANGE_ERROR; }
-            context->edit_config.test_valve_max_time_ms = value * 1000U;
+            context->edit_config.test_valve_max_time_ms =
+                value * GAS_MILLISECONDS_PER_MINUTE;
             break;
         default:
             return A_HMI_CONFIG_INPUT_FORMAT_ERROR;
@@ -384,7 +385,10 @@ static size_t A_HmiConfig_FormatField(const Gas_Config *config,
         case 9U: return A_HmiConfig_FormatFixed3((float) config->manual_exhaust_time_ms / 1000.0F,
                                                     text,
                                                     capacity);
-        case 10U: return A_HmiConfig_FormatUnsigned(config->test_valve_max_time_ms / 1000U, text, capacity);
+        case 10U: return A_HmiConfig_FormatUnsigned(
+                             config->test_valve_max_time_ms / GAS_MILLISECONDS_PER_MINUTE,
+                             text,
+                             capacity);
         default: return 0U;
     }
 }

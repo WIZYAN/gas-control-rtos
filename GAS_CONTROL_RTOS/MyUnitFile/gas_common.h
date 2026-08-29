@@ -11,6 +11,7 @@
 #define GAS_TOTAL_PRESSURE_SENSOR_INDEX    (6U)      // 总压力传感器在轮询地址表中的索引。
 #define GAS_NO_ACTIVE_CYLINDER             (0xFFU)   // 当前没有工作瓶时使用的无效索引。
 #define GAS_DEFAULT_EXTERNAL_COMM_MODE     (0U)      // 外部通讯默认模式，0表示CAN，1表示RS485/Modbus。
+#define GAS_MILLISECONDS_PER_MINUTE        (60000UL) // 分钟与运行时毫秒之间的固定换算系数。
 
 // EEPROM中没有有效记录时使用的运行参数默认值；外部Modbus可在六瓶全部停用的维护状态下修改并持久化。
 #define GAS_DEFAULT_SWITCH_PRESSURE_MPA       (1.2F)    // 工作瓶触发低压切换的默认压力，单位 MPa。
@@ -25,7 +26,7 @@
 #define GAS_DEFAULT_PRESSURE_FRESH_MS         (2500UL)  // 压力样本保持有效的默认时限，单位 ms。
 #define GAS_DEFAULT_LOW_WARNING_PRESSURE_MPA  (2.0F)    // 工作瓶进入低压警告状态的默认压力，单位 MPa。
 #define GAS_DEFAULT_MANUAL_EXHAUST_TIME_MS    (5000UL)  // 串口屏人工排气默认持续时间，单位 ms。
-#define GAS_DEFAULT_TEST_VALVE_MAX_TIME_MS    (60000UL) // 测试阀单次连续开启的默认安全上限，单位 ms。
+#define GAS_DEFAULT_TEST_VALVE_MAX_TIME_MS    (600000UL) // 测试阀单次连续开启的默认安全上限，默认10分钟。
 #define GAS_VALVE_BOOST_MIN_INTERVAL_MS       (500UL)   // 同一气瓶组相邻两次 12 V 强吸合脉冲的最短间隔，单位 ms。
 
 // 仅允许通过密码保护的串口屏参数页修改的三项安全范围；外部CAN和RS485不映射这些地址。
@@ -33,8 +34,8 @@
 #define GAS_LOW_WARNING_PRESSURE_MAX_MPA      (5.0F)    // 低压警告压力允许设置的最大值，单位 MPa。
 #define GAS_MANUAL_EXHAUST_TIME_MIN_MS        (3000UL)  // 人工排气允许设置的最短时间，单位 ms。
 #define GAS_MANUAL_EXHAUST_TIME_MAX_MS        (65535UL) // 人工排气允许设置的最长时间，单位 ms，受EEPROM 16位字段限制。
-#define GAS_TEST_VALVE_MAX_TIME_MIN_MS        (5000UL)  // 测试阀超时允许设置的最小值，单位 ms。
-#define GAS_TEST_VALVE_MAX_TIME_MAX_MS        (60000UL) // 测试阀超时允许设置的最大值，单位 ms。
+#define GAS_TEST_VALVE_MAX_TIME_MIN_MS        (300000UL) // 测试阀超时允许设置的最小值，5分钟。
+#define GAS_TEST_VALVE_MAX_TIME_MAX_MS       (3600000UL) // 测试阀超时允许设置的最大值，60分钟。
 
 // Modbus 单寄存器参数的公共编码限制。
 #define GAS_CONFIG_PRESSURE_SCALE             (1000.0F) // 压力参数寄存器使用 MPa 乘以 1000 的定点格式。
