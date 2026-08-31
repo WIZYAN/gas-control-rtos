@@ -1952,21 +1952,21 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
         return;
     }
 
-    now_ms = F_GasRuntime_Millis(&context->runtime_service);
-    A_ModbusPoll_Task(&context->sensor_poll, &context->system, &context->config, now_ms);
-    F_ValveControl_Task(&context->runtime_service.platform, &context->system, now_ms);
-    A_Hmi_Task(&context->hmi, &context->system, now_ms);
-    A_HmiLog_InputTask(&context->hmi_log);
+    now_ms = F_GasRuntime_Millis(&context->runtime_service);//读取当前毫秒时间，供本周期各状态机使用。
+    A_ModbusPoll_Task(&context->sensor_poll, &context->system, &context->config, now_ms);//轮询并解析 1～7 号压力传感器，更新六瓶压力和总压力。
+    F_ValveControl_Task(&context->runtime_service.platform, &context->system, now_ms);//推进 12 V 吸合转 5 V 保持的阀门时序。
+    A_Hmi_Task(&context->hmi, &context->system, now_ms);//解析串口屏按钮帧、文本输入和 RTC 响应，并周期请求 RTC。
+    A_HmiLog_InputTask(&context->hmi_log);//处理日志查询页的日期、时间输入。
     A_HmiConfig_InputTask(&context->hmi_config,
-                          &context->config);
+                          &context->config);//`处理参数页文本输入。
     A_GasControl_ProcessHmiButton(context);
-    // 先提交本周期收到的文本输入，再处理查询或确认按钮，保证按钮建立的快照使用最后一次输入值。
-    A_GasControl_ProcessHmiConfig(context);
-    A_GasControl_ProcessHmiLogClear(context);
-    A_GasControl_ManualValveTask(context, now_ms);
-    A_GasControl_UpdateCylinderStates(context, now_ms);
-    A_GasControl_SwitchTask(context, now_ms);
-    A_GasControl_TotalTestTask(context, now_ms);
+    // 先提交本周期收到的文本输入，再处理查询或确认按钮，保证按钮建立的快照使用最后一次输入值。把串口屏按钮转换为排气、测试、停用、合格确认、日志和参数操作。
+    A_GasControl_ProcessHmiConfig(context);//执行串口屏参数保存请求。
+    A_GasControl_ProcessHmiLogClear(context);//执行串口屏日志物理清除请求。
+    A_GasControl_ManualValveTask(context, now_ms);//按截止时间自动关闭人工排气阀、测试阀，并保证停用瓶全关。
+    A_GasControl_UpdateCylinderStates(context, now_ms);//根据压力和测试合格标志更新六瓶业务状态。
+    A_GasControl_SwitchTask(context, now_ms);//执行初始选瓶或低压自动换瓶状态机。
+    A_GasControl_TotalTestTask(context, now_ms);//推进总测试阀预开启和分路测试阀延时放行。
     A_GasControl_CheckOutputInvariant(context);
     // 状态机处理完成后统一检查硬安全不变量，日志只记录经过安全检查后的最终状态。
     if (!A_GasLog_IsClearBusy(&context->log_service) &&
@@ -1975,9 +1975,9 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
     }
-    A_HmiConfig_Task(&context->hmi_config);
+    A_HmiConfig_Task(&context->hmi_config);//分时刷新参数页显示。
     A_HmiLog_Task(&context->hmi_log);
-    // 参数刷新先尝试占用SCI9；无待发参数时日志和监控继续运行，避免返回事件丢失后长期暂停刷新。
+    // 参数刷新先尝试占用SCI9；无待发参数时日志和监控继续运行，避免返回事件丢失后长期暂停刷新。非阻塞执行日志索引、读页和逐行发送。
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
         A_Can_UpdateLogInfo(&context->external_can,
@@ -2011,16 +2011,16 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
             context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
         }
     }
-    A_GasControl_ProcessCanControl(context);
-    A_GasControl_ProcessExternalConfig(context);
-    A_GasControl_ProcessExternalLogRead(context);
+    A_GasControl_ProcessCanControl(context);//执行 CAN 收到的人工控制请求。
+    A_GasControl_ProcessExternalConfig(context);//执行外部通讯参数保存/恢复请求。
+    A_GasControl_ProcessExternalLogRead(context);//执行外部通讯日志读取请求。
     // 协议层先解析一帧请求，再由气源应用层执行控制、参数持久化或EEPROM日志读取。
     if (!A_HmiLog_IsBusy(&context->hmi_log))
     {
         A_Hmi_Refresh(&context->hmi, &context->system, now_ms);
     }
     // 查询期间暂停监控控件轮询刷新，把SCI9带宽优先让给日志清表和逐行发送。
-    F_GasRuntime_Idle(&context->runtime_service);
+    F_GasRuntime_Idle(&context->runtime_service);//把本周期剩余空闲处理转交硬件平台层。
 }
 
 /*
