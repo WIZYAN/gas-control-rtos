@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现压力串口、十九路阀门和毫秒时基的平台硬件操作。
+ */
+
 #include "H_Gas_Platform.h"
 
 #include <string.h>
@@ -15,7 +22,7 @@
  */
 static bsp_io_level_t H_GasPlatform_ValveLevel(bool on)
 {
-    bool high = (on == (GAS_BOARD_VALVE_ACTIVE_LEVEL != 0U));
+    bool high = (on == (GAS_BOARD_VALVE_ACTIVE_LEVEL != 0U)); // 阀门GPIO输出电平标志；使用范围：当前逻辑状态转电平函数内；取值范围：false/true，false表示输出低电平，true表示输出高电平。
     return high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW;
 }
 
@@ -37,8 +44,8 @@ static bool H_GasPlatform_ConfigureValvePins(void)
                                   ((GAS_BOARD_VALVE_ACTIVE_LEVEL != 0U) ?
                                    (uint32_t) IOPORT_CFG_PORT_OUTPUT_LOW :
                                    (uint32_t) IOPORT_CFG_PORT_OUTPUT_HIGH);
-    size_t i;
-    bool success = true;
+    size_t i; // 当前作用域变量，用于保存当前处理数据。
+    bool success = true; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     for (i = 0U; i < (sizeof(all_valve_pins) / sizeof(all_valve_pins[0])); ++i)
     {
@@ -175,7 +182,7 @@ static bool H_GasPlatform_TimeReached(uint32_t now_ms, uint32_t deadline_ms)
  */
 static bool H_GasPlatform_SetValveBoost(H_Gas_Platform_Context *context, uint8_t index, bool on)
 {
-    bsp_io_port_pin_t pin;
+    bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
     if ((context == NULL) || !H_GasPlatform_BoostValvePin(index, &pin) ||
         (R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(on)) != FSP_SUCCESS))
@@ -204,7 +211,7 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
                              uint32_t pull_in_time_ms,
                              bool *state)
 {
-    fsp_err_t result;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if ((context == NULL) || (state == NULL) || (index >= GAS_CYLINDER_COUNT) ||
         (on && (pull_in_time_ms == 0U)))
@@ -297,11 +304,11 @@ static bool H_GasPlatform_SensorDirectionTransmit(void)
  */
 bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
 {
-    baud_setting_t baud_setting;
-    bool timebase_ready;
-    bool direction_ready;
-    bool valve_pins_ready;
-    bool uart_ready = false;
+    baud_setting_t baud_setting; // 当前作用域变量，用于保存当前处理数据。
+    bool timebase_ready; // timebase_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool direction_ready; // direction_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool valve_pins_ready; // valve_pins_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool uart_ready = false; // uart_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 
     if (context == NULL)
     {
@@ -356,10 +363,10 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
  */
 uint32_t H_GasPlatform_Millis(H_Gas_Platform_Context *context)
 {
-    uint32_t current_cycles;
-    uint32_t elapsed_cycles;
-    uint32_t cycles_per_ms;
-    uint64_t accumulated_cycles;
+    uint32_t current_cycles; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t elapsed_cycles; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t cycles_per_ms; // 当前作用域变量，用于保存毫秒时间值。
+    uint64_t accumulated_cycles; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (SystemCoreClock < 1000U))
     {
@@ -401,7 +408,7 @@ void H_GasPlatform_Idle(H_Gas_Platform_Context *context)
  */
 bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t *data, size_t length)
 {
-    fsp_err_t err;
+    fsp_err_t err; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || !context->sensor_uart_open || (data == NULL) ||
         (length == 0U) || (length > UINT32_MAX) || !H_GasPlatform_SensorDirectionTransmit())
@@ -495,7 +502,7 @@ bool H_GasPlatform_WriteSupplyValve(H_Gas_Platform_Context *context,
                                     bool on,
                                     uint32_t pull_in_time_ms)
 {
-    bsp_io_port_pin_t pin;
+    bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
     if ((context == NULL) || !H_GasPlatform_SupplyValvePin(cylinder_index, &pin))
     {
@@ -529,7 +536,7 @@ bool H_GasPlatform_WriteExhaustValve(H_Gas_Platform_Context *context,
                                      bool on,
                                      uint32_t pull_in_time_ms)
 {
-    bsp_io_port_pin_t pin;
+    bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
     if ((context == NULL) || !H_GasPlatform_ExhaustValvePin(cylinder_index, &pin))
     {
@@ -563,7 +570,7 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context,
                                   bool on,
                                   uint32_t pull_in_time_ms)
 {
-    bsp_io_port_pin_t pin;
+    bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
     if ((context == NULL) || !H_GasPlatform_TestValvePin(cylinder_index, &pin))
     {
@@ -625,8 +632,8 @@ bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
  */
 bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 {
-    uint8_t index;
-    bool success = true;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    bool success = true; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if (context == NULL)
     {
@@ -665,7 +672,7 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         VAL7, VAL8, VAL9, VAL_P3, VAL10, VAL11, VAL12, VAL_P4,
         VAL13, VAL14, VAL15, VAL_P5, VAL16, VAL17, VAL18, VAL_P6, VAL_CAL
     };
-    size_t i;
+    size_t i; // 当前作用域变量，用于保存当前处理数据。
 
     for (i = 0U; i < (sizeof(all_valve_pins) / sizeof(all_valve_pins[0])); ++i)
     {
@@ -692,7 +699,7 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
  */
 void rs485_sensor_callback(uart_callback_args_t *p_args)
 {
-    H_Gas_Platform_Context *context;
+    H_Gas_Platform_Context *context; // 当前作用域变量，用于保存模块上下文指针。
 
     if ((p_args == NULL) || (p_args->p_context == NULL))
     {

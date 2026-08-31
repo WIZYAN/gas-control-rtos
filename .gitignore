@@ -14,6 +14,7 @@ GAS_CONTROL_RTOS/hmi-screen/GasControl_HMI_*/dciot_build/
 *.su
 *.elf
 *.map
+*.exe
 
 # Local IDE and temporary data
 p2/

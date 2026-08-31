@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现串口屏运行参数编辑、确认保存和日志清除业务。
+ */
+
 #include "A_Hmi_Config.h"
 
 #include <stddef.h>
@@ -51,9 +58,9 @@ typedef enum
  */
 static size_t A_HmiConfig_FormatUnsigned(uint32_t value, char *text, size_t capacity)
 {
-    char reverse[10];
-    size_t length = 0U;
-    size_t index;
+    char reverse[10]; // 当前作用域变量，用于保存当前处理数据数组。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     do
     {
@@ -80,9 +87,9 @@ static size_t A_HmiConfig_FormatUnsigned(uint32_t value, char *text, size_t capa
  */
 static size_t A_HmiConfig_FormatFixed3(float value, char *text, size_t capacity)
 {
-    uint32_t raw = (uint32_t) ((value * GAS_CONFIG_PRESSURE_SCALE) + 0.5F);
-    uint32_t fraction = raw % 1000U;
-    size_t length = A_HmiConfig_FormatUnsigned(raw / 1000U, text, capacity);
+    uint32_t raw = (uint32_t) ((value * GAS_CONFIG_PRESSURE_SCALE) + 0.5F); // 当前作用域变量，用于保存当前处理数据。
+    uint32_t fraction = raw % 1000U; // 当前作用域变量，用于保存当前处理数据。
+    size_t length = A_HmiConfig_FormatUnsigned(raw / 1000U, text, capacity); // 当前作用域变量，用于保存有效数据长度。
 
     if ((length == 0U) || ((length + 4U) > capacity))
     {
@@ -136,8 +143,8 @@ static bool A_HmiConfig_TrimText(const char **text, size_t *length)
  */
 static bool A_HmiConfig_ParseUnsigned(const char *text, size_t length, uint32_t *value)
 {
-    uint32_t result = 0U;
-    size_t index;
+    uint32_t result = 0U; // 当前作用域变量，用于保存操作结果。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((value == NULL) || !A_HmiConfig_TrimText(&text, &length))
     {
@@ -145,7 +152,7 @@ static bool A_HmiConfig_ParseUnsigned(const char *text, size_t length, uint32_t 
     }
     for (index = 0U; index < length; ++index)
     {
-        uint8_t digit;
+        uint8_t digit; // 当前作用域变量，用于保存当前处理数据。
         if ((text[index] < '0') || (text[index] > '9'))
         {
             return false;
@@ -169,12 +176,12 @@ static bool A_HmiConfig_ParseUnsigned(const char *text, size_t length, uint32_t 
  */
 static bool A_HmiConfig_ParseFixed3Raw(const char *text, size_t length, uint32_t *raw)
 {
-    uint32_t integer = 0U;
-    uint32_t fraction = 0U;
-    uint32_t scale = 100U;
-    size_t index;
-    bool decimal_seen = false;
-    uint8_t fraction_digits = 0U;
+    uint32_t integer = 0U; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t fraction = 0U; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t scale = 100U; // 当前作用域变量，用于保存当前处理数据。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    bool decimal_seen = false; // decimal_seen 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未读取小数点，true表示已经读取小数点。
+    uint8_t fraction_digits = 0U; // 当前作用域变量，用于保存当前处理数据。
 
     if ((raw == NULL) || !A_HmiConfig_TrimText(&text, &length))
     {
@@ -197,7 +204,7 @@ static bool A_HmiConfig_ParseFixed3Raw(const char *text, size_t length, uint32_t
         }
         if (!decimal_seen)
         {
-            uint32_t digit = (uint32_t) (text[index] - '0');
+            uint32_t digit = (uint32_t) (text[index] - '0'); // 当前作用域变量，用于保存当前处理数据。
             if (integer > ((UINT32_MAX - digit) / 10U))
             {
                 return false;
@@ -231,8 +238,8 @@ static bool A_HmiConfig_ParseFixed3Raw(const char *text, size_t length, uint32_t
  */
 static void A_HmiConfig_ApplyHiddenParameters(Gas_Config *config)
 {
-    uint32_t switch_raw;
-    uint32_t release_raw;
+    uint32_t switch_raw; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t release_raw; // 当前作用域变量，用于保存当前处理数据。
 
     if (config == NULL)
     {
@@ -274,7 +281,7 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
                                                           const char *text,
                                                           size_t length)
 {
-    uint32_t value;
+    uint32_t value; // 当前作用域变量，用于保存当前处理值。
 
     if (field <= 3U)
     {
@@ -405,8 +412,8 @@ static size_t A_HmiConfig_FormatLogClearCount(uint16_t count,
 {
     const char prefix[] = "\xB5\xB1\xC7\xB0\xC8\xD5\xD6\xBE\xA3\xBA"; // 当前日志：。
     const char suffix[] = "\xCC\xF5"; // 条。
-    size_t length = sizeof(prefix) - 1U;
-    size_t number_length;
+    size_t length = sizeof(prefix) - 1U; // 当前作用域变量，用于保存有效数据长度。
+    size_t number_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((text == NULL) || (capacity < (length + sizeof(suffix))))
     {
@@ -440,10 +447,10 @@ static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
     const char busy_text[] = "\xD5\xFD\xD4\xDA\xC7\xE5\xB3\xFD\xA3\xBA"; // 正在清除：。
     const char success_text[] = "\xC7\xE5\xB3\xFD\xB3\xC9\xB9\xA6\xA3\xAC\xB5\xB1\xC7\xB0\x30\xCC\xF5"; // 清除成功，当前0条。
     const char failed_text[] = "\xC7\xE5\xB3\xFD\xCA\xA7\xB0\xDC\xA3\xAC\xC7\xEB\xD6\xD8\xCA\xD4"; // 清除失败，请重试。
-    const char *fixed_text = wait_text;
-    size_t fixed_length = sizeof(wait_text) - 1U;
-    size_t length;
-    size_t number_length;
+    const char *fixed_text = wait_text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+    size_t fixed_length = sizeof(wait_text) - 1U; // 当前作用域变量，用于保存有效数据长度。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
+    size_t number_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((text == NULL) || (capacity == 0U))
     {
@@ -451,12 +458,12 @@ static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
     }
     if (status == A_HMI_LOG_CLEAR_SUCCESS)
     {
-        fixed_text = success_text;
+        fixed_text = success_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(success_text) - 1U;
     }
     else if (status == A_HMI_LOG_CLEAR_FAILED)
     {
-        fixed_text = failed_text;
+        fixed_text = failed_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(failed_text) - 1U;
     }
     else if (status == A_HMI_LOG_CLEAR_BUSY)
@@ -494,7 +501,7 @@ static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
  */
 static const char *A_HmiConfig_GetStatusText(uint8_t status, size_t *length)
 {
-    const char *text;
+    const char *text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
 
     switch ((A_Hmi_Config_Status) status)
     {
@@ -566,7 +573,7 @@ static const char *A_HmiConfig_GetFieldName(uint8_t field, size_t *length)
         "\xCA\xD6\xB6\xAF\xC5\xC5\xC6\xF8\xCA\xB1\xBC\xE4",
         "\xB2\xE2\xCA\xD4\xB7\xA7\xD7\xEE\xB3\xA4\xBF\xAA\xC6\xF4"
     };
-    const char *text = "\xC8\xAB\xB2\xBF\xD4\xCB\xD0\xD0\xB2\xCE\xCA\xFD";
+    const char *text = "\xC8\xAB\xB2\xBF\xD4\xCB\xD0\xD0\xB2\xCE\xCA\xFD"; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
 
     if (field < A_HMI_CONFIG_TEXT_COUNT)
     {
@@ -584,7 +591,7 @@ static const char *A_HmiConfig_GetFieldName(uint8_t field, size_t *length)
  */
 static const char *A_HmiConfig_GetDialogInfoText(uint8_t status, size_t *length)
 {
-    const char *text;
+    const char *text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
 
     switch ((A_Hmi_Config_Status) status)
     {
@@ -762,8 +769,8 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
     {
         if (value != 0U)
         {
-            const char *current_text = "\xB5\xB1\xC7\xB0\xB2\xCE\xCA\xFD";
-            const char *default_text = "\xC4\xAC\xC8\xCF\xB2\xCE\xCA\xFD";
+            const char *current_text = "\xB5\xB1\xC7\xB0\xB2\xCE\xCA\xFD"; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+            const char *default_text = "\xC4\xAC\xC8\xCF\xB2\xCE\xCA\xFD"; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
 
             A_GasConfig_LoadDefaults(&context->edit_config);
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
@@ -797,14 +804,14 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
 void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
                            const Gas_Config *current_config)
 {
-    char text[F_HMI_TEXT_MAX_SIZE + 1U];
-    uint16_t page_id;
-    uint16_t control_id;
-    size_t length;
-    size_t formatted_length;
-    uint8_t field;
-    A_Hmi_Config_Input_Result input_result;
-    A_Gas_Config_Validation validation;
+    char text[F_HMI_TEXT_MAX_SIZE + 1U]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
+    uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
+    size_t formatted_length; // 当前作用域变量，用于保存有效数据长度。
+    uint8_t field; // 当前作用域变量，用于保存当前处理数据。
+    A_Hmi_Config_Input_Result input_result; // 当前作用域变量，用于保存操作结果。
+    A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
     if ((context == NULL) || (current_config == NULL) || (context->hmi == NULL))
     {
@@ -918,7 +925,7 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
                               A_Hmi_Config_Result result,
                               const Gas_Config *current_config)
 {
-    A_Hmi_Config_Status status;
+    A_Hmi_Config_Status status; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (current_config == NULL))
     {
@@ -954,7 +961,7 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
     {
         context->refresh_mask |= (context->pending_field < A_HMI_CONFIG_TEXT_COUNT) ?
                                  (uint16_t) (1U << context->pending_field) :
-                                 A_HMI_CONFIG_FIELD_MASK;
+                                 A_HMI_CONFIG_FIELD_MASK; // 当前作用域变量，用于保存当前处理数据。
     }
     A_HmiConfig_SetStatus(context, status);
 }
@@ -1047,7 +1054,7 @@ void A_HmiConfig_ReportLogClear(A_Hmi_Config_Context *context,
                                 uint8_t progress,
                                 uint16_t log_count)
 {
-    A_Hmi_Config_Status page_status;
+    A_Hmi_Config_Status page_status; // 当前作用域变量，用于保存当前处理数据。
 
     if (context == NULL)
     {
@@ -1100,12 +1107,12 @@ void A_HmiConfig_ReportLogClear(A_Hmi_Config_Context *context,
  */
 void A_HmiConfig_Task(A_Hmi_Config_Context *context)
 {
-    char text[64];
-    const char *fixed_text;
-    size_t length = 0U;
-    uint16_t page_id;
-    uint16_t control_id;
-    uint8_t slot;
+    char text[64]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    const char *fixed_text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
+    uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
+    uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
+    uint8_t slot; // 当前作用域变量，用于保存数组或队列槽位。
 
     if ((context == NULL) || !context->active || (context->hmi == NULL))
     {
@@ -1179,12 +1186,12 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
     {
         control_id = (uint16_t) (A_HMI_CONFIG_TEXT_BASE + slot);
         length = A_HmiConfig_FormatField(&context->edit_config, slot, text, sizeof(text));
-        fixed_text = text;
+        fixed_text = text; // 当前作用域变量，用于保存当前处理数据。
     }
     else if (slot == A_HMI_CONFIG_STATUS_SLOT)
     {
         control_id = A_HMI_CONFIG_STATUS_TEXT_ID;
-        fixed_text = A_HmiConfig_GetStatusText(context->status, &length);
+        fixed_text = A_HmiConfig_GetStatusText(context->status, &length); // 当前作用域变量，用于保存当前处理数据。
     }
     else
     {
@@ -1193,26 +1200,26 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
         {
             case A_HMI_CONFIG_DIALOG_NAME_SLOT:
                 control_id = A_HMI_CONFIG_DIALOG_NAME_TEXT_ID;
-                fixed_text = A_HmiConfig_GetFieldName(context->pending_field, &length);
+                fixed_text = A_HmiConfig_GetFieldName(context->pending_field, &length); // 当前作用域变量，用于保存当前处理数据。
                 break;
             case A_HMI_CONFIG_DIALOG_OLD_SLOT:
                 control_id = A_HMI_CONFIG_DIALOG_OLD_TEXT_ID;
-                fixed_text = context->pending_old_text;
+                fixed_text = context->pending_old_text; // 当前作用域变量，用于保存当前处理数据。
                 length = strlen(fixed_text);
                 break;
             case A_HMI_CONFIG_DIALOG_NEW_SLOT:
                 control_id = A_HMI_CONFIG_DIALOG_NEW_TEXT_ID;
-                fixed_text = context->pending_new_text;
+                fixed_text = context->pending_new_text; // 当前作用域变量，用于保存当前处理数据。
                 length = strlen(fixed_text);
                 break;
             default:
                 control_id = A_HMI_CONFIG_DIALOG_INFO_TEXT_ID;
-                fixed_text = A_HmiConfig_GetDialogInfoText(context->status, &length);
+                fixed_text = A_HmiConfig_GetDialogInfoText(context->status, &length); // 当前作用域变量，用于保存当前处理数据。
                 break;
         }
         if (length == 0U)
         {
-            fixed_text = "--";
+            fixed_text = "--"; // 当前作用域变量，用于保存当前处理数据。
             length = 2U;
         }
     }

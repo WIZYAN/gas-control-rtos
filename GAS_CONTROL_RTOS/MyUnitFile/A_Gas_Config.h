@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明运行参数记录格式、校验结果和持久化接口。
+ */
+
 #ifndef A_GAS_CONFIG_H
 #define A_GAS_CONFIG_H
 

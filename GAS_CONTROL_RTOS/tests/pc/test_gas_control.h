@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明PC回归测试使用的气源控制测试接口。
+ */
+
 #ifndef TEST_GAS_CONTROL_H
 #define TEST_GAS_CONTROL_H
 

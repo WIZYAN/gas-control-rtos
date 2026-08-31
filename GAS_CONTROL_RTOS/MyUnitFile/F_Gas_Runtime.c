@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现气源运行时平台初始化和毫秒时基功能封装。
+ */
+
 #include "F_Gas_Runtime.h"
 
 #include <stddef.h>

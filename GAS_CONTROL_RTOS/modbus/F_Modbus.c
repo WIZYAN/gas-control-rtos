@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现外部Modbus RTU从站帧解析、CRC校验和功能码处理。
+ */
+
 // 本文件实现 SCI0/RS485 外部 Modbus RTU 从站功能层。
 #include "F_Modbus.h"
 
@@ -44,7 +51,7 @@ static void F_Modbus_WriteU16BigEndian(uint8_t *data, uint16_t value)
  */
 static void F_Modbus_AppendCrc(uint8_t *frame, uint16_t payload_length)
 {
-    uint16_t crc = F_Modbus_Crc16(frame, payload_length);
+    uint16_t crc = F_Modbus_Crc16(frame, payload_length); // 当前作用域变量，用于保存CRC校验值。
 
     frame[payload_length] = (uint8_t) crc;
     frame[payload_length + 1U] = (uint8_t) (crc >> 8U);
@@ -58,8 +65,8 @@ static void F_Modbus_AppendCrc(uint8_t *frame, uint16_t payload_length)
  */
 static bool F_Modbus_FrameCrcIsValid(const uint8_t *frame, uint16_t length)
 {
-    uint16_t received_crc;
-    uint16_t calculated_crc;
+    uint16_t received_crc; // 当前作用域变量，用于保存CRC校验值。
+    uint16_t calculated_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((frame == NULL) || (length < 4U))
     {
@@ -81,7 +88,7 @@ static void F_Modbus_SendException(F_Modbus_Context *context,
                           uint8_t function_code,
                           uint8_t exception_code)
 {
-    uint8_t response[5];
+    uint8_t response[5]; // 当前作用域变量，用于保存协议响应数组。
 
     response[0] = context->slave_address;
     response[1] = (uint8_t) (function_code | 0x80U);
@@ -100,14 +107,14 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
                                 const uint8_t *request,
                                 uint8_t function_code)
 {
-    uint8_t response[H_MODBUS_FRAME_MAX_LENGTH];
-    const uint16_t *register_table;
-    uint16_t table_count;
-    uint16_t start_address = F_Modbus_ReadU16BigEndian(&request[2]);
-    uint16_t quantity = F_Modbus_ReadU16BigEndian(&request[4]);
-    uint16_t start_offset;
-    uint16_t i;
-    uint16_t response_length;
+    uint8_t response[H_MODBUS_FRAME_MAX_LENGTH]; // 当前作用域变量，用于保存协议响应数组。
+    const uint16_t *register_table; // 当前作用域变量，用于保存当前处理数据指针。
+    uint16_t table_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t start_address = F_Modbus_ReadU16BigEndian(&request[2]); // 当前作用域变量，用于保存存储或寄存器地址。
+    uint16_t quantity = F_Modbus_ReadU16BigEndian(&request[4]); // 当前作用域变量，用于保存当前处理数据。
+    uint16_t start_offset; // 当前作用域变量，用于保存数据偏移量。
+    uint16_t i; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t response_length; // 当前作用域变量，用于保存有效数据长度。
 
     if (quantity == 0U)
     {
@@ -117,13 +124,13 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
 
     if (function_code == MODBUS_FUNCTION_READ_INPUT)
     {
-        register_table = context->input_register;
+        register_table = context->input_register; // 当前作用域变量，用于保存当前处理数据。
         table_count = F_MODBUS_INPUT_REGISTER_COUNT;
         start_offset = start_address;
     }
     else
     {
-        register_table = context->holding_register;
+        register_table = context->holding_register; // 当前作用域变量，用于保存当前处理数据。
         table_count = F_MODBUS_HOLDING_REGISTER_COUNT;
         if (start_address < F_MODBUS_HOLDING_BASE_ADDRESS)
         {
@@ -163,10 +170,10 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
  */
 static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context, const uint8_t *request)
 {
-    uint8_t response[8];
-    uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]);
-    uint16_t value = F_Modbus_ReadU16BigEndian(&request[4]);
-    uint16_t offset;
+    uint8_t response[8]; // 当前作用域变量，用于保存协议响应数组。
+    uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]); // 当前作用域变量，用于保存存储或寄存器地址。
+    uint16_t value = F_Modbus_ReadU16BigEndian(&request[4]); // 当前作用域变量，用于保存当前处理值。
+    uint16_t offset; // 当前作用域变量，用于保存数据偏移量。
 
     if ((address < F_MODBUS_HOLDING_BASE_ADDRESS) ||
         (address >= (F_MODBUS_HOLDING_BASE_ADDRESS + F_MODBUS_HOLDING_REGISTER_COUNT)))
@@ -195,12 +202,12 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
                                 const uint8_t *request,
                                 uint16_t request_length)
 {
-    uint8_t response[8];
-    uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]);
-    uint16_t quantity = F_Modbus_ReadU16BigEndian(&request[4]);
-    uint8_t byte_count = request[6];
-    uint16_t offset;
-    uint16_t i;
+    uint8_t response[8]; // 当前作用域变量，用于保存协议响应数组。
+    uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]); // 当前作用域变量，用于保存存储或寄存器地址。
+    uint16_t quantity = F_Modbus_ReadU16BigEndian(&request[4]); // 当前作用域变量，用于保存当前处理数据。
+    uint8_t byte_count = request[6]; // 当前作用域变量，用于保存数量计数。
+    uint16_t offset; // 当前作用域变量，用于保存数据偏移量。
+    uint16_t i; // 当前作用域变量，用于保存当前处理数据。
 
     if ((quantity == 0U) || (byte_count != (uint8_t) (quantity * 2U)) ||
         (request_length != (uint16_t) (9U + byte_count)))
@@ -270,7 +277,7 @@ bool F_Modbus_Init(F_Modbus_Context *context,
  */
 bool F_Modbus_Deinit(F_Modbus_Context *context)
 {
-    bool success;
+    bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if (context == NULL)
     {
@@ -305,9 +312,9 @@ bool F_Modbus_HasFault(const F_Modbus_Context *context)
  */
 void F_Modbus_Task(F_Modbus_Context *context)
 {
-    uint8_t request[H_MODBUS_FRAME_MAX_LENGTH];
-    uint16_t request_length;
-    uint8_t function_code;
+    uint8_t request[H_MODBUS_FRAME_MAX_LENGTH]; // 当前作用域变量，用于保存待处理请求数组。
+    uint16_t request_length; // 当前作用域变量，用于保存有效数据长度。
+    uint8_t function_code; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (context->hardware == NULL) ||
         H_Modbus_IsTransmitBusy(context->hardware) ||
@@ -437,9 +444,9 @@ bool F_Modbus_TakeWriteEvent(F_Modbus_Context *context,
  */
 uint16_t F_Modbus_Crc16(const uint8_t *data, uint16_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    uint16_t index;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    uint16_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     if (data == NULL)
     {

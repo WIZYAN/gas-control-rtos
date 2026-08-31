@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现三阀命令、强吸合保持切换和阀门安全互锁。
+ */
+
 #include "F_Valve_Control.h"
 
 #include <stddef.h>
@@ -10,7 +17,7 @@
  */
 static bool F_ValveControl_OtherSupplyIsOn(const Gas_System *system, uint8_t requested_index)
 {
-    uint8_t i;
+    uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
     for (i = 0U; i < GAS_CYLINDER_COUNT; ++i)
     {
@@ -30,7 +37,7 @@ static bool F_ValveControl_OtherSupplyIsOn(const Gas_System *system, uint8_t req
  */
 static bool F_ValveControl_ManualOpenAllowed(const Gas_System *system, uint8_t index)
 {
-    gas_cylinder_state_t state;
+    gas_cylinder_state_t state; // 当前作用域变量，用于保存业务状态。
 
     if ((system == NULL) || (index >= GAS_CYLINDER_COUNT) ||
         (system->mode != GAS_MODE_AUTO) || system->cylinder[index].supply_cmd)
@@ -53,7 +60,7 @@ static bool F_ValveControl_ManualOpenAllowed(const Gas_System *system, uint8_t i
  */
 void F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system)
 {
-    uint8_t i;
+    uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
     H_GasPlatform_AllValvesOff(platform);
     if (system != NULL)

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现系统上电后的FreeRTOS气源控制程序入口。
+ */
+
 #include "hal_data.h"
 
 #include "A_Gas_Rtos.h"
@@ -13,7 +20,7 @@ void hal_entry(void)
 #if BSP_TZ_SECURE_BUILD
     R_BSP_NonSecureEnter();
 #else
-    static A_Gas_Rtos_Context gas_rtos_context;
+    static A_Gas_Rtos_Context gas_rtos_context; // 当前作用域变量，用于保存模块上下文。
 
     if (!A_GasRtos_Start(&gas_rtos_context))
     {

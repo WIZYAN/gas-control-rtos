@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现AT24C256存储业务层的分区读写和日志区清除接口。
+ */
+
 #include "A_Storage.h"
 
 #include <string.h>

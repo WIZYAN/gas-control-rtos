@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明AT24C256功能层上下文及非阻塞读写接口。
+ */
+
 #ifndef F_AT24C256_H
 #define F_AT24C256_H
 
@@ -31,7 +38,7 @@ typedef struct
     uint32_t write_protect_pin;    // WP 对应的 FSP GPIO 编码，高电平禁止写入。
     uint8_t device_address_7bit;   // A2～A0 形成的七位 IIC 器件地址。
     F_At24c256_Result last_result;    // 最近一次读写或自检操作结果。
-    bool initialized;             // 器件是否已经完成总线初始化和应答探测。
+    bool initialized; // 器件是否已经完成总线初始化和应答探测；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未初始化，true表示已经初始化。
 } F_At24c256_Context;
 
 /*

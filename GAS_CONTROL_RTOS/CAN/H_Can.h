@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明CAN0硬件层帧结构、上下文和收发接口。
+ */
+
 #ifndef H_CAN_H
 #define H_CAN_H
 
@@ -23,9 +30,9 @@ typedef struct
     volatile uint8_t receive_head;       // 接收队列下一个写入位置。
     volatile uint8_t receive_tail;       // 接收队列下一个读出位置。
     volatile uint32_t dropped_frames;    // 队列满、帧格式错误或邮箱丢帧累计数量。
-    volatile bool transmit_busy;         // CAN0正在发送一帧数据。
-    volatile bool bus_off;               // CAN控制器进入总线关闭状态。
-    bool can_open;                       // CAN0驱动已经成功打开。
+    volatile bool transmit_busy;         // CAN发送上下文标志；使用范围：CAN中断与协议任务之间；取值范围：false/true，false表示发送空闲，true表示CAN0正在发送一帧数据。
+    volatile bool bus_off;               // CAN总线状态标志；使用范围：CAN中断与协议任务之间；取值范围：false/true，false表示总线正常，true表示CAN控制器已进入总线关闭状态。
+    bool can_open; // CAN0驱动已经成功打开；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭，true表示开启。
 } H_Can_Context;
 
 /*

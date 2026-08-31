@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明GPIO软件IIC硬件层上下文和基础收发接口。
+ */
+
 #ifndef H_SOFT_IIC_H
 #define H_SOFT_IIC_H
 
@@ -10,7 +17,7 @@ typedef struct
     uint32_t scl_pin;         // 软件 IIC 时钟线对应的 FSP GPIO 编码。
     uint32_t sda_pin;         // 软件 IIC 数据线对应的 FSP GPIO 编码。
     uint32_t half_period_us;  // 软件 IIC 半个时钟周期，单位微秒。
-    bool initialized;        // 两个 GPIO 是否已经配置为 NMOS 开漏输出。
+    bool initialized; // 两个 GPIO 是否已经配置为 NMOS 开漏输出；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未初始化，true表示已经初始化。
 } H_Soft_Iic_Context;
 
 /*

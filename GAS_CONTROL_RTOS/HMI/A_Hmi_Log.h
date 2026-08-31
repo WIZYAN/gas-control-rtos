@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明串口屏日志查询条件、状态机上下文和分页接口。
+ */
+
 #ifndef A_HMI_LOG_H
 #define A_HMI_LOG_H
 
@@ -101,7 +108,7 @@ typedef struct
     A_Hmi_Log_Date_Time end;   // 包含边界的结束时间。
     uint8_t cylinder_number;   // 0表示全部，1～6表示指定事件气瓶。
     uint8_t target_state;      // 0表示全部，1～7表示事件的新状态。
-    bool time_enabled;         // true按起止时间筛选，false查询全部时间。
+    bool time_enabled; // true按起止时间筛选，false查询全部时间；使用范围：当前声明作用域内使用；取值范围：false/true，false表示禁用，true表示启用。
 } A_Hmi_Log_Filter;
 
 // 条件查询页提示状态，由日志任务分时发送。
@@ -130,7 +137,7 @@ typedef struct
     uint16_t scanned_count;                                   // 当前快照中已经读取并校验的原始日志数量。
     uint16_t scan_logical_index;                              // 反向扫描边界，下一条读取索引为该值减1。
     uint16_t log_index[A_HMI_LOG_INDEX_CAPACITY];             // 当前类型从新到旧排列的EEPROM逻辑索引，约占2KB RAM。
-    uint16_t filter_refresh_mask;                             // 查询页需要分时回写的动态控件位图。
+    uint16_t filter_refresh_mask;                             // 日志查询上下文待刷新位图；bit0～bit7依次表示开始日期、开始时间、结束日期、结束时间、全部时间开关、气瓶条件、状态条件和提示文本，0表示无需刷新，1表示等待刷新，bit8～bit15保留为0。
     uint16_t current_page;                                    // 当前已显示的零起始页码，第1页在内部保存为0。
     uint16_t requested_page;                                  // 最近一次翻页命令要求显示的零起始页码。
     uint16_t page_start_index;                                // 当前页在log_index数组中的起始下标。
@@ -141,19 +148,19 @@ typedef struct
     uint8_t current_record[A_GAS_LOG_RECORD_SIZE];             // 当前根据分页索引读取的32字节日志。
     char row[A_HMI_LOG_ROW_MAX_SIZE];                         // 当前已经格式化但可能尚未发出的GBK数据行。
     size_t row_length;                                        // 当前数据行的有效字节数。
-    bool current_record_ready;                                // current_record中是否保存有效日志。
-    bool row_ready;                                           // row中是否保存等待发送的有效行。
-    bool request_pending;                                     // 是否收到新的事件或常规日志刷新请求。
-    bool page_request_pending;                                // 是否收到最新页、上一页或下一页请求。
-    bool read_failed;                                         // 本次查询是否发生EEPROM读取或记录校验失败。
-    bool filter_error;                                        // 当前快照的开始时间晚于结束时间。
-    bool snapshot_changed;                                    // 索引建立后是否有新日志产生，需要人员刷新。
-    bool progress_pending;                                    // 是否有一条后台索引进度文本等待发送。
-    bool index_complete;                                      // 当前类型的全部RAM索引是否已经建立完成。
-    bool cache_valid;                                         // 当前RAM索引是否对应一个可用的日志快照。
-    bool page_rendered;                                       // 当前记录控件中是否已经显示一页有效数据。
-    bool table_is_clear;                                      // 当前记录控件是否已经清空且尚未追加页面数据。
-    bool ready;                                               // HMI和日志模块引用是否已经配置。
+    bool current_record_ready; // current_record中是否保存有效日志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool row_ready; // row中是否保存等待发送的有效行；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool request_pending; // 是否收到新的事件或常规日志刷新请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool page_request_pending; // 是否收到最新页、上一页或下一页请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool read_failed; // 本次查询是否发生EEPROM读取或记录校验失败；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未发生失败，true表示已经发生失败。
+    bool filter_error; // 日志时间筛选错误标志；使用范围：A_Hmi_Log_Context当前查询快照内；取值范围：false/true，false表示起止时间关系合法，true表示开始时间晚于结束时间。
+    bool snapshot_changed; // 索引建立后是否有新日志产生，需要人员刷新；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未发生变化，true表示已经发生变化。
+    bool progress_pending; // 是否有一条后台索引进度文本等待发送；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool index_complete; // 当前类型的全部RAM索引是否已经建立完成；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未完成，true表示已完成。
+    bool cache_valid; // 当前RAM索引是否对应一个可用的日志快照；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
+    bool page_rendered; // 日志页面显示完成标志；使用范围：A_Hmi_Log_Context当前分页流程内；取值范围：false/true，false表示尚未完整显示当前页，true表示当前记录控件已显示一页有效数据。
+    bool table_is_clear; // 当前记录控件是否已经清空且尚未追加页面数据；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未清除，true表示已清除。
+    bool ready; // HMI和日志模块引用是否已经配置；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Hmi_Log_Context;
 
 /*

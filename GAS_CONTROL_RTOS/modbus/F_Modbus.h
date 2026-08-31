@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明外部Modbus RTU从站功能层上下文和寄存器接口。
+ */
+
 // 本文件声明 SCI0/RS485 外部 Modbus RTU 从站功能层接口。
 #ifndef F_MODBUS_H
 #define F_MODBUS_H
@@ -20,7 +27,7 @@ typedef struct
     uint16_t write_start_offset; // 最近一次主站写入的保持寄存器起始偏移。
     uint16_t write_register_count; // 最近一次主站写入的保持寄存器数量。
     uint8_t slave_address; // 外部 Modbus 从站地址。
-    bool write_pending; // 存在尚未由应用层处理的写寄存器事件。
+    bool write_pending; // 存在尚未由应用层处理的写寄存器事件；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
 } F_Modbus_Context;
 
 /*

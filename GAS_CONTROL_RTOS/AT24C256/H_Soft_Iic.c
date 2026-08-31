@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现AT24C256使用的GPIO软件IIC时序和总线操作。
+ */
+
 #include "H_Soft_Iic.h"
 
 #include <stddef.h>
@@ -42,7 +49,7 @@ static bool H_SoftIic_ConfigureOpenDrainPin(uint32_t pin)
  */
 static bool H_SoftIic_WriteLine(uint32_t pin, bool high)
 {
-    bsp_io_level_t level = high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW;
+    bsp_io_level_t level = high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW; // 当前作用域变量，用于保存GPIO电平。
 
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, (bsp_io_port_pin_t) pin, level) == FSP_SUCCESS);
 }
@@ -55,7 +62,7 @@ static bool H_SoftIic_WriteLine(uint32_t pin, bool high)
  */
 static bool H_SoftIic_ReadLine(uint32_t pin, bool *high)
 {
-    bsp_io_level_t level;
+    bsp_io_level_t level; // 当前作用域变量，用于保存GPIO电平。
 
     if ((high == NULL) ||
         (R_IOPORT_PinRead(&g_ioport_ctrl, (bsp_io_port_pin_t) pin, &level) != FSP_SUCCESS))
@@ -75,8 +82,8 @@ static bool H_SoftIic_ReadLine(uint32_t pin, bool *high)
  */
 static bool H_SoftIic_RaiseClock(H_Soft_Iic_Context *context)
 {
-    uint32_t retry;
-    bool high = false;
+    uint32_t retry; // 当前作用域变量，用于保存当前处理数据。
+    bool high = false; // SCL采样电平标志；使用范围：当前升高时钟函数内；取值范围：false/true，false表示SCL仍为低电平，true表示SCL已经变为高电平。
 
     if ((context == NULL) || !H_SoftIic_WriteLine(context->scl_pin, true))
     {
@@ -135,7 +142,7 @@ bool H_SoftIic_Init(H_Soft_Iic_Context *context,
  */
 bool H_SoftIic_Start(H_Soft_Iic_Context *context)
 {
-    bool sda_high = false;
+    bool sda_high = false; // SDA起始前采样电平标志；使用范围：当前起始条件函数内；取值范围：false/true，false表示SDA被拉低且总线忙，true表示SDA已经释放为高电平。
 
     if ((context == NULL) || !context->initialized ||
         !H_SoftIic_WriteLine(context->sda_pin, true) || !H_SoftIic_RaiseClock(context) ||
@@ -190,8 +197,8 @@ void H_SoftIic_Stop(H_Soft_Iic_Context *context)
  */
 bool H_SoftIic_WriteByte(H_Soft_Iic_Context *context, uint8_t data)
 {
-    uint8_t bit;
-    bool sda_high = true;
+    uint8_t bit; // 当前写字节函数使用的位序号，范围0～7。
+    bool sda_high = true; // 从机应答位采样标志；使用范围：当前写字节函数内；取值范围：false/true，false表示从机返回低电平ACK，true表示从机返回高电平NACK。
 
     if ((context == NULL) || !context->initialized)
     {
@@ -241,9 +248,9 @@ bool H_SoftIic_WriteByte(H_Soft_Iic_Context *context, uint8_t data)
  */
 uint8_t H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack)
 {
-    uint8_t bit;
-    uint8_t data = 0U;
-    bool sda_high = false;
+    uint8_t bit; // 当前读字节函数使用的位序号，范围0～7。
+    uint8_t data = 0U; // 当前作用域变量，用于保存业务数据。
+    bool sda_high = false; // SDA数据位采样标志；使用范围：当前读字节函数内；取值范围：false/true，false表示当前总线位为0，true表示当前总线位为1。
 
     if ((context == NULL) || !context->initialized || !H_SoftIic_WriteLine(context->sda_pin, true))
     {
@@ -284,9 +291,9 @@ uint8_t H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack)
  */
 bool H_SoftIic_RecoverBus(H_Soft_Iic_Context *context)
 {
-    uint8_t pulse;
-    bool scl_high = false;
-    bool sda_high = false;
+    uint8_t pulse; // 当前作用域变量，用于保存当前处理数据。
+    bool scl_high = false; // 恢复后SCL采样电平标志；使用范围：当前总线恢复函数内；取值范围：false/true，false表示SCL仍被拉低，true表示SCL已经释放为高电平。
+    bool sda_high = false; // 恢复后SDA采样电平标志；使用范围：当前总线恢复函数内；取值范围：false/true，false表示SDA仍被拉低，true表示SDA已经释放为高电平。
 
     if ((context == NULL) || !context->initialized ||
         !H_SoftIic_WriteLine(context->scl_pin, true) || !H_SoftIic_WriteLine(context->sda_pin, true))
@@ -324,7 +331,7 @@ bool H_SoftIic_WriteControlPin(uint32_t pin, bool high)
 {
     uint32_t configuration = IOPORT_CFG_PORT_DIRECTION_OUTPUT |
                              IOPORT_CFG_PORT_OUTPUT_HIGH;
-    bsp_io_level_t level = high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW;
+    bsp_io_level_t level = high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW; // 当前作用域变量，用于保存GPIO电平。
 
     return (R_IOPORT_PinCfg(&g_ioport_ctrl,
                             (bsp_io_port_pin_t) pin,

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明三阀控制功能层上下文和阀门操作接口。
+ */
+
 #ifndef F_VALVE_CONTROL_H
 #define F_VALVE_CONTROL_H
 

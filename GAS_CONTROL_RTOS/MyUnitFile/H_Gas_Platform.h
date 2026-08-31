@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明气源平台硬件上下文、阀门映射和底层操作接口。
+ */
+
 #ifndef H_GAS_PLATFORM_H
 #define H_GAS_PLATFORM_H
 
@@ -10,20 +17,20 @@
 // 硬件逻辑层上下文，由上层实例持有并通过指针传入所有硬件接口，模块内部不保存全局状态。
 typedef struct
 {
-    volatile bool sensor_tx_done;                  // SCI1 最近一次异步发送完成标志。
-    volatile bool sensor_rx_done;                  // SCI1 最近一次定长异步接收完成标志。
-    volatile bool sensor_uart_error;               // SCI1 最近一次事务错误标志。
-    bool sensor_uart_open;                         // 压力传感器 SCI1 实例是否已经成功打开。
+    volatile bool sensor_tx_done;                  // 传感器发送完成标志；使用范围：SCI1中断与传感器任务之间；取值范围：false/true，false表示异步发送尚未完成，true表示最近一次异步发送已完成。
+    volatile bool sensor_rx_done;                  // 传感器接收完成标志；使用范围：SCI1中断与传感器任务之间；取值范围：false/true，false表示定长接收尚未完成，true表示最近一次定长接收已完成。
+    volatile bool sensor_uart_error;               // 传感器串口错误标志；使用范围：SCI1中断与传感器任务之间；取值范围：false/true，false表示事务正常，true表示最近一次事务发生错误。
+    bool sensor_uart_open; // 压力传感器 SCI1 实例是否已经成功打开；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭，true表示开启。
     uint32_t millis;                               // 由 DWT 周期计数换算得到的累计毫秒计数。
     uint32_t last_cycle_count;                     // 上次换算时间时读取的 DWT 周期计数。
     uint32_t cycle_remainder;                      // 尚不足 1 ms 的剩余 CPU 周期数。
-    bool supply_state[GAS_CYLINDER_COUNT];         // 六路供气阀最近一次成功写入的逻辑状态。
-    bool exhaust_state[GAS_CYLINDER_COUNT];        // 六路排气阀最近一次成功写入的逻辑状态。
-    bool test_state[GAS_CYLINDER_COUNT];           // 六路测试阀最近一次成功写入的逻辑状态。
-    bool total_test_state;                         // VAL_CAL总测试阀最近一次成功写入的逻辑状态。
-    bool boost_state[GAS_CYLINDER_COUNT];          // 六组 VAL_Px 当前是否处于 12 V 吸合阶段。
+    bool supply_state[GAS_CYLINDER_COUNT]; // 六路供气阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool exhaust_state[GAS_CYLINDER_COUNT]; // 六路排气阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool test_state[GAS_CYLINDER_COUNT]; // 六路测试阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool total_test_state; // VAL_CAL总测试阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool boost_state[GAS_CYLINDER_COUNT]; // 六组 VAL_Px 当前是否处于 12 V 吸合阶段；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
     uint32_t boost_deadline_ms[GAS_CYLINDER_COUNT]; // 六组 12 V 吸合阶段的结束时间。
-    bool boost_interval_active[GAS_CYLINDER_COUNT]; // 六组强吸合最短间隔计时是否正在生效。
+    bool boost_interval_active[GAS_CYLINDER_COUNT]; // 六组强吸合最短间隔计时是否正在生效；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未激活，true表示已激活。
     uint32_t boost_available_ms[GAS_CYLINDER_COUNT]; // 六组允许再次启动 12 V 强吸合的最早时间。
 } H_Gas_Platform_Context;
 

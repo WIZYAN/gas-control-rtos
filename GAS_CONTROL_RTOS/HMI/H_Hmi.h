@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明SCI9串口屏硬件层上下文和异步收发接口。
+ */
+
 #ifndef H_HMI_H
 #define H_HMI_H
 
@@ -13,9 +20,9 @@ typedef struct
     volatile uint8_t rx_buffer[H_HMI_RX_BUFFER_SIZE]; // SCI9 回调写入的字节环形缓冲区。
     volatile uint16_t rx_head;                        // 回调下一次写入位置。
     volatile uint16_t rx_tail;                        // 任务下一次读取位置，同时供串口中断判断缓冲区是否已满。
-    volatile bool tx_busy;                            // SCI9 当前是否正在异步发送。
-    volatile bool uart_error;                         // SCI9 最近是否发生通信错误。
-    bool ready;                                       // SCI9 是否已经成功打开并绑定上下文。
+    volatile bool tx_busy;                            // HMI发送状态标志；使用范围：SCI9中断与HMI任务之间；取值范围：false/true，false表示发送空闲，true表示正在异步发送。
+    volatile bool uart_error;                         // HMI串口错误标志；使用范围：SCI9中断与HMI任务之间；取值范围：false/true，false表示通信正常，true表示最近一次通信发生错误。
+    bool ready; // SCI9 是否已经成功打开并绑定上下文；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } H_Hmi_Context;
 
 /*

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明串口屏应用层控件映射、上下文和刷新接口。
+ */
+
 #ifndef A_HMI_H
 #define A_HMI_H
 
@@ -41,26 +48,26 @@ typedef struct
     float pressure_refresh_mpa[GAS_PRESSURE_SENSOR_COUNT]; // 压力双层清除与写入两槽之间使用的数值快照。
     gas_pressure_quality_t pressure_refresh_quality[GAS_PRESSURE_SENSOR_COUNT]; // 与压力数值快照对应的数据质量。
     uint8_t refresh_slot;          // 下一个待刷新的显示控件槽号。
-    uint8_t supply_valve_refresh_value_bits; // 最近一次观察到的六路MCU实际进气阀命令位图。
-    uint8_t supply_valve_refresh_pending_bits; // 需要优先回写到31～36号进气阀图标的位图。
-    uint8_t exhaust_refresh_value_bits;       // 最近一次观察到的六路MCU实际排气命令位图，bit0～bit5对应1～6号瓶。
-    uint8_t exhaust_refresh_pending_bits;     // 需要优先回写到1～6号排气按钮的位图。
-    uint8_t exhaust_valve_refresh_pending_bits; // 需要优先回写到37～42号排气阀图标的位图。
-    uint8_t test_refresh_value_bits;          // 最近一次观察到的六路MCU实际测试阀命令位图，bit0～bit5对应1～6号瓶。
-    uint8_t test_refresh_pending_bits;        // 需要优先回写到7～12号测试阀按钮的位图。
-    uint8_t test_valve_refresh_pending_bits;  // 需要优先回写到43～48号测试阀图标的位图。
-    uint8_t disable_refresh_value_bits;       // 最近一次观察到的六路MCU停用状态位图，bit0～bit5对应1～6号瓶。
-    uint8_t disable_refresh_pending_bits;     // 需要优先回写到13～18号停用开关的位图。
-    uint8_t qualification_refresh_value_bits;   // 最近一次观察到的六路MCU测试通过标志位图，bit0～bit5对应1～6号瓶。
-    uint8_t qualification_refresh_pending_bits; // 需要优先回写到51～56号按钮的位图。
+    uint8_t supply_valve_refresh_value_bits; // HMI刷新上下文使用的进气阀快照位图；bit0～bit5对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t supply_valve_refresh_pending_bits; // HMI刷新上下文使用的进气阀待回写位图；bit0～bit5对应31～36号图标，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t exhaust_refresh_value_bits;       // HMI刷新上下文使用的排气阀快照位图；bit0～bit5对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t exhaust_refresh_pending_bits;     // HMI刷新上下文使用的排气按钮待回写位图；bit0～bit5对应1～6号按钮，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t exhaust_valve_refresh_pending_bits; // HMI刷新上下文使用的排气阀图标待回写位图；bit0～bit5对应37～42号图标，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t test_refresh_value_bits;          // HMI刷新上下文使用的测试阀快照位图；bit0～bit5对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t test_refresh_pending_bits;        // HMI刷新上下文使用的测试阀按钮待回写位图；bit0～bit5对应7～12号按钮，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t test_valve_refresh_pending_bits;  // HMI刷新上下文使用的测试阀图标待回写位图；bit0～bit5对应43～48号图标，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t disable_refresh_value_bits;       // HMI刷新上下文使用的停用状态快照位图；bit0～bit5对应1～6号瓶，0表示启用，1表示停用，bit6～bit7保留为0。
+    uint8_t disable_refresh_pending_bits;     // HMI刷新上下文使用的停用开关待回写位图；bit0～bit5对应13～18号开关，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
+    uint8_t qualification_refresh_value_bits;   // HMI刷新上下文使用的测试合格快照位图；bit0～bit5对应1～6号瓶，0表示未合格，1表示已合格，bit6～bit7保留为0。
+    uint8_t qualification_refresh_pending_bits; // HMI刷新上下文使用的合格按钮待回写位图；bit0～bit5对应51～56号按钮，0表示无需刷新，1表示等待刷新，bit6～bit7保留为0。
     uint32_t next_refresh_ms;      // 下一个显示帧允许发送的时间。
     uint32_t next_rtc_read_ms;     // 下一次允许发送 RTC 读取命令的时间。
-    bool supply_valve_refresh_initialized; // 是否已建立过六路实际进气阀命令同步快照。
-    bool exhaust_refresh_initialized;      // 是否已建立过六路实际排气命令同步快照。
-    bool test_refresh_initialized;         // 是否已建立过六路实际测试阀命令同步快照。
-    bool disable_refresh_initialized;      // 是否已建立过六路停用状态同步快照。
-    bool qualification_refresh_initialized; // 是否已建立过六路测试通过标志同步快照。
-    bool ready;                    // 串口屏 SCI9 和协议层是否初始化成功。
+    bool supply_valve_refresh_initialized; // 进气阀快照初始化标志；使用范围：A_Hmi_Context刷新状态内；取值范围：false/true，false表示尚未建立同步快照，true表示已经建立同步快照。
+    bool exhaust_refresh_initialized; // 排气阀快照初始化标志；使用范围：A_Hmi_Context刷新状态内；取值范围：false/true，false表示尚未建立同步快照，true表示已经建立同步快照。
+    bool test_refresh_initialized; // 测试阀快照初始化标志；使用范围：A_Hmi_Context刷新状态内；取值范围：false/true，false表示尚未建立同步快照，true表示已经建立同步快照。
+    bool disable_refresh_initialized; // 停用状态快照初始化标志；使用范围：A_Hmi_Context刷新状态内；取值范围：false/true，false表示尚未建立同步快照，true表示已经建立同步快照。
+    bool qualification_refresh_initialized; // 测试结论快照初始化标志；使用范围：A_Hmi_Context刷新状态内；取值范围：false/true，false表示尚未建立同步快照，true表示已经建立同步快照。
+    bool ready; // 串口屏 SCI9 和协议层是否初始化成功；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Hmi_Context;
 
 /*

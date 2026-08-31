@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明内部Modbus主站状态、结果和非阻塞轮询接口。
+ */
+
 #ifndef F_MODBUS_POLL_H
 #define F_MODBUS_POLL_H
 
@@ -43,7 +50,7 @@ typedef struct
     uint32_t deadline_ms;                               // 当前事务响应截止时间。
     F_Modbus_Poll_State state;                            // 当前事务子状态。
     F_Modbus_Poll_Result result;                          // 当前或最近一次事务结果。
-    bool result_pending;                                // 是否存在尚未被上层取走的结果。
+    bool result_pending; // 是否存在尚未被上层取走的结果；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
 } F_Modbus_Poll_Context;
 
 /*

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现AT24C256页写、随机读和写完成轮询功能。
+ */
+
 #include "F_At24c256.h"
 
 #include <string.h>
@@ -44,7 +51,7 @@ static bool F_At24c256_SetWriteProtect(const F_At24c256_Context *context, bool p
  */
 static bool F_At24c256_AddressInRange(uint16_t address, size_t length)
 {
-    size_t start = address;
+    size_t start = address; // 当前作用域变量，用于保存起始边界。
 
     return (length <= AT24C256_CAPACITY_BYTES) &&
            (start <= AT24C256_CAPACITY_BYTES) &&
@@ -59,7 +66,7 @@ static bool F_At24c256_AddressInRange(uint16_t address, size_t length)
  */
 static bool F_At24c256_SendDeviceAddress(F_At24c256_Context *context, bool read)
 {
-    uint8_t address_byte;
+    uint8_t address_byte; // 当前作用域变量，用于保存存储或寄存器地址。
 
     if (context == NULL)
     {
@@ -78,7 +85,7 @@ static bool F_At24c256_SendDeviceAddress(F_At24c256_Context *context, bool read)
  */
 static bool F_At24c256_ProbeReady(F_At24c256_Context *context)
 {
-    bool acknowledged;
+    bool acknowledged; // EEPROM应答标志；使用范围：当前器件就绪探测函数内；取值范围：false/true，false表示器件返回NACK或发送失败，true表示器件地址已收到ACK。
 
     if ((context == NULL) || !H_SoftIic_Start(&context->iic))
     {
@@ -99,7 +106,7 @@ static bool F_At24c256_ProbeReady(F_At24c256_Context *context)
  */
 static bool F_At24c256_WaitWriteComplete(F_At24c256_Context *context)
 {
-    uint8_t retry;
+    uint8_t retry; // 当前作用域变量，用于保存当前处理数据。
 
     for (retry = 0U; retry < AT24C256_WRITE_POLL_COUNT; ++retry)
     {
@@ -125,7 +132,7 @@ static bool F_At24c256_WritePageFragment(F_At24c256_Context *context,
                               const uint8_t *data,
                               size_t length)
 {
-    size_t i;
+    size_t i; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (data == NULL) || (length == 0U) ||
         !H_SoftIic_Start(&context->iic) || !F_At24c256_SendDeviceAddress(context, false) ||
@@ -196,7 +203,7 @@ bool F_At24c256_Read(F_At24c256_Context *context,
                    uint8_t *buffer,
                    size_t length)
 {
-    size_t i;
+    size_t i; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (buffer == NULL) || (length == 0U))
     {
@@ -242,8 +249,8 @@ bool F_At24c256_Write(F_At24c256_Context *context,
                     const uint8_t *data,
                     size_t length)
 {
-    size_t remaining = length;
-    size_t offset = 0U;
+    size_t remaining = length; // 当前作用域变量，用于保存当前处理数据。
+    size_t offset = 0U; // 当前作用域变量，用于保存数据偏移量。
 
     if ((context == NULL) || (data == NULL) || (length == 0U))
     {
@@ -265,8 +272,8 @@ bool F_At24c256_Write(F_At24c256_Context *context,
 
     while (remaining > 0U)
     {
-        size_t page_offset = (size_t) address % AT24C256_PAGE_SIZE_BYTES;
-        size_t fragment = AT24C256_PAGE_SIZE_BYTES - page_offset;
+        size_t page_offset = (size_t) address % AT24C256_PAGE_SIZE_BYTES; // 当前作用域变量，用于保存数据偏移量。
+        size_t fragment = AT24C256_PAGE_SIZE_BYTES - page_offset; // 当前作用域变量，用于保存当前处理数据。
 
         if (fragment > remaining)
         {
@@ -299,8 +306,8 @@ bool F_At24c256_Write(F_At24c256_Context *context,
  */
 bool F_At24c256_EraseRange(F_At24c256_Context *context, uint16_t address, size_t length)
 {
-    uint8_t erased[AT24C256_PAGE_SIZE_BYTES];
-    size_t remaining = length;
+    uint8_t erased[AT24C256_PAGE_SIZE_BYTES]; // 当前作用域变量，用于保存当前处理数据数组。
+    size_t remaining = length; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (length == 0U) || !F_At24c256_AddressInRange(address, length))
     {
@@ -310,7 +317,7 @@ bool F_At24c256_EraseRange(F_At24c256_Context *context, uint16_t address, size_t
     (void) memset(erased, 0xFF, sizeof(erased));
     while (remaining > 0U)
     {
-        size_t fragment = (remaining > sizeof(erased)) ? sizeof(erased) : remaining;
+        size_t fragment = (remaining > sizeof(erased)) ? sizeof(erased) : remaining; // 当前作用域变量，用于保存当前处理数据。
 
         if (!F_At24c256_Write(context, address, erased, fragment))
         {
@@ -331,10 +338,10 @@ bool F_At24c256_EraseRange(F_At24c256_Context *context, uint16_t address, size_t
  */
 bool F_At24c256_SelfTest(F_At24c256_Context *context, uint16_t test_address)
 {
-    const uint8_t pattern[2] = {0x4FU, 0x4BU};
-    uint8_t original[2];
-    uint8_t verified[2];
-    bool result;
+    const uint8_t pattern[2] = {0x4FU, 0x4BU}; // 当前作用域变量，用于保存当前处理数据数组。
+    uint8_t original[2]; // 当前作用域变量，用于保存当前处理数据数组。
+    uint8_t verified[2]; // 当前作用域变量，用于保存当前处理数据数组。
+    bool result; // EEPROM自检图样校验标志；使用范围：当前自检函数内；取值范围：false/true，false表示读回图样不一致，true表示读回图样一致。
 
     if ((context == NULL) || !F_At24c256_AddressInRange(test_address, sizeof(pattern)) ||
         !F_At24c256_Read(context, test_address, original, sizeof(original)) ||

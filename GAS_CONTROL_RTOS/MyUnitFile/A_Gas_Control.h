@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明气源控制总上下文、业务状态和外部操作接口。
+ */
+
 #ifndef A_GAS_CONTROL_H
 #define A_GAS_CONTROL_H
 
@@ -20,7 +27,7 @@
 // 总测试阀内部联动上下文，只保存等待总阀建立后再打开的分路测试请求。
 typedef struct
 {
-    uint8_t pending_open_mask;                         // 位0～5分别表示1～6号测试阀等待开启。
+    uint8_t pending_open_mask;                         // 测试阀控制上下文的等待开启位图；bit0～bit5分别对应1～6号测试阀，0表示无需等待，1表示等待总测试阀稳定后开启，bit6～bit7保留为0。
     uint32_t open_not_before_ms[GAS_CYLINDER_COUNT];  // 各分路允许开启的最早毫秒时间。
 } A_Gas_Total_Test_Context;
 

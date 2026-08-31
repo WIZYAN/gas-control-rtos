@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现CAN状态映射、参数访问、控制命令和日志读取业务。
+ */
+
 #include "A_Can.h"
 
 #include <stddef.h>
@@ -13,7 +20,7 @@
  */
 static uint32_t A_Can_FloatToRaw(float value)
 {
-    uint32_t raw = 0U;
+    uint32_t raw = 0U; // 当前作用域变量，用于保存当前处理数据。
     (void) memcpy(&raw, &value, sizeof(raw));
     return raw;
 }
@@ -26,7 +33,7 @@ static uint32_t A_Can_FloatToRaw(float value)
  */
 static float A_Can_RawToFloat(uint32_t raw)
 {
-    float value = 0.0F;
+    float value = 0.0F; // 当前作用域变量，用于保存当前处理值。
     (void) memcpy(&value, &raw, sizeof(value));
     return value;
 }
@@ -98,7 +105,7 @@ static bool A_Can_SetImmediateWriteResult(A_Can_Context *context,
                                           A_Can_Write_Result result,
                                           A_Can_Write_Detail detail)
 {
-    uint32_t packed = A_Can_PackWriteResult(result, detail);
+    uint32_t packed = A_Can_PackWriteResult(result, detail); // 当前作用域变量，用于保存当前处理数据。
 
     context->last_write_result = packed;
     if (!F_CanProtocol_QueueWriteResponse(&context->function,
@@ -186,12 +193,12 @@ static bool A_Can_QueueDeferredWriteResponse(A_Can_Context *context)
  */
 static uint32_t A_Can_GetCylinderMask(const Gas_System *system, uint8_t kind)
 {
-    uint32_t mask = 0U;
-    uint8_t index;
+    uint32_t mask = 0U; // 当前CAN读取函数使用的六瓶状态位图；bit0～bit5对应1～6号瓶，0表示对应状态未置位，1表示已置位，bit6～bit31保留为0。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        bool set = false;
+        bool set = false; // 当前气瓶状态置位标志；使用范围：本次六瓶状态汇总循环内；取值范围：false/true，false表示kind指定的阀门关闭或测试未合格，true表示阀门开启或测试合格。
         if (kind == 0U) { set = system->cylinder[index].supply_cmd; }
         else if (kind == 1U) { set = system->cylinder[index].exhaust_cmd; }
         else if (kind == 2U) { set = system->cylinder[index].test_cmd; }
@@ -216,7 +223,7 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
                             uint16_t address,
                             uint32_t *value)
 {
-    uint16_t offset;
+    uint16_t offset; // 当前作用域变量，用于保存数据偏移量。
 
     if ((context == NULL) || (system == NULL) || (value == NULL))
     {
@@ -339,8 +346,8 @@ static bool A_Can_AssignParameterCandidate(Gas_Config *candidate,
                                            uint32_t raw,
                                            A_Can_Write_Detail *detail)
 {
-    float pressure;
-    uint32_t minimum_fresh_ms = GAS_SENSOR_POLL_INTERVAL_MS * GAS_PRESSURE_SENSOR_COUNT;
+    float pressure; // 当前作用域变量，用于保存压力值。
+    uint32_t minimum_fresh_ms = GAS_SENSOR_POLL_INTERVAL_MS * GAS_PRESSURE_SENSOR_COUNT; // 当前作用域变量，用于保存毫秒时间值。
 
     if ((address >= A_CAN_ADDRESS_SWITCH_PRESSURE) &&
         (address <= A_CAN_ADDRESS_PRESSURE_MAX))
@@ -419,7 +426,7 @@ static bool A_Can_StartConfigWrite(A_Can_Context *context,
                                    A_Can_Write_Result *result,
                                    A_Can_Write_Detail *detail)
 {
-    A_Gas_Config_Validation validation = A_GasConfig_Validate(candidate);
+    A_Gas_Config_Validation validation = A_GasConfig_Validate(candidate); // 当前作用域变量，用于保存参数校验结果。
 
     if (validation != A_GAS_CONFIG_VALID)
     {
@@ -511,8 +518,8 @@ static bool A_Can_WriteValue(A_Can_Context *context,
                              A_Can_Write_Result *result,
                              A_Can_Write_Detail *detail)
 {
-    Gas_Config candidate;
-    A_Can_Control_Request control = {A_CAN_CONTROL_NONE, 0U, false};
+    Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
+    A_Can_Control_Request control = {A_CAN_CONTROL_NONE, 0U, false}; // 当前作用域变量，用于保存当前处理数据。
 
     *result = A_CAN_WRITE_SUCCESS;
     *detail = A_CAN_WRITE_DETAIL_NONE;
@@ -645,7 +652,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
     }
 
     {
-        uint32_t read_value;
+        uint32_t read_value; // 当前作用域变量，用于保存当前处理值。
         if (A_Can_ReadValue(context,
                             system,
                             comm_mode,
@@ -701,7 +708,7 @@ bool A_Can_Init(A_Can_Context *context, const Gas_Config *config)
  */
 bool A_Can_Deinit(A_Can_Context *context)
 {
-    bool success;
+    bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
     if (context == NULL) { return false; }
     success = F_CanProtocol_Deinit(&context->function);
     context->ready = false;
@@ -720,8 +727,8 @@ static void A_Can_QueueReadResponses(A_Can_Context *context,
 {
     while (context->read_response_remaining > 0U)
     {
-        uint16_t address = context->read_response_address;
-        uint32_t value;
+        uint16_t address = context->read_response_address; // 当前作用域变量，用于保存存储或寄存器地址。
+        uint32_t value; // 当前作用域变量，用于保存当前处理值。
 
         if (!A_Can_ReadValue(context, system, comm_mode, address, &value))
         {
@@ -751,7 +758,7 @@ void A_Can_Task(A_Can_Context *context,
                 const Gas_System *system,
                 gas_external_comm_mode_t comm_mode)
 {
-    F_Can_Request request;
+    F_Can_Request request; // 当前作用域变量，用于保存待处理请求。
 
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
@@ -785,9 +792,9 @@ void A_Can_Task(A_Can_Context *context,
     }
     else
     {
-        A_Can_Write_Result result;
-        A_Can_Write_Detail detail;
-        bool immediate;
+        A_Can_Write_Result result; // 当前作用域变量，用于保存操作结果。
+        A_Can_Write_Detail detail; // 当前作用域变量，用于保存队列尾位置。
+        bool immediate; // immediate 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示延后处理，true表示立即处理。
 
         A_Can_RecordWriteAttempt(context, request.data_address, request.value);
         immediate = A_Can_WriteValue(context,
@@ -839,8 +846,8 @@ bool A_Can_TakeConfigRequest(A_Can_Context *context, Gas_Config *config)
  */
 void A_Can_SetConfigResult(A_Can_Context *context, gas_external_config_result_t result)
 {
-    A_Can_Write_Result write_result;
-    A_Can_Write_Detail detail;
+    A_Can_Write_Result write_result; // 当前作用域变量，用于保存操作结果。
+    A_Can_Write_Detail detail; // 当前作用域变量，用于保存队列尾位置。
 
     if (context == NULL)
     {

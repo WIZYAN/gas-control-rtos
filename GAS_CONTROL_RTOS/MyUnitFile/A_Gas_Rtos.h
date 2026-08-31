@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明FreeRTOS控制任务上下文和静态启动接口。
+ */
+
 #ifndef A_GAS_RTOS_H
 #define A_GAS_RTOS_H
 
@@ -19,7 +26,7 @@ typedef struct
     StaticTask_t control_task_buffer; // 气源控制任务的FreeRTOS静态TCB内存。
     StackType_t control_task_stack[A_GAS_RTOS_CONTROL_STACK_WORDS]; // 气源控制任务静态栈。
     TaskHandle_t control_task_handle; // 气源控制任务句柄，创建失败时为NULL。
-    bool scheduler_started; // 是否已经进入FreeRTOS调度器。
+    bool scheduler_started; // 是否已经进入FreeRTOS调度器；使用范围：当前声明作用域内使用；取值范围：false/true，false表示调度器尚未启动，true表示调度器已经启动。
 } A_Gas_Rtos_Context;
 
 /*

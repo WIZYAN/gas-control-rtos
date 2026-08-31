@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明CAN协议帧结构、队列上下文和编解码接口。
+ */
+
 #ifndef F_CAN_PROTOCOL_H
 #define F_CAN_PROTOCOL_H
 
@@ -47,11 +54,11 @@ typedef struct
     uint8_t transmit_head;                           // 响应队列下一个写入索引。
     uint8_t transmit_tail;                           // 响应队列下一个读取索引。
     F_Can_Request pending_request;                   // 等待应用层处理的请求。
-    bool request_pending;                            // pending_request有效标志。
+    bool request_pending; // pending_request有效标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint8_t local_type;                              // 本机节点类型。
     uint8_t local_address;                           // 本机节点地址。
     uint32_t invalid_frame_count;                    // CRC、地址或格式错误帧累计数。
-    bool ready;                                      // 协议功能层已经初始化。
+    bool ready; // 协议功能层已经初始化；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } F_Can_Protocol_Context;
 
 /*

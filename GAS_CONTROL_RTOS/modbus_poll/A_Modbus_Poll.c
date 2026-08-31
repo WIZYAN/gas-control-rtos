@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现七路压力传感器Modbus轮询调度和数据质量更新。
+ */
+
 #include "A_Modbus_Poll.h"
 
 #include <limits.h>
@@ -26,7 +33,7 @@ bool A_ModbusPoll_DecodePressure(const uint8_t *data,
                                  float *pressure_mpa,
                                  gas_pressure_quality_t *quality)
 {
-    uint32_t raw_value;
+    uint32_t raw_value; // 当前作用域变量，用于保存当前处理值。
 
     if ((data == NULL) || (pressure_mpa == NULL) || (quality == NULL) || (length != 4U) ||
         !(maximum_mpa > 0.0F))
@@ -66,8 +73,8 @@ bool A_ModbusPoll_DecodePressure(const uint8_t *data,
  */
 static void A_ModbusPoll_RecordFailure(Gas_System *system, uint8_t index)
 {
-    Gas_Cylinder *cylinder;
-    Gas_Total_Pressure *total_pressure;
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    Gas_Total_Pressure *total_pressure; // 当前作用域变量，用于保存压力值指针。
 
     if ((system == NULL) || (index >= GAS_PRESSURE_SENSOR_COUNT))
     {
@@ -130,7 +137,7 @@ bool A_ModbusPoll_Init(A_Modbus_Poll_Context *context,
                        H_Gas_Platform_Context *platform,
                        Gas_System *system)
 {
-    uint8_t i;
+    uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (platform == NULL) || (system == NULL))
     {
@@ -173,12 +180,12 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
                        const Gas_Config *config,
                        uint32_t now_ms)
 {
-    F_Modbus_Poll_Result result;
-    const uint8_t *payload;
-    size_t payload_length;
-    float pressure_mpa;
-    gas_pressure_quality_t pressure_quality;
-    uint8_t i;
+    F_Modbus_Poll_Result result; // 当前作用域变量，用于保存操作结果。
+    const uint8_t *payload; // 当前作用域变量，用于保存当前处理数据指针。
+    size_t payload_length; // 当前作用域变量，用于保存有效数据长度。
+    float pressure_mpa; // 当前作用域变量，用于保存压力值。
+    gas_pressure_quality_t pressure_quality; // 当前作用域变量，用于保存压力值。
+    uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (system == NULL) || (config == NULL) || !context->ready)
     {
@@ -211,7 +218,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
             }
             else
             {
-                Gas_Cylinder *cylinder = &system->cylinder[context->pending_index];
+                Gas_Cylinder *cylinder = &system->cylinder[context->pending_index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
                 cylinder->pressure_mpa = pressure_mpa;
                 cylinder->pressure_quality = pressure_quality;
@@ -232,7 +239,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
 
     for (i = 0U; i < GAS_CYLINDER_COUNT; ++i)
     {
-        Gas_Cylinder *cylinder = &system->cylinder[i];
+        Gas_Cylinder *cylinder = &system->cylinder[i]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
         if (((cylinder->pressure_quality == GAS_PRESSURE_VALID) ||
              (cylinder->pressure_quality == GAS_PRESSURE_OUT_OF_RANGE)) &&

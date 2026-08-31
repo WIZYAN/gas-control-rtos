@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明CAN应用层地址、结果码、上下文和业务接口。
+ */
+
 #ifndef A_CAN_H
 #define A_CAN_H
 
@@ -110,7 +117,7 @@ typedef struct
 {
     A_Can_Control_Type type; // 控制类型。
     uint8_t index;           // 从0开始的气瓶索引。
-    bool enabled;            // true表示开启、停用或通过；false表示关闭、启用或未通过。
+    bool enabled; // CAN人工控制请求的动作值；使用范围：A_Can_Control_Request请求对象内；取值范围：false/true；排气阀和测试阀请求中false表示关闭、true表示开启，停用请求中false表示重新启用、true表示停用，测试结论请求中false表示未通过、true表示通过。
 } A_Can_Control_Request;
 
 // CAN外部通讯应用层上下文，集中保存协议、暂存参数、命令和日志窗口。
@@ -142,12 +149,12 @@ typedef struct
     uint32_t last_write_result;              // 最近一次完成或拒绝的CAN写结果。
     uint32_t last_write_value;               // 最近一次格式正确的CAN写请求原始值。
     uint32_t write_sequence;                 // 格式正确的CAN写请求累计序号。
-    bool config_pending;                     // 存在待保存应用的参数。
-    bool control_pending;                    // 存在待执行业务层人工控制请求。
-    bool deferred_write_pending;             // 存在等待业务层最终处理结果的写请求。
-    bool deferred_write_response_ready;      // 最终结果已经产生，等待加入协议发送队列。
-    bool log_read_pending;                   // 存在待读取的日志请求。
-    bool ready;                              // CAN应用层已经初始化。
+    bool config_pending; // 存在待保存应用的参数；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool control_pending; // 存在待执行业务层人工控制请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool deferred_write_pending; // 存在等待业务层最终处理结果的写请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool deferred_write_response_ready; // 最终结果已经产生，等待加入协议发送队列；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool log_read_pending; // 存在待读取的日志请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool ready; // CAN应用层已经初始化；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Can_Context;
 
 /*

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现CAN扩展帧协议编解码、校验和异步响应队列。
+ */
+
 #include "F_Can_Protocol.h"
 
 #include <stddef.h>
@@ -48,10 +55,10 @@ static uint32_t F_CanProtocol_BuildId(F_Can_Function function,
  */
 uint8_t F_CanProtocol_CalculateCrc(uint32_t id, const uint8_t data[H_CAN_FRAME_DATA_LENGTH])
 {
-    uint8_t crc_data[H_CAN_FRAME_DATA_LENGTH];
-    uint16_t crc = 0xFFFFU;
-    uint8_t byte_index;
-    uint8_t bit_index;
+    uint8_t crc_data[H_CAN_FRAME_DATA_LENGTH]; // 当前作用域变量，用于保存CRC校验值数组。
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    uint8_t byte_index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit_index; // 当前作用域变量，用于保存遍历索引。
 
     if (data == NULL)
     {
@@ -116,7 +123,7 @@ bool F_CanProtocol_Init(F_Can_Protocol_Context *context,
  */
 bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context)
 {
-    bool success;
+    bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if (context == NULL)
     {
@@ -158,8 +165,8 @@ static bool F_CanProtocol_QueueResponse(F_Can_Protocol_Context *context,
                                         uint16_t data_address,
                                         uint32_t value)
 {
-    H_Can_Frame *frame;
-    uint8_t next;
+    H_Can_Frame *frame; // 当前作用域变量，用于保存通信帧缓冲区或长度指针。
+    uint8_t next; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || !context->ready ||
         (target_type > F_CAN_ID_FUNCTION_MASK) || (target_address > F_CAN_ID_ADDRESS_MASK))
@@ -239,7 +246,7 @@ bool F_CanProtocol_QueueWriteResponse(F_Can_Protocol_Context *context,
  */
 void F_CanProtocol_Task(F_Can_Protocol_Context *context)
 {
-    H_Can_Frame frame;
+    H_Can_Frame frame; // 当前作用域变量，用于保存通信帧缓冲区或长度。
 
     if ((context == NULL) || !context->ready || (context->hardware == NULL))
     {
@@ -260,10 +267,10 @@ void F_CanProtocol_Task(F_Can_Protocol_Context *context)
     }
     else
     {
-        uint8_t function = (uint8_t) ((frame.id >> F_CAN_ID_FUNCTION_SHIFT) & F_CAN_ID_FUNCTION_MASK);
-        uint8_t target_type = (uint8_t) ((frame.id >> F_CAN_ID_TARGET_TYPE_SHIFT) & F_CAN_ID_FUNCTION_MASK);
-        uint8_t target_address = (uint8_t) ((frame.id >> F_CAN_ID_TARGET_ADDRESS_SHIFT) & F_CAN_ID_ADDRESS_MASK);
-        uint8_t data_length = frame.data[3];
+        uint8_t function = (uint8_t) ((frame.id >> F_CAN_ID_FUNCTION_SHIFT) & F_CAN_ID_FUNCTION_MASK); // 当前作用域变量，用于保存当前处理数据。
+        uint8_t target_type = (uint8_t) ((frame.id >> F_CAN_ID_TARGET_TYPE_SHIFT) & F_CAN_ID_FUNCTION_MASK); // 当前作用域变量，用于保存数据类型。
+        uint8_t target_address = (uint8_t) ((frame.id >> F_CAN_ID_TARGET_ADDRESS_SHIFT) & F_CAN_ID_ADDRESS_MASK); // 当前作用域变量，用于保存存储或寄存器地址。
+        uint8_t data_length = frame.data[3]; // 当前作用域变量，用于保存有效数据长度。
         bool directed = ((target_type == context->local_type) &&
                          (target_address == context->local_address));
         bool broadcast_read = ((function == (uint8_t) F_CAN_FUNCTION_BROADCAST_READ) &&

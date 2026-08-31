@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现RA4M1 CAN0初始化、邮箱收发和中断接收缓存。
+ */
+
 #include "H_Can.h"
 
 #include <stddef.h>
@@ -24,8 +31,8 @@ static uint8_t H_Can_NextQueueIndex(uint8_t index)
  */
 bool H_Can_Init(H_Can_Context *context)
 {
-    fsp_err_t result;
-    bool opened_here = false;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
+    bool opened_here = false; // 本次初始化打开CAN实例的标志；使用范围：H_Can_Init错误回滚流程内；取值范围：false/true，false表示实例此前已打开，true表示本函数刚完成打开且失败时需要关闭。
 
     if (context == NULL)
     {
@@ -69,7 +76,7 @@ bool H_Can_Init(H_Can_Context *context)
  */
 bool H_Can_Deinit(H_Can_Context *context)
 {
-    fsp_err_t result;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if (context == NULL)
     {
@@ -98,7 +105,7 @@ bool H_Can_Deinit(H_Can_Context *context)
  */
 bool H_Can_TakeFrame(H_Can_Context *context, H_Can_Frame *frame)
 {
-    uint8_t tail;
+    uint8_t tail; // 当前作用域变量，用于保存队列尾位置。
 
     if ((context == NULL) || (frame == NULL) ||
         (context->receive_tail == context->receive_head))
@@ -120,8 +127,8 @@ bool H_Can_TakeFrame(H_Can_Context *context, H_Can_Frame *frame)
  */
 bool H_Can_Send(H_Can_Context *context, const H_Can_Frame *frame)
 {
-    can_frame_t hardware_frame;
-    fsp_err_t result;
+    can_frame_t hardware_frame; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if ((context == NULL) || (frame == NULL) || !context->can_open ||
         context->transmit_busy || context->bus_off ||
@@ -177,7 +184,7 @@ bool H_Can_HasFault(const H_Can_Context *context)
  */
 void can_callback(can_callback_args_t *p_args)
 {
-    H_Can_Context *context;
+    H_Can_Context *context; // 当前作用域变量，用于保存模块上下文指针。
 
     if ((p_args == NULL) || (p_args->p_context == NULL))
     {
@@ -187,8 +194,8 @@ void can_callback(can_callback_args_t *p_args)
 
     if ((p_args->event & CAN_EVENT_RX_COMPLETE) != 0U)
     {
-        uint8_t head = context->receive_head;
-        uint8_t next = H_Can_NextQueueIndex(head);
+        uint8_t head = context->receive_head; // 当前作用域变量，用于保存队列头位置。
+        uint8_t next = H_Can_NextQueueIndex(head); // 当前作用域变量，用于保存当前处理数据。
 
         if ((p_args->frame.id_mode != CAN_ID_MODE_EXTENDED) ||
             (p_args->frame.type != CAN_FRAME_TYPE_DATA) ||

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现内部Modbus主站请求、响应校验、超时和重试状态机。
+ */
+
 #include "F_Modbus_Poll.h"
 
 #include <string.h>
@@ -41,9 +48,9 @@ static void F_ModbusPoll_FinishTransaction(F_Modbus_Poll_Context *context,
  */
 uint16_t F_ModbusPoll_Crc16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    size_t i;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    size_t i; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     if (data == NULL)
     {
@@ -97,8 +104,8 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
                             uint32_t now_ms,
                             uint32_t timeout_ms)
 {
-    uint16_t crc;
-    size_t response_length;
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
+    size_t response_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (context->state != MODBUS_POLL_STATE_IDLE) ||
         context->result_pending || (slave_address == 0U) ||
@@ -155,8 +162,8 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
  */
 void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
 {
-    uint16_t received_crc;
-    uint16_t calculated_crc;
+    uint16_t received_crc; // 当前作用域变量，用于保存CRC校验值。
+    uint16_t calculated_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((context == NULL) || (context->state == MODBUS_POLL_STATE_IDLE))
     {

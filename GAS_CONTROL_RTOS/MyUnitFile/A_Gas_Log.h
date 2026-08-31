@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明日志记录格式、存储上下文、查询和清除接口。
+ */
+
 #ifndef A_GAS_LOG_H
 #define A_GAS_LOG_H
 
@@ -67,8 +74,8 @@ typedef struct
     uint8_t clear_empty_header_copy; // 本次清除写入空索引的管理头副本编号。
     A_Gas_Log_Clear_State clear_state; // 当前非阻塞日志物理清除步骤。
     A_Gas_Log_Clear_Result clear_result; // 最近一次日志清除结果及忙状态。
-    bool clear_empty_header_committed; // 掉电安全空索引已经写入并读回校验时为true。
-    bool ready; // 管理头已经加载或创建且允许记录日志时为true。
+    bool clear_empty_header_committed; // 日志清除状态机的空索引提交标志；使用范围：A_Gas_Log_Context清除流程内；取值范围：false/true，false表示空索引尚未提交或校验，true表示已经写入并读回校验。
+    bool ready; // 管理头已经加载或创建且允许记录日志时为true；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Gas_Log_Context;
 
 /*

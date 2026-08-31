@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明气源运行时功能层上下文和平台访问接口。
+ */
+
 #ifndef F_GAS_RUNTIME_H
 #define F_GAS_RUNTIME_H
 
@@ -10,7 +17,7 @@
 typedef struct
 {
     H_Gas_Platform_Context platform; // 当前气源控制实例专用的硬件逻辑层上下文。
-    bool ready;                    // 硬件初始化和安全使能是否全部就绪。
+    bool ready; // 硬件初始化和安全使能是否全部就绪；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } F_Gas_Runtime_Context;
 
 /*

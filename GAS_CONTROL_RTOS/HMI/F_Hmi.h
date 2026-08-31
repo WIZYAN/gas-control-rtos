@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明大彩串口屏协议层帧、事件队列和发送接口。
+ */
+
 #ifndef F_HMI_H
 #define F_HMI_H
 
@@ -39,15 +46,15 @@ typedef struct
     H_Hmi_Context hardware;                 // SCI9 硬件层实例。
     uint8_t rx_frame[F_HMI_FRAME_MAX_SIZE]; // 当前正在组装的接收帧。
     uint16_t rx_length;                     // 当前接收帧已有字节数。
-    bool receiving;                         // 是否已经收到 0xEE 帧头。
-    bool button_pending;                    // 是否存在尚未取走的按钮或下拉菜单选择事件。
+    bool receiving; // 是否已经收到 0xEE 帧头；使用范围：当前声明作用域内使用；取值范围：false/true，false表示当前未接收协议帧，true表示当前正在接收协议帧。
+    bool button_pending; // 是否存在尚未取走的按钮或下拉菜单选择事件；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint16_t button_id;                     // 最近一次按钮或下拉菜单控件 ID。
     uint8_t button_value;                   // 按钮上传状态值；下拉菜单时为选中项索引。
     F_Hmi_Text_Event text_queue[F_HMI_TEXT_EVENT_QUEUE_SIZE]; // 文本输入FIFO，保持串口到达顺序。
     uint8_t text_queue_head;                // FIFO当前待读事件位置。
     uint8_t text_queue_count;               // FIFO内尚未被应用层取走的事件数量。
     F_Hmi_Rtc_Time rtc_time;                // 最近一次通过校验的串口屏 RTC 时间。
-    bool rtc_time_pending;                  // 是否存在尚未被应用层取走的 RTC 时间。
+    bool rtc_time_pending; // 是否存在尚未被应用层取走的 RTC 时间；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint8_t tx_frame[F_HMI_TX_MAX_SIZE];    // 异步发送期间保持不变的发送缓冲区。
 } F_Hmi_Context;
 

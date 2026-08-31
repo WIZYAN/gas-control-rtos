@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现SCI0外部RS485方向控制、匹配电阻和异步收发。
+ */
+
 // 本文件实现 SCI0、RS485方向和匹配电阻的硬件层封装。
 #include "H_Modbus.h"
 
@@ -49,7 +56,7 @@ static void H_Modbus_ResetReceiveState(H_Modbus_Context *context)
  */
 static void H_Modbus_UpdateExpectedLength(H_Modbus_Context *context)
 {
-    uint8_t function_code;
+    uint8_t function_code; // 当前作用域变量，用于保存当前处理数据。
 
     if (context->receive_length < 2U)
     {
@@ -63,7 +70,7 @@ static void H_Modbus_UpdateExpectedLength(H_Modbus_Context *context)
     }
     else if ((function_code == 0x10U) && (context->receive_length >= 7U))
     {
-        uint16_t expected = (uint16_t) (9U + context->receive_buffer[6]);
+        uint16_t expected = (uint16_t) (9U + context->receive_buffer[6]); // 当前作用域变量，用于保存当前处理数据。
 
         if (expected <= H_MODBUS_FRAME_MAX_LENGTH)
         {
@@ -89,7 +96,7 @@ static void H_Modbus_UpdateExpectedLength(H_Modbus_Context *context)
  */
 bool H_Modbus_Init(H_Modbus_Context *context)
 {
-    fsp_err_t result;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if (context == NULL)
     {
@@ -129,7 +136,7 @@ bool H_Modbus_Init(H_Modbus_Context *context)
  */
 bool H_Modbus_Deinit(H_Modbus_Context *context)
 {
-    fsp_err_t result;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if (context == NULL)
     {
@@ -160,7 +167,7 @@ bool H_Modbus_TakeFrame(H_Modbus_Context *context,
                       uint16_t capacity,
                       uint16_t *length)
 {
-    uint16_t frame_length;
+    uint16_t frame_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (buffer == NULL) || (length == NULL) || !context->frame_ready)
     {
@@ -188,7 +195,7 @@ bool H_Modbus_TakeFrame(H_Modbus_Context *context,
  */
 bool H_Modbus_Send(H_Modbus_Context *context, const uint8_t *data, uint16_t length)
 {
-    fsp_err_t result;
+    fsp_err_t result; // 当前作用域变量，用于保存操作结果。
 
     if ((context == NULL) || (data == NULL) || (length == 0U) ||
         (length > H_MODBUS_FRAME_MAX_LENGTH) || !context->uart_open || context->transmit_busy)
@@ -240,7 +247,7 @@ bool H_Modbus_HasFault(const H_Modbus_Context *context)
  */
 void rs485_out_callback(uart_callback_args_t *p_args)
 {
-    H_Modbus_Context *context;
+    H_Modbus_Context *context; // 当前作用域变量，用于保存模块上下文指针。
 
     if ((p_args == NULL) || (p_args->p_context == NULL))
     {

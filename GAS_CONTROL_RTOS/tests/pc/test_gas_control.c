@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现气源控制、通信、日志、HMI和参数迁移的PC回归测试。
+ */
+
 #include "test_gas_control.h"
 
 #include <assert.h>
@@ -226,7 +233,7 @@ bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
  */
 bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
     if (context == NULL) return false;
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
@@ -567,7 +574,7 @@ static void Test_SeedPressure(A_Gas_Control_Context *context, uint8_t index, flo
  */
 static void Test_Prepare(A_Gas_Control_Context *context)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(context);
     context->config.pressure_fresh_ms = 65535U;
@@ -607,7 +614,7 @@ static void Test_Advance(A_Gas_Control_Context *context, uint32_t milliseconds)
  */
 static void Test_SetMaintenanceState(A_Gas_Control_Context *context)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
     (void) memset(&context->total_test, 0, sizeof(context->total_test));
@@ -632,9 +639,9 @@ static void Test_ModbusWriteSingle(A_Gas_Control_Context *context,
                                    uint16_t address,
                                    uint16_t value)
 {
-    uint8_t frame[8];
-    uint16_t crc;
-    H_Modbus_Context *hardware = &context->external_modbus.hardware;
+    uint8_t frame[8]; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
+    H_Modbus_Context *hardware = &context->external_modbus.hardware; // 当前作用域变量，用于保存当前处理数据指针。
 
     frame[0] = A_MODBUS_SLAVE_ADDRESS;
     frame[1] = 0x06U;
@@ -661,9 +668,9 @@ static void Test_ModbusWriteSingle(A_Gas_Control_Context *context,
  */
 static uint16_t Test_RecordCrc16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    size_t index;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     for (index = 0U; index < length; ++index)
     {
@@ -687,11 +694,11 @@ static void Test_ConfigV2Migration(void)
 {
     const uint16_t values[10] = {1100U, 1300U, 100U, 1500U, 25000U,
                                  1000U, 3U, 500U, 500U, 2500U};
-    A_Gas_Control_Context context;
-    uint8_t *record = &g_test_state.eeprom[0x0000U];
-    uint8_t *comm = &g_test_state.eeprom[0x0020U];
-    uint16_t crc;
-    uint8_t index;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    uint8_t *record = &g_test_state.eeprom[0x0000U]; // 当前作用域变量，用于保存日志或配置记录缓冲区指针。
+    uint8_t *comm = &g_test_state.eeprom[0x0020U]; // 当前作用域变量，用于保存当前处理数据指针。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     record[0] = 'G'; record[1] = 'C'; record[2] = 'F'; record[3] = 'G';
@@ -734,11 +741,11 @@ static void Test_ConfigV3Migration(void)
     const uint16_t values[13] = {1200U, 1300U, 200U, 1500U, 25000U,
                                  1000U, 3U, 500U, 500U, 2500U,
                                  2000U, 5000U, 45000U};
-    A_Gas_Control_Context context;
-    Gas_Config stored;
-    uint8_t *record = &g_test_state.eeprom[0x0000U];
-    uint16_t crc;
-    uint8_t index;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    Gas_Config stored; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t *record = &g_test_state.eeprom[0x0000U]; // 当前作用域变量，用于保存日志或配置记录缓冲区指针。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     record[0] = 'G'; record[1] = 'C'; record[2] = 'F'; record[3] = 'G';
@@ -768,7 +775,7 @@ static void Test_ConfigV3Migration(void)
  */
 static void Test_TestValveTimeRange(void)
 {
-    Gas_Config config;
+    Gas_Config config; // 当前作用域变量，用于保存运行参数。
 
     A_GasConfig_LoadDefaults(&config);
     assert(config.test_valve_max_time_ms == (10U * GAS_MILLISECONDS_PER_MINUTE));
@@ -792,10 +799,10 @@ static void Test_TestValveTimeRange(void)
  */
 static void Test_ExternalModbusConfig(void)
 {
-    A_Gas_Control_Context context;
-    A_Gas_Control_Context rebooted;
-    Gas_Config stored;
-    uint16_t result;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    A_Gas_Control_Context rebooted; // 当前作用域变量，用于保存当前处理数据。
+    Gas_Config stored; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t result; // 当前作用域变量，用于保存操作结果。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -871,7 +878,7 @@ static void Test_ExternalModbusConfig(void)
  */
 static uint32_t Test_FloatToRaw(float value)
 {
-    uint32_t raw = 0U;
+    uint32_t raw = 0U; // 当前作用域变量，用于保存当前处理数据。
     (void) memcpy(&raw, &value, sizeof(raw));
     return raw;
 }
@@ -916,8 +923,8 @@ static void Test_RunCanWrite(A_Gas_Control_Context *context,
                              uint16_t address,
                              uint32_t value)
 {
-    uint32_t previous_tx_count = g_test_state.can_tx_count;
-    uint8_t step;
+    uint32_t previous_tx_count = g_test_state.can_tx_count; // 当前作用域变量，用于保存数量计数。
+    uint8_t step; // 当前作用域变量，用于保存当前处理数据。
 
     Test_QueueCanWrite(context, address, value);
     for (step = 0U; (step < 8U) && (g_test_state.can_tx_count == previous_tx_count); ++step)
@@ -940,11 +947,11 @@ static void Test_RunCanWrite(A_Gas_Control_Context *context,
  */
 static void Test_DefaultCanProtocol(void)
 {
-    A_Gas_Control_Context context;
-    H_Can_Frame *request;
-    uint32_t request_id;
-    uint16_t address;
-    uint32_t previous_tx_count;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    H_Can_Frame *request; // 当前作用域变量，用于保存待处理请求指针。
+    uint32_t request_id; // 当前作用域变量，用于保存待处理请求。
+    uint16_t address; // 当前作用域变量，用于保存存储或寄存器地址。
+    uint32_t previous_tx_count; // 当前作用域变量，用于保存数量计数。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
 
@@ -1030,7 +1037,7 @@ static void Test_DefaultCanProtocol(void)
          address <= A_CAN_ADDRESS_WRITE_SEQUENCE;
          ++address)
     {
-        uint8_t receive_head = context.external_can.hardware.receive_head;
+        uint8_t receive_head = context.external_can.hardware.receive_head; // 当前作用域变量，用于保存队列头位置。
 
         request = &context.external_can.hardware.receive_queue[receive_head];
         (void) memset(request, 0, sizeof(*request));
@@ -1042,7 +1049,7 @@ static void Test_DefaultCanProtocol(void)
         context.external_can.hardware.receive_head =
             (uint8_t) ((receive_head + 1U) % H_CAN_RX_QUEUE_CAPACITY);
 
-        previous_tx_count = g_test_state.can_tx_count;
+        previous_tx_count = g_test_state.can_tx_count; // 当前作用域变量，用于保存数量计数。
         A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
         A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
         assert(g_test_state.can_tx_count == (previous_tx_count + 1U));
@@ -1069,7 +1076,7 @@ static void Test_DefaultCanProtocol(void)
     request->data[2] = F_CanProtocol_CalculateCrc(request->id, request->data);
     context.external_can.hardware.receive_head =
         (uint8_t) ((context.external_can.hardware.receive_head + 1U) % H_CAN_RX_QUEUE_CAPACITY);
-    previous_tx_count = g_test_state.can_tx_count;
+    previous_tx_count = g_test_state.can_tx_count; // 当前作用域变量，用于保存数量计数。
     A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
 
     for (address = A_CAN_ADDRESS_QUALITY_BASE;
@@ -1092,8 +1099,8 @@ static void Test_DefaultCanProtocol(void)
  */
 static void Test_CanDirectWriteAndControl(void)
 {
-    A_Gas_Control_Context context;
-    float loaded_pressure_max;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    float loaded_pressure_max; // 当前作用域变量，用于保存压力值。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -1181,16 +1188,16 @@ static void Test_CanDirectWriteAndControl(void)
  */
 static void Test_GasLog(void)
 {
-    A_Gas_Control_Context context;
-    A_Gas_Log_Context recovered;
-    uint8_t record[A_GAS_LOG_RECORD_SIZE];
-    uint8_t protected_data[A_GAS_LOG_HEADER_A_ADDRESS];
-    uint8_t index;
-    uint16_t log_index;
-    uint16_t result;
-    uint16_t clear_step;
-    uint16_t erased_header_address;
-    size_t byte_index;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    A_Gas_Log_Context recovered; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t record[A_GAS_LOG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint8_t protected_data[A_GAS_LOG_HEADER_A_ADDRESS]; // 当前作用域变量，用于保存业务数据数组。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t log_index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t result; // 当前作用域变量，用于保存操作结果。
+    uint16_t clear_step; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t erased_header_address; // 当前作用域变量，用于保存存储或寄存器地址。
+    size_t byte_index; // 当前作用域变量，用于保存遍历索引。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -1355,7 +1362,7 @@ static void Test_GasLog(void)
  */
 static void Test_TotalPressurePoll(void)
 {
-    A_Gas_Control_Context context;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -1384,7 +1391,7 @@ static void Test_TotalPressurePoll(void)
  */
 static void Test_QualificationGate(void)
 {
-    A_Gas_Control_Context context;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
 
     (void) memset(&g_test_state, 0, sizeof(g_test_state));
     A_GasControl_Init(&context);
@@ -1447,7 +1454,7 @@ static void Test_QualificationGate(void)
  */
 static void Test_StateAndSwitch(void)
 {
-    A_Gas_Control_Context context;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
     Test_Prepare(&context);
     assert(context.sensor_poll.sensor_addresses[GAS_TOTAL_PRESSURE_SENSOR_INDEX] == GAS_SENSOR_ADDRESS_TOTAL);
     assert(context.system.total_pressure.modbus_address == GAS_SENSOR_ADDRESS_TOTAL);
@@ -1481,8 +1488,8 @@ static void Test_StateAndSwitch(void)
  */
 static void Test_ManualAndDisabled(void)
 {
-    A_Gas_Control_Context context;
-    uint32_t exhaust_deadline_ms;
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存模块上下文。
+    uint32_t exhaust_deadline_ms; // 当前作用域变量，用于保存操作截止时间。
 
     Test_Prepare(&context);
     assert(A_GasControl_StartExhaust(&context, 0U));
@@ -1550,17 +1557,17 @@ static void Test_ManualAndDisabled(void)
  */
 static void Test_Hmi(void)
 {
-    const uint8_t exhaust_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,1U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t test_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,7U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t qualification_on_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t qualification_off_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t event_log_frame[] = {0xEEU,0xB1U,0x11U,0U,2U,0U,61U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t regular_log_frame[] = {0xEEU,0xB1U,0x11U,0U,3U,0U,65U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_time_on_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,131U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_cylinder_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_state_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_cylinder_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t filter_state_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t exhaust_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,1U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t test_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,7U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t qualification_on_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t qualification_off_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t event_log_frame[] = {0xEEU,0xB1U,0x11U,0U,2U,0U,61U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t regular_log_frame[] = {0xEEU,0xB1U,0x11U,0U,3U,0U,65U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t filter_time_on_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,131U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t filter_cylinder_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存气瓶对象或编号数组。
+    const uint8_t filter_state_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存业务状态数组。
+    const uint8_t filter_cylinder_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存气瓶对象或编号数组。
+    const uint8_t filter_state_menu_frame[] = {0xEEU,0xB1U,0x14U,0U,6U,0U,150U,0x1AU,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存业务状态数组。
     const uint8_t filter_date_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,127U,0x11U,
                                          '2','0','2','6','0','8','2','2',0U,
                                          0xFFU,0xFCU,0xFFU,0xFFU};
@@ -1575,16 +1582,16 @@ static void Test_Hmi(void)
                                               0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t filter_event_query_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,136U,0x10U,
                                                 1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU};
-    const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U};
-    const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U};
+    const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U}; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U}; // 当前作用域变量，用于保存显示文本缓冲区或长度。
     const char sample_record[] = "2026-08-22 10:00:00;TEST;1;OK;";
-    A_Gas_Control_Context gas;
-    A_Hmi_Context display;
-    F_Hmi_Context hmi;
-    uint16_t id;
-    uint8_t value;
-    size_t index;
+    A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
+    A_Hmi_Context display; // 当前作用域变量，用于保存当前处理数据。
+    F_Hmi_Context hmi; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t id; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t value; // 当前作用域变量，用于保存当前处理值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     Test_Prepare(&gas);
     Test_PushHmiFrame(&gas, filter_time_on_frame, sizeof(filter_time_on_frame));
@@ -1908,12 +1915,12 @@ static void Test_PushHmiFrame(A_Gas_Control_Context *context,
                               const uint8_t *frame,
                               size_t length)
 {
-    size_t index;
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     assert((context != NULL) && (frame != NULL));
     for (index = 0U; index < length; ++index)
     {
-        H_Hmi_Context *hardware = &context->hmi.function.hardware;
+        H_Hmi_Context *hardware = &context->hmi.function.hardware; // 当前作用域变量，用于保存当前处理数据指针。
         hardware->rx_buffer[hardware->rx_head] = frame[index];
         hardware->rx_head = (uint16_t) ((hardware->rx_head + 1U) % H_HMI_RX_BUFFER_SIZE);
     }
@@ -1945,11 +1952,11 @@ static void Test_HmiLogMenuSelect(void)
         {0xEEU,0xB1U,0x11U,0U,6U,0U,138U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t direct_menu_frame[] =
         {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,4U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
-    A_Gas_Control_Context gas;
-    F_Hmi_Context hmi;
-    uint16_t id;
-    uint8_t value;
-    size_t index;
+    A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
+    F_Hmi_Context hmi; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t id; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t value; // 当前作用域变量，用于保存当前处理值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     Test_Prepare(&gas);
     Test_PushHmiFrame(&gas, cylinder_menu_six_frame, sizeof(cylinder_menu_six_frame));
@@ -2037,15 +2044,15 @@ static void Test_HmiConfig(void)
         {0xEEU,0xB1U,0x11U,0U,7U,0U,146U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t protocol_text_frame[] =
         {0xEEU,0xB1U,0x11U,0U,4U,0U,82U,0x11U,'2','.','5',0U,0xFFU,0xFCU,0xFFU,0xFFU};
-    A_Gas_Control_Context gas;
-    F_Hmi_Context protocol;
-    Gas_Config stored;
-    char text[8];
-    uint16_t page_id;
-    uint16_t control_id;
-    size_t length;
-    size_t index;
-    uint16_t clear_step;
+    A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
+    F_Hmi_Context protocol; // 当前作用域变量，用于保存当前处理数据。
+    Gas_Config stored; // 当前作用域变量，用于保存当前处理数据。
+    char text[8]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
+    uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t clear_step; // 当前作用域变量，用于保存当前处理数据。
 
     assert(F_Hmi_Init(&protocol));
     for (index = 0U; index < sizeof(protocol_text_frame); ++index)
@@ -2236,25 +2243,25 @@ static void Test_HmiConfig(void)
  */
 static void Test_HmiLogQuery(void)
 {
-    A_Gas_Control_Context gas;
-    uint8_t record[A_GAS_LOG_RECORD_SIZE];
-    uint16_t log_count;
-    uint16_t event_count = 0U;
-    uint16_t regular_count = 0U;
-    uint16_t filtered_event_count = 0U;
-    uint16_t filtered_regular_count = 0U;
-    uint16_t sent_rows;
-    uint16_t clear_count;
-    uint16_t status_count;
-    uint16_t page_info_count;
-    uint16_t step;
-    uint32_t previous_tx_count;
-    uint32_t saved_next_sequence;
-    uint8_t first_event_text[A_HMI_LOG_ROW_MAX_SIZE];
-    size_t first_event_length = 0U;
-    uint8_t regular_send_phase;
-    bool regular_content_cleared;
-    bool first_event_saved;
+    A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t record[A_GAS_LOG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint16_t log_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t event_count = 0U; // 当前作用域变量，用于保存数量计数。
+    uint16_t regular_count = 0U; // 当前作用域变量，用于保存数量计数。
+    uint16_t filtered_event_count = 0U; // 当前作用域变量，用于保存数量计数。
+    uint16_t filtered_regular_count = 0U; // 当前作用域变量，用于保存数量计数。
+    uint16_t sent_rows; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t clear_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t status_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t page_info_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t step; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t previous_tx_count; // 当前作用域变量，用于保存数量计数。
+    uint32_t saved_next_sequence; // 当前作用域变量，用于保存日志流水号。
+    uint8_t first_event_text[A_HMI_LOG_ROW_MAX_SIZE]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    size_t first_event_length = 0U; // 当前作用域变量，用于保存有效数据长度。
+    uint8_t regular_send_phase; // 当前作用域变量，用于保存结束边界。
+    bool regular_content_cleared; // regular_content_cleared 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未清除，true表示已清除。
+    bool first_event_saved; // first_event_saved 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示首条事件尚未保存，true表示首条事件已经保存。
 
     Test_Prepare(&gas);
     gas.system.date_time.year = 2026U;
@@ -2319,7 +2326,7 @@ static void Test_HmiLogQuery(void)
     status_count = 0U;
     page_info_count = 0U;
     first_event_saved = false;
-    previous_tx_count = g_test_state.hmi_tx_count;
+    previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
@@ -2328,7 +2335,7 @@ static void Test_HmiLogQuery(void)
         {
             continue;
         }
-        previous_tx_count = g_test_state.hmi_tx_count;
+        previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
         assert(g_test_state.hmi_tx_length <= F_HMI_TX_MAX_SIZE);
         assert((g_test_state.hmi_tx[0] == 0xEEU) &&
                (g_test_state.hmi_tx[4] == A_HMI_EVENT_LOG_PAGE_ID));
@@ -2339,8 +2346,8 @@ static void Test_HmiLogQuery(void)
         }
         else if (g_test_state.hmi_tx[2] == 0x52U)
         {
-            size_t index;
-            uint8_t separator_count = 0U;
+            size_t index; // 当前作用域变量，用于保存遍历索引。
+            uint8_t separator_count = 0U; // 当前作用域变量，用于保存数量计数。
 
             sent_rows++;
             assert(g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_RECORD_CONTROL_ID);
@@ -2400,7 +2407,7 @@ static void Test_HmiLogQuery(void)
 
     sent_rows = 0U;
     clear_count = 0U;
-    previous_tx_count = g_test_state.hmi_tx_count;
+    previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
     assert(A_HmiLog_RequestPage(&gas.hmi_log,
                                 A_HMI_LOG_QUERY_EVENT,
                                 A_HMI_LOG_PAGE_NEXT));
@@ -2411,7 +2418,7 @@ static void Test_HmiLogQuery(void)
         {
             continue;
         }
-        previous_tx_count = g_test_state.hmi_tx_count;
+        previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
         if (g_test_state.hmi_tx[2] == 0x53U)
         {
             clear_count++;
@@ -2446,7 +2453,7 @@ static void Test_HmiLogQuery(void)
     page_info_count = 0U;
     regular_send_phase = 0U;
     regular_content_cleared = false;
-    previous_tx_count = g_test_state.hmi_tx_count;
+    previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_REGULAR));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
@@ -2455,7 +2462,7 @@ static void Test_HmiLogQuery(void)
         {
             continue;
         }
-        previous_tx_count = g_test_state.hmi_tx_count;
+        previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
         assert(g_test_state.hmi_tx_length <= F_HMI_TX_MAX_SIZE);
         assert((g_test_state.hmi_tx[0] == 0xEEU) &&
                (g_test_state.hmi_tx[4] == A_HMI_REGULAR_LOG_PAGE_ID));
@@ -2468,14 +2475,14 @@ static void Test_HmiLogQuery(void)
         }
         else if (g_test_state.hmi_tx[2] == 0x52U)
         {
-            size_t index;
-            uint8_t separator_count = 0U;
+            size_t index; // 当前作用域变量，用于保存遍历索引。
+            uint8_t separator_count = 0U; // 当前作用域变量，用于保存数量计数。
 
             sent_rows++;
             assert(g_test_state.hmi_tx[6] == A_HMI_REGULAR_LOG_CONTENT_CONTROL_ID);
             if (regular_send_phase == 0U)
             {
-                size_t separator = 7U;
+                size_t separator = 7U; // 当前作用域变量，用于保存当前处理数据。
 
                 while ((separator < (g_test_state.hmi_tx_length - 4U)) &&
                        (g_test_state.hmi_tx[separator] != (uint8_t) ';'))
@@ -2539,7 +2546,7 @@ static void Test_HmiLogQuery(void)
 
     sent_rows = 0U;
     clear_count = 0U;
-    previous_tx_count = g_test_state.hmi_tx_count;
+    previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
     assert(A_HmiLog_RequestPage(&gas.hmi_log,
                                 A_HMI_LOG_QUERY_REGULAR,
                                 A_HMI_LOG_PAGE_NEXT));
@@ -2550,7 +2557,7 @@ static void Test_HmiLogQuery(void)
         {
             continue;
         }
-        previous_tx_count = g_test_state.hmi_tx_count;
+        previous_tx_count = g_test_state.hmi_tx_count; // 当前作用域变量，用于保存数量计数。
         if (g_test_state.hmi_tx[2] == 0x53U)
         {
             clear_count++;

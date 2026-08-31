@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 定义气源系统公共常量、状态、参数、压力和阀门数据结构。
+ */
+
 #ifndef GAS_COMMON_H
 #define GAS_COMMON_H
 
@@ -223,10 +230,10 @@ typedef struct
     uint32_t pressure_timestamp_ms;           // 最近一次成功解析压力样本的毫秒时间戳。
     uint8_t modbus_address;                   // 对应压力传感器的 Modbus 从站地址。
     uint8_t comm_fail_count;                  // 连续通信或数据解析失败次数。
-    bool supply_cmd;                          // 供气阀的软件命令状态，true 表示开阀。
-    bool exhaust_cmd;                         // 排气阀的软件命令状态，true 表示开阀。
-    bool test_cmd;                            // 测试阀的软件命令状态，true 表示开阀。
-    bool qualification_passed;                // 人员确认的气瓶测试合格标志，true才允许从待测试进入待用。
+    bool supply_cmd; // 供气阀的软件命令状态，true 表示开阀；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool exhaust_cmd; // 排气阀的软件命令状态，true 表示开阀；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool test_cmd; // 测试阀的软件命令状态，true 表示开阀；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool qualification_passed; // 气瓶测试结论标志；使用范围：单个Gas_Cylinder状态内；取值范围：false/true，false表示测试未通过或尚未确认，true表示人员确认测试合格并允许从待测试进入待用。
     uint8_t recovery_sample_count;             // 低压待换后累计的独立合格压力样本数，用于确认新瓶压力已经稳定恢复。
     uint32_t recovery_sample_timestamp_ms;     // 最近一次计入恢复确认的压力样本时间戳，避免同一样本被任务循环重复累计。
     uint32_t exhaust_deadline_ms;             // 人工排气阀按照当前运行参数自动关闭的截止时间。
@@ -255,7 +262,7 @@ typedef struct
     uint8_t minute;             // 分，范围 0～59。
     uint8_t second;             // 秒，范围 0～59。
     uint32_t source_timestamp_ms; // 最近一次收到串口屏 RTC 响应时的系统毫秒时间戳。
-    bool valid;                 // 日期时间已经通过 BCD、范围和日期合法性校验时为 true。
+    bool valid; // 日期时间已经通过 BCD、范围和日期合法性校验时为 true；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
 } Gas_Date_Time;
 
 // 六瓶气源系统的业务状态，由应用层持有并通过参数传递给功能层处理。
@@ -264,7 +271,7 @@ typedef struct
     Gas_Cylinder cylinder[GAS_CYLINDER_COUNT]; // 六只气瓶的独立状态数据。
     Gas_Total_Pressure total_pressure;          // 地址 7 总压力传感器的独立运行数据。
     Gas_Date_Time date_time;                    // 从串口屏 RTC 周期读取的系统日期时间。
-    bool total_test_cmd;                        // VAL_CAL总测试阀命令状态，由六路测试阀内部联动，不接受独立操作。
+    bool total_test_cmd; // VAL_CAL总测试阀命令状态，由六路测试阀内部联动，不接受独立操作；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
     gas_mode_t mode;                           // 当前系统运行模式。
     gas_switch_state_t switch_state;           // 自动切瓶状态机当前状态。
     uint8_t active_index;                      // 当前工作瓶索引，0～5；无工作瓶时为 GAS_NO_ACTIVE_CYLINDER。
@@ -274,8 +281,8 @@ typedef struct
     uint32_t low_last_sample_ms;               // 已计入低压确认的最后一个压力样本时间戳。
     uint32_t switch_enter_ms;                  // 进入当前切瓶子状态时的毫秒时间戳。
     uint32_t low_start_ms;                     // 本次低压确认开始的毫秒时间戳。
-    uint32_t alarm_bits;                       // 当前系统报警位集合。
-    bool platform_ready;                       // 硬件平台和安全使能是否允许进入自动模式。
+    uint32_t alarm_bits;                       // 系统运行期报警位图；bit0～bit10依次表示无备用瓶、工作瓶传感器异常、传感器通信异常、阀互锁、多个供气阀、人工阀操作中止、外部CAN异常、平台未就绪、存储异常、外部Modbus异常和HMI通信异常；0表示对应报警未发生，1表示报警有效，bit11～bit31保留为0。
+    bool platform_ready; // 硬件平台和安全使能是否允许进入自动模式；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } Gas_System;
 
 #endif

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现FreeRTOS气源控制任务的静态创建和调度入口。
+ */
+
 #include "A_Gas_Rtos.h"
 
 #include <stddef.h>
@@ -11,8 +18,8 @@
  */
 static void F_GasRtos_ControlTask(void *argument)
 {
-    A_Gas_Rtos_Context *context = (A_Gas_Rtos_Context *) argument;
-    TickType_t last_wake_tick;
+    A_Gas_Rtos_Context *context = (A_Gas_Rtos_Context *) argument; // 当前作用域变量，用于保存模块上下文指针。
+    TickType_t last_wake_tick; // 当前作用域变量，用于保存当前处理数据。
 
     if (context == NULL)
     {
@@ -21,7 +28,7 @@ static void F_GasRtos_ControlTask(void *argument)
     }
 
     A_GasControl_Init(&context->gas_control);
-    last_wake_tick = xTaskGetTickCount();
+    last_wake_tick = xTaskGetTickCount(); // 当前作用域变量，用于保存当前处理数据。
     for (;;)
     {
         A_GasControl_Task(&context->gas_control);
@@ -72,8 +79,8 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
                                    StackType_t **ppxIdleTaskStackBuffer,
                                    uint32_t *pulIdleTaskStackSize)
 {
-    static StaticTask_t idle_task_buffer;
-    static StackType_t idle_task_stack[configMINIMAL_STACK_SIZE];
+    static StaticTask_t idle_task_buffer; // 当前作用域变量，用于保存数据缓冲区。
+    static StackType_t idle_task_stack[configMINIMAL_STACK_SIZE]; // 当前作用域变量，用于保存当前处理数据数组。
 
     *ppxIdleTaskTCBBuffer = &idle_task_buffer;
     *ppxIdleTaskStackBuffer = idle_task_stack;
@@ -90,8 +97,8 @@ void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
                                     StackType_t **ppxTimerTaskStackBuffer,
                                     uint32_t *pulTimerTaskStackSize)
 {
-    static StaticTask_t timer_task_buffer;
-    static StackType_t timer_task_stack[configTIMER_TASK_STACK_DEPTH];
+    static StaticTask_t timer_task_buffer; // 当前作用域变量，用于保存数据缓冲区。
+    static StackType_t timer_task_stack[configTIMER_TASK_STACK_DEPTH]; // 当前作用域变量，用于保存当前处理数据数组。
 
     *ppxTimerTaskTCBBuffer = &timer_task_buffer;
     *ppxTimerTaskStackBuffer = timer_task_stack;

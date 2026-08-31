@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现外部Modbus状态、参数、控制命令和日志寄存器映射。
+ */
+
 // 本文件实现 SCI0/RS485 外部Modbus从站的状态、参数和日志读取映射。
 #include "A_Modbus.h"
 
@@ -16,7 +23,7 @@ static void A_Modbus_FloatToRegisters(float value,
                              uint16_t *high_register,
                              uint16_t *low_register)
 {
-    uint32_t raw_value;
+    uint32_t raw_value; // 当前作用域变量，用于保存当前处理值。
 
     memcpy(&raw_value, &value, sizeof(raw_value));
     *high_register = (uint16_t) (raw_value >> 16U);
@@ -57,8 +64,8 @@ static uint16_t A_Modbus_PressureToRegister(float pressure_mpa)
  */
 static bool A_Modbus_ReadConfigRegisters(const A_Modbus_Context *context, Gas_Config *config)
 {
-    uint16_t value[A_GAS_CONFIG_REGISTER_COUNT];
-    uint16_t index;
+    uint16_t value[A_GAS_CONFIG_REGISTER_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
+    uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((context == NULL) || (config == NULL))
     {
@@ -143,7 +150,7 @@ bool A_Modbus_Init(A_Modbus_Context *context, const Gas_Config *config)
  */
 bool A_Modbus_Deinit(A_Modbus_Context *context)
 {
-    bool success;
+    bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if (context == NULL)
     {
@@ -162,13 +169,13 @@ bool A_Modbus_Deinit(A_Modbus_Context *context)
  */
 void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
 {
-    uint8_t index;
-    uint16_t exhaust_mask = 0U;
-    uint16_t qualified_mask = 0U;
-    uint16_t supply_mask = 0U;
-    uint16_t test_mask = 0U;
-    uint16_t total_pressure_high;
-    uint16_t total_pressure_low;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t exhaust_mask = 0U; // 当前刷新函数使用的排气阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit15保留为0。
+    uint16_t qualified_mask = 0U; // 当前刷新函数使用的测试合格位图；bit0～bit5分别对应1～6号瓶，0表示未合格，1表示已合格，bit6～bit15保留为0。
+    uint16_t supply_mask = 0U; // 当前刷新函数使用的供气阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit15保留为0。
+    uint16_t test_mask = 0U; // 当前刷新函数使用的测试阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit15保留为0。
+    uint16_t total_pressure_high; // 当前作用域变量，用于保存压力值。
+    uint16_t total_pressure_low; // 当前作用域变量，用于保存压力值。
 
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
@@ -177,9 +184,9 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        uint16_t pressure_high;
-        uint16_t pressure_low;
-        uint16_t pressure_offset = (uint16_t) (A_MODBUS_INPUT_PRESSURE_BASE + (index * 2U));
+        uint16_t pressure_high; // 当前作用域变量，用于保存压力值。
+        uint16_t pressure_low; // 当前作用域变量，用于保存压力值。
+        uint16_t pressure_offset = (uint16_t) (A_MODBUS_INPUT_PRESSURE_BASE + (index * 2U)); // 当前作用域变量，用于保存数据偏移量。
 
         A_Modbus_FloatToRegisters(system->cylinder[index].pressure_mpa, &pressure_high, &pressure_low);
         (void) F_Modbus_SetInputRegister(&context->function, pressure_offset, pressure_high);
@@ -263,7 +270,7 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
  */
 static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
 {
-    uint16_t command_value;
+    uint16_t command_value; // 当前作用域变量，用于保存操作命令。
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_COMMAND,
                                        &command_value);
@@ -287,9 +294,9 @@ static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
  */
 static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context)
 {
-    uint16_t key;
-    Gas_Config candidate;
-    A_Gas_Config_Validation validation;
+    uint16_t key; // 当前作用域变量，用于保存当前处理数据。
+    Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
+    A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_COMMIT,
@@ -344,10 +351,10 @@ static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context)
  */
 static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context)
 {
-    uint16_t key;
-    float low_warning_pressure_mpa;
-    uint32_t manual_exhaust_time_ms;
-    uint32_t test_valve_max_time_ms;
+    uint16_t key; // 当前作用域变量，用于保存当前处理数据。
+    float low_warning_pressure_mpa; // 当前作用域变量，用于保存压力值。
+    uint32_t manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    uint32_t test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
 
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_DEFAULT,
@@ -371,8 +378,8 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context)
     }
 
     low_warning_pressure_mpa = context->current_config.low_warning_pressure_mpa;
-    manual_exhaust_time_ms = context->current_config.manual_exhaust_time_ms;
-    test_valve_max_time_ms = context->current_config.test_valve_max_time_ms;
+    manual_exhaust_time_ms = context->current_config.manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    test_valve_max_time_ms = context->current_config.test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
     A_GasConfig_LoadDefaults(&context->pending_config);
     context->pending_config.low_warning_pressure_mpa = low_warning_pressure_mpa;
     context->pending_config.manual_exhaust_time_ms = manual_exhaust_time_ms;
@@ -390,8 +397,8 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context)
  */
 static void A_Modbus_ProcessLogCommandWrite(A_Modbus_Context *context)
 {
-    uint16_t command_value;
-    uint16_t logical_index;
+    uint16_t command_value; // 当前作用域变量，用于保存操作命令。
+    uint16_t logical_index; // 当前作用域变量，用于保存日志逻辑索引。
 
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_COMMAND,
@@ -432,8 +439,8 @@ static void A_Modbus_ProcessLogCommandWrite(A_Modbus_Context *context)
  */
 void A_Modbus_Task(A_Modbus_Context *context)
 {
-    uint16_t write_start;
-    uint16_t write_count;
+    uint16_t write_start; // 当前作用域变量，用于保存起始边界。
+    uint16_t write_count; // 当前作用域变量，用于保存数量计数。
 
     if ((context == NULL) || !context->ready)
     {
@@ -503,8 +510,8 @@ void A_Modbus_SetCommandResult(A_Modbus_Context *context, a_modbus_result_t resu
  */
 bool A_Modbus_UpdateConfigRegisters(A_Modbus_Context *context, const Gas_Config *config)
 {
-    uint16_t value[A_GAS_CONFIG_REGISTER_COUNT];
-    uint16_t index;
+    uint16_t value[A_GAS_CONFIG_REGISTER_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
+    uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((context == NULL) || (config == NULL) || !context->ready ||
         (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID))
@@ -626,7 +633,7 @@ void A_Modbus_UpdateLogInfo(A_Modbus_Context *context,
 bool A_Modbus_SetLogRecord(A_Modbus_Context *context,
                            const uint8_t record[A_MODBUS_LOG_RECORD_SIZE])
 {
-    uint16_t index;
+    uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((context == NULL) || (record == NULL) || !context->ready)
     {
@@ -657,7 +664,7 @@ bool A_Modbus_SetLogRecord(A_Modbus_Context *context,
  */
 void A_Modbus_SetLogReadResult(A_Modbus_Context *context, A_Modbus_Log_Result result)
 {
-    uint16_t index;
+    uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((context == NULL) || !context->ready)
     {

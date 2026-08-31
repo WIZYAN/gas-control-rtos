@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现RA4M1板级初始化回调和RS485匹配电阻配置。
+ */
+
 #include "H_Gas_Board.h"
 
 #include "hal_data.h"

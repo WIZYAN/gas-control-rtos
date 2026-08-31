@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现运行参数默认值、合法性校验、EEPROM保存和版本迁移。
+ */
+
 #include "A_Gas_Config.h"
 
 #include <stddef.h>
@@ -43,9 +50,9 @@ static uint16_t A_GasConfig_ReadU16(const uint8_t *data)
  */
 static uint16_t A_GasConfig_Crc16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    size_t index;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     for (index = 0U; index < length; ++index)
     {
@@ -78,8 +85,8 @@ static uint16_t A_GasConfig_PressureToRaw(float pressure_mpa)
  */
 static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload)
 {
-    uint16_t values[A_GAS_CONFIG_STORAGE_VALUE_COUNT];
-    uint8_t index;
+    uint16_t values[A_GAS_CONFIG_STORAGE_VALUE_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     values[0] = A_GasConfig_PressureToRaw(config->switch_pressure_mpa);
     values[1] = A_GasConfig_PressureToRaw(config->switch_release_mpa);
@@ -111,8 +118,8 @@ static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload
  */
 static void A_GasConfig_DecodeCommonPayload(const uint8_t *payload, Gas_Config *config)
 {
-    uint16_t values[A_GAS_CONFIG_REGISTER_COUNT];
-    uint8_t index;
+    uint16_t values[A_GAS_CONFIG_REGISTER_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < A_GAS_CONFIG_REGISTER_COUNT; ++index)
     {
@@ -155,14 +162,14 @@ static void A_GasConfig_DecodeV4Payload(const uint8_t *payload, Gas_Config *conf
  */
 static bool A_GasConfig_DecodeV3Payload(const uint8_t *payload, Gas_Config *config)
 {
-    uint16_t legacy_test_time_ms;
-    uint32_t migrated_minutes;
+    uint16_t legacy_test_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    uint32_t migrated_minutes; // 当前作用域变量，用于保存日期时间字段。
 
     A_GasConfig_DecodeCommonPayload(payload, config);
     config->low_warning_pressure_mpa =
         (float) A_GasConfig_ReadU16(&payload[20]) / GAS_CONFIG_PRESSURE_SCALE;
     config->manual_exhaust_time_ms = A_GasConfig_ReadU16(&payload[22]);
-    legacy_test_time_ms = A_GasConfig_ReadU16(&payload[24]);
+    legacy_test_time_ms = A_GasConfig_ReadU16(&payload[24]); // 当前作用域变量，用于保存毫秒时间值。
     if ((legacy_test_time_ms < 5000U) || (legacy_test_time_ms > 60000U))
     {
         return false;
@@ -210,7 +217,7 @@ void A_GasConfig_LoadDefaults(Gas_Config *config)
  */
 A_Gas_Config_Validation A_GasConfig_Validate(const Gas_Config *config)
 {
-    uint32_t minimum_fresh_ms = GAS_SENSOR_POLL_INTERVAL_MS * GAS_PRESSURE_SENSOR_COUNT;
+    uint32_t minimum_fresh_ms = GAS_SENSOR_POLL_INTERVAL_MS * GAS_PRESSURE_SENSOR_COUNT; // 当前作用域变量，用于保存毫秒时间值。
     // 新鲜度下限至少覆盖 1～7 号传感器的一轮轮询，避免正常轮询中的样本被提前判旧。
 
     if ((config == NULL) ||
@@ -263,12 +270,12 @@ A_Gas_Config_Validation A_GasConfig_Validate(const Gas_Config *config)
  */
 bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
 {
-    uint8_t header[A_GAS_CONFIG_PAYLOAD_OFFSET];
-    uint8_t record[A_GAS_CONFIG_RECORD_SIZE];
-    uint16_t version;
-    uint16_t payload_size;
-    size_t record_size;
-    uint16_t stored_crc;
+    uint8_t header[A_GAS_CONFIG_PAYLOAD_OFFSET]; // 当前作用域变量，用于保存队列头位置数组。
+    uint8_t record[A_GAS_CONFIG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint16_t version; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t payload_size; // 当前作用域变量，用于保存当前处理数据。
+    size_t record_size; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((storage == NULL) || (config == NULL) ||
         !A_Storage_Read(storage, A_GAS_CONFIG_STORAGE_ADDRESS, header, sizeof(header)))
@@ -354,9 +361,9 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
  */
 bool A_GasConfig_Save(A_Storage_Context *storage, const Gas_Config *config)
 {
-    uint8_t record[A_GAS_CONFIG_RECORD_SIZE];
-    uint8_t verify[A_GAS_CONFIG_RECORD_SIZE];
-    uint16_t crc;
+    uint8_t record[A_GAS_CONFIG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint8_t verify[A_GAS_CONFIG_RECORD_SIZE]; // 当前作用域变量，用于保存读回校验缓冲区。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((storage == NULL) || (config == NULL) ||
         (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID))

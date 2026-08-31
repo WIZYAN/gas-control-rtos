@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现串口屏实时监控、按钮事件、RTC和状态刷新业务。
+ */
+
 #include "A_Hmi.h"
 
 #include <stddef.h>
@@ -22,9 +29,9 @@ static bool A_Hmi_TimeReached(uint32_t now_ms, uint32_t deadline_ms)
  */
 static size_t A_Hmi_FormatUnsigned(uint32_t value, char *text, size_t capacity)
 {
-    char reverse[10];
-    size_t count = 0U;
-    size_t index;
+    char reverse[10]; // 当前作用域变量，用于保存当前处理数据数组。
+    size_t count = 0U; // 当前作用域变量，用于保存数量计数。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     do
     {
@@ -54,9 +61,9 @@ static size_t A_Hmi_FormatPressure(float pressure_mpa,
                                    char *text,
                                    size_t capacity)
 {
-    uint32_t raw;
-    uint32_t fraction;
-    size_t length;
+    uint32_t raw; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t fraction; // 当前作用域变量，用于保存当前处理数据。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((text == NULL) || (capacity < 2U))
     {
@@ -118,7 +125,7 @@ static size_t A_Hmi_FormatCylinderState(gas_cylinder_state_t state,
                                         char *text,
                                         size_t capacity)
 {
-    const char *state_text;
+    const char *state_text; // 当前作用域变量，用于保存业务状态指针。
 
     switch (state)
     {
@@ -203,7 +210,7 @@ bool A_Hmi_Init(A_Hmi_Context *context)
  */
 void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
 {
-    F_Hmi_Rtc_Time rtc_time;
+    F_Hmi_Rtc_Time rtc_time; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
@@ -377,18 +384,18 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
  */
 void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t now_ms)
 {
-    char text[16];
-    uint16_t control_id;
-    uint8_t index;
-    uint8_t supply_bits = 0U;
-    uint8_t exhaust_bits = 0U;
-    uint8_t test_bits = 0U;
-    uint8_t disable_bits = 0U;
-    uint8_t qualification_bits = 0U;
-    uint8_t changed_bits;
-    size_t length = 0U;
-    bool out_of_range;
-    bool sent = false;
+    char text[16]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t supply_bits = 0U; // 当前刷新函数使用的供气阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t exhaust_bits = 0U; // 当前刷新函数使用的排气阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t test_bits = 0U; // 当前刷新函数使用的测试阀位图；bit0～bit5分别对应1～6号瓶，0表示关阀，1表示开阀，bit6～bit7保留为0。
+    uint8_t disable_bits = 0U; // 当前刷新函数使用的停用状态位图；bit0～bit5分别对应1～6号瓶，0表示启用，1表示停用，bit6～bit7保留为0。
+    uint8_t qualification_bits = 0U; // 当前刷新函数使用的测试合格位图；bit0～bit5分别对应1～6号瓶，0表示未合格，1表示已合格，bit6～bit7保留为0。
+    uint8_t changed_bits; // 当前刷新函数使用的差异位图；bit0～bit5分别对应1～6号瓶，0表示对应状态未变化，1表示对应状态需要回写，bit6～bit7保留为0。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
+    bool out_of_range; // out_of_range 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示数值在允许范围内，true表示数值超出允许范围。
+    bool sent = false; // sent 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未发送成功，true表示已经发送成功。
 
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
@@ -722,7 +729,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         out_of_range = (context->pressure_refresh_quality[GAS_TOTAL_PRESSURE_SENSOR_INDEX] ==
                         GAS_PRESSURE_OUT_OF_RANGE);
         control_id = out_of_range ? A_HMI_TOTAL_PRESSURE_TEXT :
-                                    A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT;
+                                    A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT; // 当前作用域变量，用于保存当前处理数据。
         text[0] = ' ';
         length = 1U;
         // 总管压力同样先清空非目标颜色层，保证画面中任意时刻只有一种颜色承担有效数值。
@@ -732,7 +739,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         out_of_range = (context->pressure_refresh_quality[GAS_TOTAL_PRESSURE_SENSOR_INDEX] ==
                         GAS_PRESSURE_OUT_OF_RANGE);
         control_id = out_of_range ? A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT :
-                                    A_HMI_TOTAL_PRESSURE_TEXT;
+                                    A_HMI_TOTAL_PRESSURE_TEXT; // 当前作用域变量，用于保存当前处理数据。
         length = A_Hmi_FormatPressure(context->pressure_refresh_mpa[GAS_TOTAL_PRESSURE_SENSOR_INDEX],
                                       context->pressure_refresh_quality[GAS_TOTAL_PRESSURE_SENSOR_INDEX],
                                       text,

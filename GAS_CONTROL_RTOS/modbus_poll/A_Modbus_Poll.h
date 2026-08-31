@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明压力传感器Modbus轮询应用层上下文和任务接口。
+ */
+
 #ifndef A_MODBUS_POLL_H
 #define A_MODBUS_POLL_H
 
@@ -16,7 +23,7 @@ typedef struct
     uint8_t poll_index;                         // 下一路准备轮询的压力传感器索引。
     uint8_t pending_index;                      // 当前事务对应的压力传感器索引。
     uint32_t next_poll_ms;                      // 允许启动下一笔事务的时间。
-    bool ready;                                // SCI1 主站硬件是否已经成功绑定。
+    bool ready; // SCI1 主站硬件是否已经成功绑定；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Modbus_Poll_Context;
 
 /*

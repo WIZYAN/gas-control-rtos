@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明SCI0外部Modbus硬件层上下文和收发接口。
+ */
+
 // 本文件声明 SCI0/RS485 外部 Modbus 硬件层接口。
 #ifndef H_MODBUS_H
 #define H_MODBUS_H
@@ -14,10 +21,10 @@ typedef struct
     uint8_t transmit_buffer[H_MODBUS_FRAME_MAX_LENGTH]; // 发送帧缓存，保证异步发送期间数据持续有效。
     volatile uint16_t receive_length; // 当前已经接收的字节数。
     volatile uint16_t expected_length; // 根据功能码推导出的完整请求帧长度。
-    volatile bool frame_ready; // 一帧请求已经完整接收的标志。
-    volatile bool transmit_busy; // SCI0 正在发送响应的标志。
-    volatile bool uart_error; // 串口发生通信错误的标志。
-    bool uart_open; // SCI0 已经成功打开的标志。
+    volatile bool frame_ready; // Modbus接收完成标志；使用范围：SCI0中断与Modbus任务之间；取值范围：false/true，false表示请求帧尚未收全，true表示一帧请求已经完整接收。
+    volatile bool transmit_busy; // Modbus发送状态标志；使用范围：SCI0中断与Modbus任务之间；取值范围：false/true，false表示发送空闲，true表示SCI0正在发送响应。
+    volatile bool uart_error; // Modbus串口错误标志；使用范围：SCI0中断与Modbus任务之间；取值范围：false/true，false表示通信正常，true表示最近一次通信发生错误。
+    bool uart_open; // SCI0 已经成功打开的标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭，true表示开启。
 } H_Modbus_Context;
 
 /*

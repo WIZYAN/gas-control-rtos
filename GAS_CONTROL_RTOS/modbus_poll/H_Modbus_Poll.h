@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明SCI1内部Modbus轮询硬件层收发接口。
+ */
+
 #ifndef H_MODBUS_POLL_H
 #define H_MODBUS_POLL_H
 

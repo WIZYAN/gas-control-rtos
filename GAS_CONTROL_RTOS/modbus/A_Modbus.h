@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明外部Modbus应用层寄存器、结果码和业务接口。
+ */
+
 // 本文件声明 SCI0/RS485 外部 Modbus 从站应用层接口。
 #ifndef A_MODBUS_H
 #define A_MODBUS_H
@@ -122,10 +129,10 @@ typedef struct
     F_Modbus_Context function; // 外部 Modbus RTU 从站功能层实例。
     Gas_Config pending_config; // 已通过寄存器解码和校验、等待业务层应用的运行参数。
     Gas_Config current_config; // 当前完整13项参数镜像；外部解码只覆盖开放的原有10项。
-    bool config_pending; // 存在尚未由气源业务层取走的参数提交请求。
+    bool config_pending; // 存在尚未由气源业务层取走的参数提交请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint16_t pending_log_index; // 等待日志模块读取的零起始逻辑序号。
-    bool log_read_pending; // 存在尚未由气源应用层取走的日志读取请求。
-    bool ready; // 外部 Modbus 已经完成初始化的标志。
+    bool log_read_pending; // 存在尚未由气源应用层取走的日志读取请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool ready; // 外部 Modbus 已经完成初始化的标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Modbus_Context;
 
 /*

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现SCI9串口屏硬件初始化、异步收发和回调处理。
+ */
+
 #include "H_Hmi.h"
 
 #include <limits.h>
@@ -109,7 +116,7 @@ bool H_Hmi_IsTxBusy(const H_Hmi_Context *context)
  */
 void dis_uart_callback(uart_callback_args_t *p_args)
 {
-    H_Hmi_Context *context;
+    H_Hmi_Context *context; // 当前作用域变量，用于保存模块上下文指针。
 
     if ((p_args == NULL) || (p_args->p_context == NULL))
     {
@@ -119,7 +126,7 @@ void dis_uart_callback(uart_callback_args_t *p_args)
 
     if (p_args->event == UART_EVENT_RX_CHAR)
     {
-        uint16_t next_head = (uint16_t) ((context->rx_head + 1U) % H_HMI_RX_BUFFER_SIZE);
+        uint16_t next_head = (uint16_t) ((context->rx_head + 1U) % H_HMI_RX_BUFFER_SIZE); // 当前作用域变量，用于保存队列头位置。
 
         if (next_head != context->rx_tail)
         {

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明串口屏参数设置和日志清除模块的数据与接口。
+ */
+
 #ifndef A_HMI_CONFIG_H
 #define A_HMI_CONFIG_H
 
@@ -53,20 +60,20 @@ typedef struct
 {
     A_Hmi_Context *hmi;          // 复用SCI9协议和发送队列的HMI应用实例。
     Gas_Config edit_config;      // 参数页11项可见参数及2项内部固定参数组成的完整编辑缓存。
-    uint16_t refresh_mask;       // 主页面11项参数、状态及确认子画面四项文本的待刷新位图。
+    uint16_t refresh_mask;       // 参数编辑上下文待刷新位图；bit0～bit10依次表示切换压力、待用压力、低压警告、压力上限、吸合时间、低压确认时间、低压样本数、关阀等待、开阀等待、排气时长和测试阀最长时长，bit11表示状态提示，bit12～bit15依次表示确认页名称、旧值、新值和说明；0表示无需刷新，1表示等待刷新。
     uint8_t status;              // 当前提示文本编号，由模块内部解释。
     uint8_t pending_field;       // 当前待确认字段序号，0～10为单项，0xFF表示恢复全部默认值。
     char pending_old_text[F_HMI_TEXT_MAX_SIZE + 1U]; // 确认子画面显示的当前生效参数文本。
     char pending_new_text[F_HMI_TEXT_MAX_SIZE + 1U]; // 确认子画面显示的候选参数或非法原始输入文本。
     uint16_t log_clear_count;     // 日志清除画面最近一次显示的有效日志数量。
     uint8_t log_clear_progress;   // 日志物理清除进度，范围0～100。
-    uint8_t log_clear_refresh_mask; // 位0刷新数量，位1刷新等待、进度或结果。
+    uint8_t log_clear_refresh_mask; // 日志清除上下文待刷新位图；bit0表示日志数量，bit1表示等待、进度或结果，0表示无需刷新，1表示等待刷新，bit2～bit7保留为0。
     A_Hmi_Log_Clear_Status log_clear_status; // 当前日志清除确认、执行或结果状态。
-    bool active;                 // 参数页已经通过密码进入并处于编辑会话。
-    bool confirm_pending;        // 候选参数已通过校验，等待人员点击“确认修改”。
-    bool save_pending;           // 存在一份等待气源业务层处理的保存请求。
-    bool log_clear_dialog_active; // 已经从密码参数页进入日志清除独立画面。
-    bool log_clear_request_pending; // 人员二次确认后等待气源业务层接收清除请求。
+    bool active; // 参数页已经通过密码进入并处于编辑会话；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未激活，true表示已激活。
+    bool confirm_pending; // 候选参数已通过校验，等待人员点击“确认修改”；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool save_pending; // 存在一份等待气源业务层处理的保存请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
+    bool log_clear_dialog_active; // 已经从密码参数页进入日志清除独立画面；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未激活，true表示已激活。
+    bool log_clear_request_pending; // 人员二次确认后等待气源业务层接收清除请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
 } A_Hmi_Config_Context;
 
 /*

@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 声明AT24C256存储业务层的数据结构和操作接口。
+ */
+
 #ifndef A_STORAGE_H
 #define A_STORAGE_H
 
@@ -11,7 +18,7 @@
 typedef struct
 {
     F_At24c256_Context device; // 当前实例使用的 AT24C256 驱动上下文。
-    bool ready;              // EEPROM 是否已经应答并允许执行存储操作。
+    bool ready; // EEPROM 是否已经应答并允许执行存储操作；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } A_Storage_Context;
 
 /*

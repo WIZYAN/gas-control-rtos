@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现EEPROM循环日志、双管理头、记录校验和物理清除。
+ */
+
 #include "A_Gas_Log.h"
 
 #include <stddef.h>
@@ -17,7 +24,7 @@ typedef struct
     uint32_t last_regular_key; // 最近常规记录时段键。
     uint16_t write_index; // 下一写入物理槽位。
     uint16_t valid_count; // 当前有效记录数量。
-    bool valid; // 当前管理头候选是否通过完整校验。
+    bool valid; // 当前管理头候选是否通过完整校验；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
 } A_Gas_Log_Header_Candidate;
 
 /*
@@ -79,9 +86,9 @@ static uint32_t A_GasLog_ReadU32(const uint8_t *data)
  */
 static uint16_t A_GasLog_Crc16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    size_t index;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     for (index = 0U; index < length; ++index)
     {
@@ -126,7 +133,7 @@ static uint16_t A_GasLog_RecordAddress(uint16_t physical_index)
  */
 static bool A_GasLog_PageIsErased(const uint8_t *data)
 {
-    size_t index;
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     if (data == NULL)
     {
@@ -151,7 +158,7 @@ static bool A_GasLog_PageIsErased(const uint8_t *data)
 static bool A_GasLog_DecodeHeader(const uint8_t *data,
                                   A_Gas_Log_Header_Candidate *candidate)
 {
-    uint16_t stored_crc;
+    uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((data == NULL) || (candidate == NULL))
     {
@@ -202,10 +209,10 @@ static bool A_GasLog_WriteHeader(A_Gas_Log_Context *context,
                                  uint16_t valid_count,
                                  uint32_t last_regular_key)
 {
-    uint8_t data[A_GAS_LOG_HEADER_SIZE];
-    uint8_t verify[A_GAS_LOG_HEADER_SIZE];
-    uint16_t crc;
-    uint16_t address;
+    uint8_t data[A_GAS_LOG_HEADER_SIZE]; // 当前作用域变量，用于保存业务数据数组。
+    uint8_t verify[A_GAS_LOG_HEADER_SIZE]; // 当前作用域变量，用于保存读回校验缓冲区。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
+    uint16_t address; // 当前作用域变量，用于保存存储或寄存器地址。
 
     if ((context == NULL) || (context->storage == NULL))
     {
@@ -298,10 +305,10 @@ static void A_GasLog_EncodeRegularRecord(const A_Gas_Log_Context *context,
                                          const Gas_System *system,
                                          uint8_t *record)
 {
-    uint32_t packed_states = 0U;
-    uint8_t quality_mask = 0U;
-    uint8_t index;
-    uint16_t crc;
+    uint32_t packed_states = 0U; // 当前作用域变量，用于保存业务状态。
+    uint8_t quality_mask = 0U; // 当前编码函数使用的压力有效位图；bit0～bit5对应1～6号瓶，bit6对应总压力，0表示数据无效，1表示数据有效，bit7保留为0。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
     A_GasLog_EncodeRecordPrefix(record,
                                 A_GAS_LOG_TYPE_REGULAR,
@@ -343,8 +350,8 @@ static void A_GasLog_EncodeRegularRecord(const A_Gas_Log_Context *context,
  */
 static uint8_t A_GasLog_BuildValveMask(const Gas_System *system, uint8_t valve_kind)
 {
-    uint8_t mask = 0U;
-    uint8_t index;
+    uint8_t mask = 0U; // 当前作用域变量，用于保存位掩码。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
@@ -367,8 +374,8 @@ static uint8_t A_GasLog_BuildValveMask(const Gas_System *system, uint8_t valve_k
  */
 static uint8_t A_GasLog_BuildQualifiedMask(const Gas_System *system)
 {
-    uint8_t mask = 0U;
-    uint8_t index;
+    uint8_t mask = 0U; // 当前作用域变量，用于保存位掩码。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
@@ -392,8 +399,8 @@ static void A_GasLog_EncodeEventRecord(const A_Gas_Log_Context *context,
                                        gas_cylinder_state_t old_state,
                                        uint8_t *record)
 {
-    const Gas_Cylinder *cylinder = &system->cylinder[index];
-    uint16_t crc;
+    const Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
     A_GasLog_EncodeRecordPrefix(record,
                                 A_GAS_LOG_TYPE_EVENT,
@@ -429,7 +436,7 @@ static void A_GasLog_EncodeEventRecord(const A_Gas_Log_Context *context,
  */
 static uint32_t A_GasLog_MakeRegularKey(const Gas_Date_Time *date_time)
 {
-    uint32_t key = date_time->year;
+    uint32_t key = date_time->year; // 当前作用域变量，用于保存当前处理数据。
 
     key = (key * 13UL) + date_time->month;
     key = (key * 32UL) + date_time->day;
@@ -448,13 +455,13 @@ static bool A_GasLog_Append(A_Gas_Log_Context *context,
                             const uint8_t *record,
                             uint32_t regular_key)
 {
-    uint8_t verify[A_GAS_LOG_RECORD_SIZE];
-    uint8_t next_copy;
-    uint32_t next_generation;
-    uint32_t next_sequence;
-    uint16_t next_write_index;
-    uint16_t next_valid_count;
-    uint16_t address;
+    uint8_t verify[A_GAS_LOG_RECORD_SIZE]; // 当前作用域变量，用于保存读回校验缓冲区。
+    uint8_t next_copy; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t next_generation; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t next_sequence; // 当前作用域变量，用于保存日志流水号。
+    uint16_t next_write_index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t next_valid_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t address; // 当前作用域变量，用于保存存储或寄存器地址。
 
     if ((context == NULL) || (record == NULL) || !context->ready ||
         (context->storage == NULL))
@@ -518,12 +525,12 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
                    A_Storage_Context *storage,
                    const Gas_System *system)
 {
-    uint8_t data_a[A_GAS_LOG_HEADER_SIZE];
-    uint8_t data_b[A_GAS_LOG_HEADER_SIZE];
-    A_Gas_Log_Header_Candidate candidate_a;
-    A_Gas_Log_Header_Candidate candidate_b;
-    const A_Gas_Log_Header_Candidate *selected = NULL;
-    uint8_t index;
+    uint8_t data_a[A_GAS_LOG_HEADER_SIZE]; // 当前作用域变量，用于保存业务数据数组。
+    uint8_t data_b[A_GAS_LOG_HEADER_SIZE]; // 当前作用域变量，用于保存业务数据数组。
+    A_Gas_Log_Header_Candidate candidate_a; // 当前作用域变量，用于保存待校验候选值。
+    A_Gas_Log_Header_Candidate candidate_b; // 当前作用域变量，用于保存待校验候选值。
+    const A_Gas_Log_Header_Candidate *selected = NULL; // 当前作用域变量，用于保存当前处理数据指针。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((context == NULL) || (storage == NULL) || (system == NULL) || !storage->ready)
     {
@@ -545,7 +552,7 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
 
     if (candidate_a.valid && candidate_b.valid)
     {
-        bool b_is_newer = ((int32_t) (candidate_b.generation - candidate_a.generation) > 0);
+        bool b_is_newer = ((int32_t) (candidate_b.generation - candidate_a.generation) > 0); // 管理头B新旧判断标志；使用范围：日志初始化选择冗余管理头时；取值范围：false/true，false表示候选A不旧于B，true表示候选B代数更新。
 
         selected = b_is_newer ? &candidate_b : &candidate_a;
         context->active_header_copy = b_is_newer ? 1U : 0U;
@@ -609,7 +616,7 @@ static void A_GasLog_FinishClear(A_Gas_Log_Context *context,
                                  const Gas_System *system,
                                  A_Gas_Log_Clear_Result result)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     context->clear_state = A_GAS_LOG_CLEAR_IDLE;
     context->clear_result = result;
@@ -654,10 +661,10 @@ bool A_GasLog_RequestClear(A_Gas_Log_Context *context)
  */
 void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
 {
-    uint8_t verify[AT24C256_PAGE_SIZE_BYTES];
-    uint32_t next_generation;
-    uint32_t regular_key;
-    uint32_t next_address;
+    uint8_t verify[AT24C256_PAGE_SIZE_BYTES]; // 当前作用域变量，用于保存读回校验缓冲区。
+    uint32_t next_generation; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t regular_key; // 当前作用域变量，用于保存当前处理数据。
+    uint32_t next_address; // 当前作用域变量，用于保存存储或寄存器地址。
 
     if ((context == NULL) || (system == NULL) || !context->ready ||
         (context->clear_result != A_GAS_LOG_CLEAR_RESULT_BUSY))
@@ -671,7 +678,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
             next_generation = context->generation + 1UL;
             regular_key = system->date_time.valid ?
                           A_GasLog_MakeRegularKey(&system->date_time) :
-                          A_GAS_LOG_LAST_REGULAR_KEY_NONE;
+                          A_GAS_LOG_LAST_REGULAR_KEY_NONE; // 当前作用域变量，用于保存当前处理数据。
             if (!A_GasLog_WriteHeader(context,
                                       context->clear_empty_header_copy,
                                       next_generation,
@@ -773,9 +780,9 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
  */
 bool A_GasLog_Task(A_Gas_Log_Context *context, const Gas_System *system)
 {
-    uint8_t record[A_GAS_LOG_RECORD_SIZE];
-    uint8_t index;
-    uint32_t regular_key;
+    uint8_t record[A_GAS_LOG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint32_t regular_key; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (system == NULL) || !context->ready)
     {
@@ -830,9 +837,9 @@ bool A_GasLog_ReadRecord(A_Gas_Log_Context *context,
                          uint16_t logical_index,
                          uint8_t record[A_GAS_LOG_RECORD_SIZE])
 {
-    uint16_t oldest_index;
-    uint16_t physical_index;
-    uint16_t stored_crc;
+    uint16_t oldest_index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t physical_index; // 当前作用域变量，用于保存日志物理索引。
+    uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((context == NULL) || (record == NULL) || !context->ready ||
         (context->clear_result == A_GAS_LOG_CLEAR_RESULT_BUSY) ||
@@ -916,7 +923,7 @@ A_Gas_Log_Clear_Result A_GasLog_GetClearResult(const A_Gas_Log_Context *context)
  */
 uint8_t A_GasLog_GetClearProgress(const A_Gas_Log_Context *context)
 {
-    uint32_t progress;
+    uint32_t progress; // 当前作用域变量，用于保存当前处理数据。
 
     if (context == NULL)
     {
@@ -927,7 +934,7 @@ uint8_t A_GasLog_GetClearProgress(const A_Gas_Log_Context *context)
         return 100U;
     }
     progress = ((uint32_t) context->clear_pages_completed * 100UL) /
-               A_GAS_LOG_CLEAR_PAGE_COUNT;
+               A_GAS_LOG_CLEAR_PAGE_COUNT; // 当前作用域变量，用于保存当前处理数据。
     return (progress > 100UL) ? 100U : (uint8_t) progress;
 }
 

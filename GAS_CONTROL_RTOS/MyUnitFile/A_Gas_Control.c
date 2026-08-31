@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现气源系统状态机、自动换瓶、人工控制和安全互锁业务。
+ */
+
 #include "A_Gas_Control.h"
 
 #include <stddef.h>
@@ -21,7 +28,7 @@ static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system);
  */
 static bool A_GasControl_AnyTestValveOn(const Gas_System *system)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     if (system == NULL)
     {
@@ -62,9 +69,9 @@ static void A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
  */
 static uint16_t A_GasControl_CommRecordCrc16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFU;
-    size_t index;
-    uint8_t bit;
+    uint16_t crc = 0xFFFFU; // 当前作用域变量，用于保存CRC校验值。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     for (index = 0U; index < length; ++index)
     {
@@ -88,9 +95,9 @@ static bool A_GasControl_ReadCommModeAtAddress(A_Storage_Context *storage,
                                                uint16_t address,
                                                gas_external_comm_mode_t *mode)
 {
-    uint8_t record[A_GAS_CONTROL_COMM_RECORD_SIZE];
-    uint16_t stored_crc;
-    uint16_t calculated_crc;
+    uint8_t record[A_GAS_CONTROL_COMM_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
+    uint16_t calculated_crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((storage == NULL) || (mode == NULL) ||
         !A_Storage_Read(storage,
@@ -150,9 +157,9 @@ static bool A_GasControl_LoadCommMode(A_Storage_Context *storage,
 static bool A_GasControl_SaveCommMode(A_Storage_Context *storage,
                                       gas_external_comm_mode_t mode)
 {
-    uint8_t record[A_GAS_CONTROL_COMM_RECORD_SIZE];
-    uint8_t verify[A_GAS_CONTROL_COMM_RECORD_SIZE];
-    uint16_t crc;
+    uint8_t record[A_GAS_CONTROL_COMM_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint8_t verify[A_GAS_CONTROL_COMM_RECORD_SIZE]; // 当前作用域变量，用于保存读回校验缓冲区。
+    uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
     if ((storage == NULL) || (mode > GAS_EXTERNAL_COMM_RS485))
     {
@@ -216,10 +223,10 @@ static bool A_GasControl_PressureIsFresh(const Gas_Cylinder *cylinder,
  */
 static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uint8_t index)
 {
-    Gas_Cylinder *cylinder;
-    bool supply_ok;
-    bool exhaust_ok;
-    bool test_ok;
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    bool supply_ok; // supply_ok 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
+    bool exhaust_ok; // exhaust_ok 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
+    bool test_ok; // test_ok 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -251,9 +258,9 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
  */
 static void F_GasControl_EnterLowReplace(A_Gas_Control_Context *context, uint8_t index)
 {
-    Gas_Cylinder *cylinder;
-    bool state_changed;
-    bool qualification_changed;
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    bool state_changed; // state_changed 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未发生变化，true表示已经发生变化。
+    bool qualification_changed; // qualification_changed 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未发生变化，true表示已经发生变化。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -311,12 +318,12 @@ static uint8_t A_GasControl_FindNextReady(const Gas_System *system,
                                           uint8_t start_index,
                                           uint32_t now_ms)
 {
-    uint8_t offset;
+    uint8_t offset; // 当前作用域变量，用于保存数据偏移量。
 
     for (offset = 1U; offset <= GAS_CYLINDER_COUNT; ++offset)
     {
-        uint8_t index = (uint8_t) ((start_index + offset) % GAS_CYLINDER_COUNT);
-        const Gas_Cylinder *cylinder = &system->cylinder[index];
+        uint8_t index = (uint8_t) ((start_index + offset) % GAS_CYLINDER_COUNT); // 当前作用域变量，用于保存遍历索引。
+        const Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
         if ((cylinder->state == GAS_CYL_READY) &&
             cylinder->qualification_passed &&
@@ -338,12 +345,12 @@ static uint8_t A_GasControl_FindNextReady(const Gas_System *system,
  */
 static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, uint32_t now_ms)
 {
-    Gas_System *system = &context->system;
-    uint8_t index;
+    Gas_System *system = &context->system; // 当前作用域变量，用于保存气源系统对象指针。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        Gas_Cylinder *cylinder = &system->cylinder[index];
+        Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
         bool switching_new = ((system->switch_state == GAS_SWITCH_VERIFY_NEW) &&
                               (index == system->switch_new_index));
 
@@ -423,9 +430,9 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
  */
 static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uint32_t now_ms)
 {
-    Gas_System *system = &context->system;
-    uint8_t start_index;
-    uint8_t next_index;
+    Gas_System *system = &context->system; // 当前作用域变量，用于保存气源系统对象指针。
+    uint8_t start_index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t next_index; // 当前作用域变量，用于保存遍历索引。
 
     if ((system->mode != GAS_MODE_AUTO) || !system->platform_ready ||
         (system->active_index < GAS_CYLINDER_COUNT) ||
@@ -470,11 +477,11 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
  */
 static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_t now_ms)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        Gas_Cylinder *cylinder = &context->system.cylinder[index];
+        Gas_Cylinder *cylinder = &context->system.cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
         if (cylinder->state == GAS_CYL_DISABLED)
         {
@@ -520,8 +527,8 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
  */
 static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t now_ms)
 {
-    uint8_t index;
-    uint8_t bit;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     if (context == NULL)
     {
@@ -614,9 +621,9 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
  */
 static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now_ms)
 {
-    Gas_System *system = &context->system;
-    Gas_Cylinder *active;
-    uint8_t next_index;
+    Gas_System *system = &context->system; // 当前作用域变量，用于保存气源系统对象指针。
+    Gas_Cylinder *active; // 当前作用域变量，用于保存当前活动对象指针。
+    uint8_t next_index; // 当前作用域变量，用于保存遍历索引。
 
     if ((system->mode != GAS_MODE_AUTO) || !system->platform_ready)
     {
@@ -790,10 +797,10 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
  */
 static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
 {
-    uint16_t button_id;
-    uint8_t value;
-    uint8_t index;
-    bool success = true;
+    uint16_t button_id; // 当前作用域变量，用于保存串口屏控件标识。
+    uint8_t value; // 当前作用域变量，用于保存当前处理值。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    bool success = true; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if (!A_Hmi_TakeButtonEvent(&context->hmi, &button_id, &value))
     {
@@ -933,14 +940,14 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
  */
 static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
 {
-    uint8_t index;
-    uint8_t supply_count = 0U;
-    bool any_test_on = false;
-    bool conflict = false;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t supply_count = 0U; // 当前作用域变量，用于保存数量计数。
+    bool any_test_on = false; // 测试阀汇总状态标志；使用范围：当前测试阀运行检查函数内；取值范围：false/true，false表示六路测试阀均关闭，true表示至少一路测试阀开启。
+    bool conflict = false; // conflict 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无冲突，true表示存在冲突。
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        const Gas_Cylinder *cylinder = &context->system.cylinder[index];
+        const Gas_Cylinder *cylinder = &context->system.cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
         if (cylinder->supply_cmd)
         {
@@ -954,7 +961,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
         }
         if (cylinder->test_cmd)
         {
-            any_test_on = true;
+            any_test_on = true; // 当前作用域变量，用于保存当前处理数据。
         }
     }
 
@@ -989,7 +996,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
  */
 static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     if (system == NULL)
     {
@@ -1002,7 +1009,7 @@ static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system)
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        const Gas_Cylinder *cylinder = &system->cylinder[index];
+        const Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
         if (cylinder->supply_cmd || cylinder->exhaust_cmd || cylinder->test_cmd)
         {
@@ -1020,7 +1027,7 @@ static bool A_GasControl_AllValveCommandsAreOff(const Gas_System *system)
  */
 static bool A_GasControl_AllCylindersDisabled(const Gas_System *system)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     if (system == NULL)
     {
@@ -1207,11 +1214,11 @@ static bool A_GasControl_IsMechanicalSwitching(const Gas_System *system)
  */
 static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
 {
-    A_Can_Control_Request request;
-    A_Can_Write_Result result = A_CAN_WRITE_EXECUTION_ERROR;
-    A_Can_Write_Detail detail = A_CAN_WRITE_DETAIL_STATE_DISALLOWED;
-    Gas_Cylinder *cylinder;
-    bool success = false;
+    A_Can_Control_Request request; // 当前作用域变量，用于保存待处理请求。
+    A_Can_Write_Result result = A_CAN_WRITE_EXECUTION_ERROR; // 当前作用域变量，用于保存操作结果。
+    A_Can_Write_Detail detail = A_CAN_WRITE_DETAIL_STATE_DISALLOWED; // 当前作用域变量，用于保存队列尾位置。
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    bool success = false; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
     if ((context == NULL) ||
         (context->external_comm_mode != GAS_EXTERNAL_COMM_CAN) ||
@@ -1298,7 +1305,7 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
 static void A_GasControl_ReclassifyPressureQuality(Gas_System *system,
                                                    const Gas_Config *config)
 {
-    uint8_t index;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
     if ((system == NULL) || (config == NULL))
     {
@@ -1306,7 +1313,7 @@ static void A_GasControl_ReclassifyPressureQuality(Gas_System *system,
     }
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        gas_pressure_quality_t quality = system->cylinder[index].pressure_quality;
+        gas_pressure_quality_t quality = system->cylinder[index].pressure_quality; // 当前作用域变量，用于保存当前处理数据。
         if ((quality == GAS_PRESSURE_VALID) || (quality == GAS_PRESSURE_OUT_OF_RANGE))
         {
             system->cylinder[index].pressure_quality =
@@ -1331,7 +1338,7 @@ static void A_GasControl_ReclassifyPressureQuality(Gas_System *system,
  */
 static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
 {
-    Gas_Config candidate;
+    Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
 
     if ((context == NULL) ||
         !A_GasControl_TakeExternalConfig(context, &candidate))
@@ -1380,8 +1387,8 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
  */
 static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
 {
-    Gas_Config candidate;
-    A_Gas_Config_Validation validation;
+    Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
+    A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
     if ((context == NULL) ||
         !A_HmiConfig_TakeSaveRequest(&context->hmi_config, &candidate))
@@ -1433,7 +1440,7 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
  */
 static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
 {
-    A_Gas_Log_Clear_Result result;
+    A_Gas_Log_Clear_Result result; // 当前作用域变量，用于保存操作结果。
 
     if (context == NULL)
     {
@@ -1491,9 +1498,9 @@ static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
  */
 static void A_GasControl_ProcessExternalLogRead(A_Gas_Control_Context *context)
 {
-    uint8_t record[A_GAS_LOG_RECORD_SIZE];
-    uint16_t logical_index;
-    uint16_t valid_count;
+    uint8_t record[A_GAS_LOG_RECORD_SIZE]; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint16_t logical_index; // 当前作用域变量，用于保存日志逻辑索引。
+    uint16_t valid_count; // 当前作用域变量，用于保存数量计数。
 
     if ((context == NULL) ||
         !A_GasControl_TakeExternalLogRequest(context, &logical_index))
@@ -1538,11 +1545,11 @@ static void A_GasControl_ProcessExternalLogRead(A_Gas_Control_Context *context)
  */
 void A_GasControl_Init(A_Gas_Control_Context *context)
 {
-    Gas_System *system;
-    uint32_t now_ms;
-    uint8_t index;
-    bool sensor_ready;
-    bool comm_record_valid = false;
+    Gas_System *system; // 当前作用域变量，用于保存气源系统对象指针。
+    uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    bool sensor_ready; // sensor_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool comm_record_valid = false; // comm_record_valid 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
 
     if (context == NULL)
     {
@@ -1585,7 +1592,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
 
     if (A_Storage_Init(&context->storage_service))
     {
-        Gas_Config stored_config;
+        Gas_Config stored_config; // 当前作用域变量，用于保存运行参数。
 
         comm_record_valid = A_GasControl_LoadCommMode(&context->storage_service,
                                                       &context->external_comm_mode);
@@ -1643,7 +1650,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
 bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
                                       gas_external_comm_mode_t mode)
 {
-    gas_external_comm_mode_t previous_mode;
+    gas_external_comm_mode_t previous_mode; // 当前作用域变量，用于保存工作模式。
 
     if ((context == NULL) || (mode > GAS_EXTERNAL_COMM_RS485) ||
         !A_GasControl_AllCylindersDisabled(&context->system) ||
@@ -1691,7 +1698,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
  */
 bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
 {
-    uint32_t now_ms;
+    uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -1766,8 +1773,8 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
  */
 bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bool on)
 {
-    uint32_t now_ms;
-    uint8_t bit;
+    uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
+    uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -1837,8 +1844,8 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
                                       uint8_t index,
                                       bool disabled)
 {
-    Gas_System *system;
-    Gas_Cylinder *cylinder;
+    Gas_System *system; // 当前作用域变量，用于保存气源系统对象指针。
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -1900,8 +1907,8 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
                                          uint8_t index,
                                          bool passed)
 {
-    Gas_Cylinder *cylinder;
-    uint32_t now_ms;
+    Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
+    uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
@@ -1938,7 +1945,7 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
  */
 void A_GasControl_Task(A_Gas_Control_Context *context)
 {
-    uint32_t now_ms;
+    uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
 
     if (context == NULL)
     {

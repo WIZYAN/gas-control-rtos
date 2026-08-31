@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现串口屏日志条件筛选、索引建立、分页和格式化显示。
+ */
+
 #include "A_Hmi_Log.h"
 
 #include <string.h>
@@ -51,11 +58,11 @@ static bool A_HmiLog_AppendUnsigned(char *row,
                                     uint32_t value,
                                     uint8_t minimum_digits)
 {
-    char reverse[10];
-    char digits[10];
-    size_t count = 0U;
-    size_t output_count;
-    size_t index;
+    char reverse[10]; // 当前作用域变量，用于保存当前处理数据数组。
+    char digits[10]; // 当前作用域变量，用于保存当前处理数据数组。
+    size_t count = 0U; // 当前作用域变量，用于保存数量计数。
+    size_t output_count; // 当前作用域变量，用于保存数量计数。
+    size_t index; // 当前作用域变量，用于保存遍历索引。
 
     do
     {
@@ -100,7 +107,7 @@ static uint8_t A_HmiLog_DaysInMonth(uint16_t year, uint8_t month)
 {
     const uint8_t days[12] = {31U, 28U, 31U, 30U, 31U, 30U,
                               31U, 31U, 30U, 31U, 30U, 31U};
-    uint8_t result;
+    uint8_t result; // 当前作用域变量，用于保存操作结果。
 
     if ((month == 0U) || (month > 12U))
     {
@@ -122,7 +129,7 @@ static uint8_t A_HmiLog_DaysInMonth(uint16_t year, uint8_t month)
  */
 static bool A_HmiLog_DateTimeValid(const A_Hmi_Log_Date_Time *value)
 {
-    uint8_t maximum_day;
+    uint8_t maximum_day; // 当前作用域变量，用于保存日期时间字段。
 
     if ((value == NULL) || (value->year < 2000U) || (value->year > 2099U) ||
         (value->hour > 23U) || (value->minute > 59U) || (value->second > 59U))
@@ -156,7 +163,7 @@ static uint64_t A_HmiLog_DateTimeKey(const A_Hmi_Log_Date_Time *value)
  */
 static uint64_t A_HmiLog_RecordDateTimeKey(const uint8_t *record)
 {
-    A_Hmi_Log_Date_Time value;
+    A_Hmi_Log_Date_Time value; // 当前作用域变量，用于保存当前处理值。
 
     value.year = (uint16_t) (2000U + record[6]);
     value.month = record[7];
@@ -195,8 +202,8 @@ static bool A_HmiLog_FilterValid(const A_Hmi_Log_Filter *filter)
 static bool A_HmiLog_RecordMatchesFilter(const A_Hmi_Log_Context *context,
                                          const uint8_t *record)
 {
-    uint64_t record_key;
-    uint8_t expected_type;
+    uint64_t record_key; // 当前作用域变量，用于保存日志或配置记录缓冲区。
+    uint8_t expected_type; // 当前作用域变量，用于保存数据类型。
 
     if ((context == NULL) || (record == NULL))
     {
@@ -264,7 +271,7 @@ static bool A_HmiLog_AppendBriefPressure(char *row,
                                          uint16_t raw,
                                          bool valid)
 {
-    uint16_t rounded;
+    uint16_t rounded; // 当前作用域变量，用于保存当前处理数据。
 
     if (!valid)
     {
@@ -318,8 +325,8 @@ static bool A_HmiLog_AppendState(char *row,
                                  size_t capacity,
                                  uint8_t state)
 {
-    const char *text;
-    size_t text_length;
+    const char *text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+    size_t text_length; // 当前作用域变量，用于保存有效数据长度。
 
     switch ((gas_cylinder_state_t) state)
     {
@@ -434,7 +441,7 @@ static uint16_t A_HmiLog_GetPageSize(A_Hmi_Log_Query_Type query_type)
  */
 static uint16_t A_HmiLog_GetPageCount(const A_Hmi_Log_Context *context)
 {
-    uint16_t page_size;
+    uint16_t page_size; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (context->matched_count == 0U))
     {
@@ -489,8 +496,8 @@ static void A_HmiLog_SetDefaultFilter(A_Hmi_Log_Filter *filter)
  */
 static bool A_HmiLog_ParseDigits(const char *text, size_t length, uint32_t *value)
 {
-    size_t index;
-    uint32_t result = 0U;
+    size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint32_t result = 0U; // 当前作用域变量，用于保存操作结果。
 
     if ((text == NULL) || (value == NULL) || (length == 0U))
     {
@@ -525,8 +532,8 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     const char ready_text[] = "\xCC\xF5\xBC\xFE\xD2\xD1\xBE\xCD\xD0\xF7"; // 条件已就绪。
     const char input_error_text[] = "\xC8\xD5\xC6\xDA\xBB\xF2\xCA\xB1\xBC\xE4\xB8\xF1\xCA\xBD\xB4\xED\xCE\xF3"; // 日期或时间格式错误。
     const char reset_text[] = "\xD2\xD1\xBB\xD6\xB8\xB4\xC8\xAB\xB2\xBF\xBC\xC7\xC2\xBC"; // 已恢复全部记录。
-    const A_Hmi_Log_Date_Time *date_time;
-    size_t length = 0U;
+    const A_Hmi_Log_Date_Time *date_time; // 当前作用域变量，用于保存当前处理数据指针。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (text == NULL))
     {
@@ -534,7 +541,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     }
     if (slot <= 3U)
     {
-        date_time = (slot < 2U) ? &context->edit_filter.start : &context->edit_filter.end;
+        date_time = (slot < 2U) ? &context->edit_filter.start : &context->edit_filter.end; // 当前作用域变量，用于保存当前处理数据。
         if ((slot == 0U) || (slot == 2U))
         {
             return (A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->year, 4U) &&
@@ -572,17 +579,17 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     }
     if (slot == 7U)
     {
-        const char *status_text = ready_text;
-        size_t status_length = sizeof(ready_text) - 1U;
+        const char *status_text = ready_text; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+        size_t status_length = sizeof(ready_text) - 1U; // 当前作用域变量，用于保存有效数据长度。
 
         if (context->filter_status == A_HMI_LOG_FILTER_STATUS_INPUT_ERROR)
         {
-            status_text = input_error_text;
+            status_text = input_error_text; // 当前作用域变量，用于保存当前处理数据。
             status_length = sizeof(input_error_text) - 1U;
         }
         else if (context->filter_status == A_HMI_LOG_FILTER_STATUS_RESET)
         {
-            status_text = reset_text;
+            status_text = reset_text; // 当前作用域变量，用于保存当前处理数据。
             status_length = sizeof(reset_text) - 1U;
         }
         return A_HmiLog_AppendBytes(text, &length, capacity,
@@ -605,10 +612,10 @@ static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
         A_HMI_LOG_FILTER_ALL_TIME_BUTTON_ID, A_HMI_LOG_FILTER_CYLINDER_TEXT_ID,
         A_HMI_LOG_FILTER_STATE_TEXT_ID, A_HMI_LOG_FILTER_STATUS_TEXT_ID
     };
-    char text[A_HMI_LOG_STATUS_MAX_SIZE];
-    size_t length;
-    uint8_t slot;
-    bool sent;
+    char text[A_HMI_LOG_STATUS_MAX_SIZE]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
+    uint8_t slot; // 当前作用域变量，用于保存数组或队列槽位。
+    bool sent; // sent 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未发送成功，true表示已经发送成功。
 
     if ((context == NULL) || (context->filter_refresh_mask == 0U))
     {
@@ -656,9 +663,9 @@ static size_t A_HmiLog_FormatRegularPressureRow(const uint8_t *record,
 {
     const char pressure_text[4] = {'\xD1', '\xB9', '\xC1', '\xA6'}; // 压力。
     const char total_pressure_text[4] = {'\xD7', '\xDC', '\xD1', '\xB9'}; // 总压。
-    uint8_t index;
-    uint8_t quality_mask = record[29];
-    size_t length = 0U;
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t quality_mask = record[29]; // 当前格式化函数使用的压力有效位图；bit0～bit5对应1～6号瓶，bit6对应总压力，0表示数据无效，1表示数据有效，bit7保留为0。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (!A_HmiLog_AppendUnsigned(row, &length, capacity, record[7], 2U) ||
         !A_HmiLog_AppendChar(row, &length, capacity, '-') ||
@@ -715,9 +722,9 @@ static size_t A_HmiLog_FormatRegularStateRow(const uint8_t *record,
                                              size_t capacity)
 {
     const char state_text[4] = {'\xD7', '\xB4', '\xCC', '\xAC'}; // 状态。
-    uint32_t packed_states;
-    uint8_t index;
-    size_t length = 0U;
+    uint32_t packed_states; // 当前作用域变量，用于保存业务状态。
+    uint8_t index; // 当前作用域变量，用于保存遍历索引。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (!A_HmiLog_AppendChar(row, &length, capacity, ';') ||
         !A_HmiLog_AppendBytes(row, &length, capacity, state_text, sizeof(state_text)) ||
@@ -731,7 +738,7 @@ static size_t A_HmiLog_FormatRegularStateRow(const uint8_t *record,
                     record[28];
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
-        uint8_t state = (uint8_t) ((packed_states >> (index * 3U)) & 0x07UL);
+        uint8_t state = (uint8_t) ((packed_states >> (index * 3U)) & 0x07UL); // 当前作用域变量，用于保存业务状态。
 
         if (!A_HmiLog_AppendUnsigned(row, &length, capacity, (uint32_t) index + 1U, 1U) ||
             !A_HmiLog_AppendChar(row, &length, capacity, '#') ||
@@ -756,7 +763,7 @@ static size_t A_HmiLog_FormatEventRow(const uint8_t *record,
                                       size_t capacity)
 {
     const char number_text[2] = {'\xBA', '\xC5'}; // 号。
-    size_t length = 0U;
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (!A_HmiLog_AppendDateTime(row, &length, capacity, record, true) ||
         !A_HmiLog_AppendChar(row, &length, capacity, ';') ||
@@ -845,7 +852,7 @@ static void A_HmiLog_FailAndClear(A_Hmi_Log_Context *context)
  */
 static bool A_HmiLog_ScanOneRecord(A_Hmi_Log_Context *context)
 {
-    uint16_t logical_index;
+    uint16_t logical_index; // 当前作用域变量，用于保存日志逻辑索引。
 
     if (context->scan_logical_index == 0U)
     {
@@ -915,9 +922,9 @@ static bool A_HmiLog_FormatCurrentRow(A_Hmi_Log_Context *context)
  */
 static bool A_HmiLog_IsRequestedPageAvailable(const A_Hmi_Log_Context *context)
 {
-    uint32_t required_count;
-    uint16_t page_count;
-    uint16_t page_size;
+    uint32_t required_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t page_count; // 当前作用域变量，用于保存数量计数。
+    uint16_t page_size; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || (context->matched_count == 0U))
     {
@@ -941,8 +948,8 @@ static bool A_HmiLog_IsRequestedPageAvailable(const A_Hmi_Log_Context *context)
  */
 static void A_HmiLog_StartPage(A_Hmi_Log_Context *context)
 {
-    uint32_t end_index;
-    uint16_t page_size = A_HmiLog_GetPageSize(context->query_type);
+    uint32_t end_index; // 当前作用域变量，用于保存遍历索引。
+    uint16_t page_size = A_HmiLog_GetPageSize(context->query_type); // 当前作用域变量，用于保存当前处理数据。
 
     context->current_page = context->requested_page;
     context->page_start_index = (uint16_t) ((uint32_t) context->current_page * page_size);
@@ -968,7 +975,7 @@ static void A_HmiLog_StartPage(A_Hmi_Log_Context *context)
  */
 static void A_HmiLog_ProcessPageRequest(A_Hmi_Log_Context *context)
 {
-    uint16_t page_count;
+    uint16_t page_count; // 当前作用域变量，用于保存数量计数。
 
     if (!context->page_request_pending)
     {
@@ -1035,8 +1042,8 @@ static void A_HmiLog_FinishIndex(A_Hmi_Log_Context *context)
 static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
 {
     const char scan_text[] = "\xC9\xA8\xC3\xE8\x20"; // 扫描。
-    char status[A_HMI_LOG_STATUS_MAX_SIZE];
-    size_t length = 0U;
+    char status[A_HMI_LOG_STATUS_MAX_SIZE]; // 当前作用域变量，用于保存当前处理数据数组。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                               scan_text, sizeof(scan_text) - 1U) ||
@@ -1071,29 +1078,29 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
     const char error_text[] = "\xB6\xC1\xC8\xA1\xB4\xED\xCE\xF3"; // 读取错误。
     const char rtc_text[] = "\xCA\xB1\xBC\xE4\xCE\xDE\xD0\xA7"; // 时间无效。
     const char range_text[] = "\xCA\xB1\xBC\xE4\xB7\xB6\xCE\xA7\xB4\xED\xCE\xF3"; // 时间范围错误。
-    char status[A_HMI_LOG_STATUS_MAX_SIZE];
-    const char *fixed_text = NULL;
-    size_t fixed_length = 0U;
-    size_t length = 0U;
+    char status[A_HMI_LOG_STATUS_MAX_SIZE]; // 当前作用域变量，用于保存当前处理数据数组。
+    const char *fixed_text = NULL; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
+    size_t fixed_length = 0U; // 当前作用域变量，用于保存有效数据长度。
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (context->filter_error)
     {
-        fixed_text = range_text;
+        fixed_text = range_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(range_text) - 1U;
     }
     else if (context->read_failed)
     {
-        fixed_text = error_text;
+        fixed_text = error_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(error_text) - 1U;
     }
     else if (context->snapshot_changed)
     {
-        fixed_text = changed_text;
+        fixed_text = changed_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(changed_text) - 1U;
     }
     else if ((context->system == NULL) || !context->system->date_time.valid)
     {
-        fixed_text = rtc_text;
+        fixed_text = rtc_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(rtc_text) - 1U;
     }
 
@@ -1140,11 +1147,11 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
     const char total_text[] = "\xB9\xB2"; // 共。
     const char count_text[] = "\xCC\xF5"; // 条。
     const char counting_text[] = "\xCD\xB3\xBC\xC6\xD6\xD0"; // 统计中。
-    char status[A_HMI_LOG_STATUS_MAX_SIZE];
-    uint16_t page_count = A_HmiLog_GetPageCount(context);
+    char status[A_HMI_LOG_STATUS_MAX_SIZE]; // 当前作用域变量，用于保存当前处理数据数组。
+    uint16_t page_count = A_HmiLog_GetPageCount(context); // 当前作用域变量，用于保存数量计数。
     uint16_t display_page = (context->matched_count == 0U) ?
                             0U : (uint16_t) (context->current_page + 1U);
-    size_t length = 0U;
+    size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                               first_text, sizeof(first_text) - 1U) ||
@@ -1310,15 +1317,15 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
  */
 void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 {
-    A_Hmi_Log_Filter candidate;
-    A_Hmi_Log_Date_Time *date_time;
-    char text[F_HMI_TEXT_MAX_SIZE + 1U];
-    uint16_t page_id;
-    uint16_t control_id;
-    uint8_t slot;
-    uint32_t value;
-    size_t length;
-    bool valid = false;
+    A_Hmi_Log_Filter candidate; // 当前作用域变量，用于保存待校验候选值。
+    A_Hmi_Log_Date_Time *date_time; // 当前作用域变量，用于保存当前处理数据指针。
+    char text[F_HMI_TEXT_MAX_SIZE + 1U]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
+    uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
+    uint8_t slot; // 当前作用域变量，用于保存数组或队列槽位。
+    uint32_t value; // 当前作用域变量，用于保存当前处理值。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
+    bool valid = false; // valid 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
 
     if ((context == NULL) || !context->ready || (context->hmi == NULL))
     {
@@ -1338,7 +1345,7 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 
         candidate = context->edit_filter;
         slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
-        date_time = (slot < 2U) ? &candidate.start : &candidate.end;
+        date_time = (slot < 2U) ? &candidate.start : &candidate.end; // 当前作用域变量，用于保存当前处理数据。
         valid = false;
         if (((slot == 0U) || (slot == 2U)) && (length == 8U) &&
             A_HmiLog_ParseDigits(text, length, &value))
@@ -1407,7 +1414,7 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
                           A_Hmi_Log_Query_Type query_type,
                           A_Hmi_Log_Page_Command command)
 {
-    uint16_t base_page;
+    uint16_t base_page; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || !context->ready ||
         !A_GasLog_IsReady(context->log) ||
@@ -1465,8 +1472,8 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
  */
 void A_HmiLog_Task(A_Hmi_Log_Context *context)
 {
-    uint16_t page_id;
-    uint16_t record_control_id;
+    uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
+    uint16_t record_control_id; // 当前作用域变量，用于保存串口屏控件标识。
 
     if ((context == NULL) || !context->ready || !context->hmi->ready)
     {

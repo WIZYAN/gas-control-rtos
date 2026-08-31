@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现SCI1内部RS485压力传感器总线硬件接口转接。
+ */
+
 #include "H_Modbus_Poll.h"
 
 #include <stddef.h>

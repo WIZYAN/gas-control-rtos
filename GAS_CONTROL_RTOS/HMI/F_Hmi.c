@@ -1,3 +1,10 @@
+/*
+ * Version: v1.11
+ * Author: YXZ
+ * Created: 2026-08-24
+ * Description: 实现大彩串口屏协议解析、文本FIFO和控件发送功能。
+ */
+
 #include "F_Hmi.h"
 
 #include <string.h>
@@ -10,7 +17,7 @@
  */
 static bool F_Hmi_FrameComplete(const F_Hmi_Context *context)
 {
-    uint16_t length;
+    uint16_t length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (context->rx_length < 5U))
     {
@@ -34,9 +41,9 @@ static bool F_Hmi_BcdToBinary(uint8_t bcd,
                               uint8_t maximum,
                               uint8_t *value)
 {
-    uint8_t high;
-    uint8_t low;
-    uint8_t binary;
+    uint8_t high; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t low; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t binary; // 当前作用域变量，用于保存当前处理数据。
 
     if (value == NULL)
     {
@@ -69,7 +76,7 @@ static uint8_t F_Hmi_DaysInMonth(uint16_t year, uint8_t month)
 {
     const uint8_t days[12] = {31U, 28U, 31U, 30U, 31U, 30U,
                               31U, 31U, 30U, 31U, 30U, 31U};
-    uint8_t result;
+    uint8_t result; // 当前作用域变量，用于保存操作结果。
 
     if ((month == 0U) || (month > 12U))
     {
@@ -92,8 +99,8 @@ static uint8_t F_Hmi_DaysInMonth(uint16_t year, uint8_t month)
  */
 static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
 {
-    F_Hmi_Rtc_Time rtc_time;
-    uint8_t year;
+    F_Hmi_Rtc_Time rtc_time; // 当前作用域变量，用于保存当前处理数据。
+    uint8_t year; // 当前作用域变量，用于保存日期时间字段。
 
     if ((context == NULL) || context->rtc_time_pending ||
         (context->rx_length != 13U) ||
@@ -133,9 +140,9 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
  */
 static void F_Hmi_ParseFrame(F_Hmi_Context *context)
 {
-    uint16_t text_end;
-    uint16_t text_length;
-    uint8_t text_queue_tail;
+    uint16_t text_end; // 当前作用域变量，用于保存显示文本缓冲区或长度。
+    uint16_t text_length; // 当前作用域变量，用于保存有效数据长度。
+    uint8_t text_queue_tail; // 当前作用域变量，用于保存显示文本缓冲区或长度。
 
     if ((context->rx_length >= 14U) &&
         (context->rx_frame[0] == 0xEEU) &&
@@ -221,7 +228,7 @@ bool F_Hmi_Init(F_Hmi_Context *context)
  */
 void F_Hmi_Task(F_Hmi_Context *context)
 {
-    uint8_t value;
+    uint8_t value; // 当前作用域变量，用于保存当前处理值。
 
     if (context == NULL)
     {
@@ -292,8 +299,8 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
                            char *text,
                            size_t capacity)
 {
-    const F_Hmi_Text_Event *event;
-    size_t length;
+    const F_Hmi_Text_Event *event; // 当前作用域变量，用于保存当前事件指针。
+    size_t length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (page_id == NULL) || (control_id == NULL) ||
         (text == NULL) || (context->text_queue_count == 0U))
@@ -346,7 +353,7 @@ bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
  */
 bool F_Hmi_SendReadRtc(F_Hmi_Context *context)
 {
-    const uint8_t command[6] = {0xEEU, 0x82U, 0xFFU, 0xFCU, 0xFFU, 0xFFU};
+    const uint8_t command[6] = {0xEEU, 0x82U, 0xFFU, 0xFCU, 0xFFU, 0xFFU}; // 当前作用域变量，用于保存操作命令数组。
 
     if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
     {
@@ -387,7 +394,7 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
                     const char *text,
                     size_t length)
 {
-    size_t frame_length = length + 11U;
+    size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (text == NULL) || (length == 0U) ||
         (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(&context->hardware))
@@ -422,7 +429,7 @@ bool F_Hmi_SendButtonState(F_Hmi_Context *context,
                            uint16_t control_id,
                            bool pressed)
 {
-    const size_t frame_length = 12U;
+    const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
     {
@@ -456,7 +463,7 @@ bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
                          uint16_t control_id,
                          uint8_t frame_id)
 {
-    const size_t frame_length = 12U;
+    const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
     {
@@ -489,7 +496,7 @@ bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
                            uint16_t page_id,
                            uint16_t control_id)
 {
-    const size_t frame_length = 11U;
+    const size_t frame_length = 11U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
     {
@@ -522,7 +529,7 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
                          const char *record,
                          size_t length)
 {
-    size_t frame_length = length + 11U;
+    size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (record == NULL) || (length == 0U) ||
         (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(&context->hardware))
