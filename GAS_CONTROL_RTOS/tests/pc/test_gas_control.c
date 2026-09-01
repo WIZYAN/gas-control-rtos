@@ -1,5 +1,5 @@
 /*
- * Version: v1.11
+ * Version: v1.12
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现气源控制、通信、日志、HMI和参数迁移的PC回归测试。
@@ -769,7 +769,7 @@ static void Test_ConfigV3Migration(void)
 
 /*
  * 函数名：Test_TestValveTimeRange。
- * 说明：验证V1.11测试阀5～60整分钟范围及10分钟默认值。
+ * 说明：验证V1.12继续支持测试阀5～60整分钟范围及10分钟默认值。
  * 输入：无。
  * 输出：无；通过参数校验结果断言分钟边界。
  */
@@ -2700,6 +2700,6 @@ int main(void)
     Test_HmiLogMenuSelect();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.11测试阀分钟配置、V2/V3迁移、日志查询、总测试阀联动和通讯回归测试通过。");
+    puts("V1.12测试阀分钟配置、V2/V3迁移、日志查询、总测试阀联动和通讯回归测试通过。");
     return 0;
 }

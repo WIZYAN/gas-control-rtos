@@ -1,5 +1,5 @@
 /*
- * Version: v1.11
+ * Version: v1.12
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现压力串口、十九路阀门和毫秒时基的平台硬件操作。

@@ -1,5 +1,5 @@
 /*
- * Version: v1.11
+ * Version: v1.12
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明气源平台硬件上下文、阀门映射和底层操作接口。

@@ -1,5 +1,5 @@
 /*
- * Version: v1.11
+ * Version: v1.12
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明运行参数记录格式、校验结果和持久化接口。

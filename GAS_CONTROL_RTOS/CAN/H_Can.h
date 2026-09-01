@@ -1,5 +1,5 @@
 /*
- * Version: v1.11
+ * Version: v1.12
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明CAN0硬件层帧结构、上下文和收发接口。

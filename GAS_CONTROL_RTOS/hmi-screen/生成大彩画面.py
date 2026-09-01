@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 当前正式工程是唯一保留的大彩工程，生成脚本直接在该目录内更新可再生资源。
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_VERSION = "1.11"
+PROJECT_VERSION = "1.12"
 PROJECT_NAME = f"GasControl_HMI_V{PROJECT_VERSION}"
 PROJECT_DIR = SCRIPT_DIR / PROJECT_NAME
 SOURCE_PROJECT = PROJECT_DIR
@@ -1441,9 +1441,9 @@ def copy_project_resources(project_dir: Path) -> None:
 def main() -> None:
     """
     函数名：main。
-    说明：生成完整的大彩 VisualTFT V1.11正式画面工程。
+    说明：生成完整的大彩 VisualTFT V1.12正式画面工程。
     输入：无。
-    输出：无；所有文件输出到GasControl_HMI_V1.11目录。
+    输出：无；所有文件输出到GasControl_HMI_V1.12目录。
     """
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     copy_project_resources(PROJECT_DIR)
