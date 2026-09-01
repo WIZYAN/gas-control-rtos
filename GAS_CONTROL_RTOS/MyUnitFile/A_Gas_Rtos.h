@@ -22,7 +22,7 @@
 // FreeRTOS气源应用上下文，聚合业务实例、静态任务控制块和栈空间。
 typedef struct
 {
-    A_Gas_Control_Context gas_control; // 六瓶三阀气源控制完整业务实例。
+    A_Gas_Control_Context gas_control; // 气源控制系统完整业务实例。
     StaticTask_t control_task_buffer; // 气源控制任务的FreeRTOS静态TCB内存。
     StackType_t control_task_stack[A_GAS_RTOS_CONTROL_STACK_WORDS]; // 气源控制任务静态栈。
     TaskHandle_t control_task_handle; // 气源控制任务句柄，创建失败时为NULL。

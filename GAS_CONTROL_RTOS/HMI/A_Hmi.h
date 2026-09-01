@@ -35,7 +35,7 @@
 #define A_HMI_VALVE_FRAME_OPEN        (1U)   // 阀位图标第1帧：使用绿色显示“开启”。
 #define A_HMI_PRESSURE_OVERRANGE_TEXT_BASE (101U) // 六路超量程红色压力控件ID起点，使用101～106。
 #define A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT (107U) // 总压力超量程红色显示控件ID。
-#define A_HMI_SYSTEM_TITLE_TEXT_ID     (114U) // 实时监控页“六瓶三阀气源控制系统”静态文本控件ID。
+#define A_HMI_SYSTEM_TITLE_TEXT_ID     (114U) // 实时监控页“气源控制系统”静态文本控件ID。
 #define A_HMI_REFRESH_GAP_MS          (20UL) // 相邻两个显示控件更新帧的最小间隔。
 #define A_HMI_REFRESH_SLOT_COUNT      (68U)  // 压力双层、状态阀位、高亮及四组六路按钮共68个刷新槽。
 #define A_HMI_RTC_READ_INTERVAL_MS    (1000UL) // 向串口屏读取一次全局 RTC 时间的周期，单位 ms。
