@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明气源控制总上下文、业务状态和外部操作接口。
@@ -47,6 +47,7 @@ typedef struct
     A_Storage_Context storage_service;       // 软件 IIC 和 AT24C256 存储实例。
     A_Gas_Log_Context log_service;           // AT24C256常规记录和状态事件循环日志实例。
     A_Gas_Total_Test_Context total_test;      // VAL_CAL总测试阀与六路测试阀的内部联动状态。
+    bool emergency_close_pending;            // 紧急全关重试标志；使用范围：气源控制任务；false表示无待重试请求，true表示上次全关失败需每周期继续尝试。
 } A_Gas_Control_Context;
 
 /*

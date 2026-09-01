@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明FreeRTOS控制任务上下文和静态启动接口。

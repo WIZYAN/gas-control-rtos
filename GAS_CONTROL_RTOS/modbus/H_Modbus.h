@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明SCI0外部Modbus硬件层上下文和收发接口。

@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明气源平台硬件上下文、阀门映射和底层操作接口。
@@ -151,10 +151,10 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms);
 
 /*
  * 函数名：H_GasPlatform_AllValvesOff。
- * 说明：关闭板上全部已知阀门并清零指定实例的输出状态。
+ * 说明：尝试关闭板上全部已知阀门，仅在所有GPIO均写入成功后清零输出状态。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
- * 输出：无。
+ * 输出：全部阀门GPIO均成功写入关闭电平时返回true，参数无效或任一写入失败时返回false。
  */
-void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context);
+bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context);
 
 #endif

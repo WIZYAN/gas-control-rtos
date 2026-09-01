@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明AT24C256存储业务层的数据结构和操作接口。

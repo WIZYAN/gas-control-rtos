@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现气源系统状态机、自动换瓶、人工控制和安全互锁业务。
@@ -46,19 +46,27 @@ static bool A_GasControl_AnyTestValveOn(const Gas_System *system)
 
 /*
  * 函数名：A_GasControl_ForceAllValvesOff。
- * 说明：关闭十九路阀门并清除尚未执行的分支测试阀开启请求。
+ * 说明：尝试关闭十九路阀门；失败时保留软件命令并标记后续周期重试。
  * 输入：context为气源控制应用上下文输入输出指针。
- * 输出：无；参数有效时同步清零硬件、业务命令和总测试阀联动状态。
+ * 输出：硬件、业务命令和总测试阀联动状态全部安全清零时返回true，否则返回false。
  */
-static void A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
+static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
 {
     if (context == NULL)
     {
-        return;
+        return false;
     }
 
-    F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
+    context->emergency_close_pending = true;
+    if (!F_ValveControl_AllOff(&context->runtime_service.platform, &context->system))
+    {
+        context->system.platform_ready = false;
+        context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+        return false;
+    }
     (void) memset(&context->total_test, 0, sizeof(context->total_test));
+    context->emergency_close_pending = false;
+    return true;
 }
 
 /*
@@ -530,10 +538,12 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
-    if (context == NULL)
+    if ((context == NULL) || !context->system.platform_ready ||
+        context->emergency_close_pending)
     {
         return;
     }
+    // 平台未就绪或紧急全关尚未成功时保留待开请求供诊断，但禁止总阀和分路再次开启。
 
     if ((context->total_test.pending_open_mask != 0U) &&
         !context->system.total_test_cmd &&
@@ -1578,7 +1588,12 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     {
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
     }
-    F_ValveControl_Init(&context->runtime_service.platform, system);
+    if (!F_ValveControl_Init(&context->runtime_service.platform, system))
+    {
+        context->emergency_close_pending = true;
+        system->platform_ready = false;
+        system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+    }
     // 阀门初始化在任何通信和存储业务之前执行，保证上电期间十八路分瓶阀和总测试阀保持关闭。
 
     sensor_ready = A_ModbusPoll_Init(&context->sensor_poll,
@@ -1692,18 +1707,20 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
 
 /*
  * 函数名：A_GasControl_StartExhaust。
- * 说明：在允许状态打开指定排气阀并设置独立截止时间；已在排气时保持原截止时间且允许测试阀同时开启。
+ * 说明：平台就绪且状态允许时打开指定排气阀并设置独立截止时间；已在排气时保持原截止时间且允许测试阀同时开启。
  * 输入：context 为应用上下文；index 为从 0 开始的气瓶索引。
- * 输出：状态、运行模式和供气互锁允许且开阀成功时返回 true，否则返回 false。
+ * 输出：平台就绪、状态、运行模式和供气互锁允许且开阀成功时返回 true，否则返回 false。
  */
 bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
 {
     uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
 
-    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
+    if ((context == NULL) || (index >= GAS_CYLINDER_COUNT) ||
+        !context->system.platform_ready)
     {
         return false;
     }
+    // 在业务入口统一检查平台就绪状态，防止串口屏等调用路径绕过CAN层的开阀保护。
     if (context->system.cylinder[index].exhaust_cmd)
     {
         return true;
@@ -1767,9 +1784,9 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
 
 /*
  * 函数名：A_GasControl_SetTestValve。
- * 说明：按照串口屏开关状态打开或关闭指定测试阀，开启后按独立上限自动关闭；允许排气阀同时开启。
+ * 说明：平台就绪时可打开指定测试阀，开启后按独立上限自动关闭；关阀不受平台就绪状态限制。
  * 输入：context 为应用上下文；index 为气瓶索引；on 为目标开关状态。
- * 输出：状态、运行模式和供气互锁允许且命令成功时返回 true，否则返回 false。
+ * 输出：开阀时平台就绪、状态、运行模式和供气互锁均允许，或关阀成功时返回 true，否则返回 false。
  */
 bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bool on)
 {
@@ -1781,7 +1798,8 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
         return false;
     }
     bit = (uint8_t) (1U << index);
-    if (on && ((context->system.mode != GAS_MODE_AUTO) ||
+    if (on && (!context->system.platform_ready ||
+        (context->system.mode != GAS_MODE_AUTO) ||
         ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
          (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
          (context->system.cylinder[index].state != GAS_CYL_READY) &&
@@ -1789,6 +1807,7 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
     {
         return false;
     }
+    // platform_ready只限制开阀；故障或初始化失败时仍允许执行关阀和撤销待开请求。
 
     if (on)
     {
@@ -1955,6 +1974,11 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     now_ms = F_GasRuntime_Millis(&context->runtime_service);//读取当前毫秒时间，供本周期各状态机使用。
     A_ModbusPoll_Task(&context->sensor_poll, &context->system, &context->config, now_ms);//轮询并解析 1～7 号压力传感器，更新六瓶压力和总压力。
     F_ValveControl_Task(&context->runtime_service.platform, &context->system, now_ms);//推进 12 V 吸合转 5 V 保持的阀门时序。
+    if (context->emergency_close_pending)
+    {
+        (void) A_GasControl_ForceAllValvesOff(context);
+    }
+    // 紧急全关失败后每个5 ms控制周期都先重试，成功前保留命令镜像和未就绪锁定。
     A_Hmi_Task(&context->hmi, &context->system, now_ms);//解析串口屏按钮帧、文本输入和 RTC 响应，并周期请求 RTC。
     A_HmiLog_InputTask(&context->hmi_log);//处理日志查询页的日期、时间输入。
     A_HmiConfig_InputTask(&context->hmi_config,

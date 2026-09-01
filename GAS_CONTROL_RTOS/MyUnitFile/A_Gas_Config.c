@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现运行参数默认值、合法性校验、EEPROM保存和版本迁移。

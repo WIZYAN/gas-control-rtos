@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明三阀控制功能层上下文和阀门操作接口。
@@ -18,9 +18,9 @@
  * 函数名：F_ValveControl_Init。
  * 说明：以全部阀门关闭的安全状态初始化阀门功能。
  * 输入：platform 为硬件上下文；system 为系统状态输入输出指针。
- * 输出：无；清除全部阀门命令状态。
+ * 输出：硬件全关并清除全部阀门命令时返回true，否则返回false。
  */
-void F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system);
+bool F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system);
 
 /*
  * 函数名：F_ValveControl_Task。
@@ -90,10 +90,10 @@ bool F_ValveControl_TotalTestCanOpen(const H_Gas_Platform_Context *platform,
 
 /*
  * 函数名：F_ValveControl_AllOff。
- * 说明：关闭全部硬件阀门并清除系统中的阀门命令镜像。
- * 输入：platform 为硬件上下文；system 为可选的系统状态输出指针。
- * 输出：无。
+ * 说明：尝试关闭全部硬件阀门，只有全部成功才清除系统中的阀门命令镜像。
+ * 输入：platform 为硬件上下文；system 为必需的系统状态输出指针。
+ * 输出：全部硬件阀门关闭写入成功时返回true，参数无效或任一路失败时返回false。
  */
-void F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system);
+bool F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system);
 
 #endif

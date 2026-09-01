@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现三阀命令、强吸合保持切换和阀门安全互锁。
@@ -54,39 +54,45 @@ static bool F_ValveControl_ManualOpenAllowed(const Gas_System *system, uint8_t i
 
 /*
  * 函数名：F_ValveControl_AllOff。
- * 说明：关闭全部板级阀门输出，并同步清除六瓶供气阀、排气阀和测试阀的软件命令状态。
- * 输入：platform 为硬件上下文；system 为可选的系统状态输出指针，可传 NULL 仅执行硬件全关。
- * 输出：无返回值；当 system 非空时清除其中的全部阀门命令。
+ * 说明：尝试关闭全部板级阀门输出，只有硬件全部成功才清除六瓶阀门软件命令。
+ * 输入：platform 为硬件上下文；system 为系统状态输入输出指针。
+ * 输出：硬件全关且软件命令已同步清除时返回true，否则保留命令并返回false。
  */
-void F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system)
+bool F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system)
 {
     uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
-    H_GasPlatform_AllValvesOff(platform);
-    if (system != NULL)
+    if ((platform == NULL) || (system == NULL) || !H_GasPlatform_AllValvesOff(platform))
     {
-        for (i = 0U; i < GAS_CYLINDER_COUNT; ++i)
+        if (system != NULL)
         {
-            system->cylinder[i].supply_cmd = false;
-            system->cylinder[i].exhaust_cmd = false;
-            system->cylinder[i].test_cmd = false;
-            system->cylinder[i].exhaust_deadline_ms = 0U;
-            system->cylinder[i].test_deadline_ms = 0U;
+            system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
         }
-        system->total_test_cmd = false;
-        // 硬件全关与软件命令、人工计时同步清零，避免恢复运行后出现幽灵开阀状态。
+        return false;
     }
+
+    for (i = 0U; i < GAS_CYLINDER_COUNT; ++i)
+    {
+        system->cylinder[i].supply_cmd = false;
+        system->cylinder[i].exhaust_cmd = false;
+        system->cylinder[i].test_cmd = false;
+        system->cylinder[i].exhaust_deadline_ms = 0U;
+        system->cylinder[i].test_deadline_ms = 0U;
+    }
+    system->total_test_cmd = false;
+    // 硬件全关成功后才与业务命令、人工计时同步清零，失败时保留不确定状态供报警和重试。
+    return true;
 }
 
 /*
  * 函数名：F_ValveControl_Init。
  * 说明：以全部阀门关闭的安全状态初始化阀门服务。
  * 输入：platform 为硬件上下文；system 为系统状态输入输出指针。
- * 输出：无返回值；通过 system 输出清零后的阀门命令状态。
+ * 输出：硬件全关并清零阀门命令时返回true，否则返回false。
  */
-void F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system)
+bool F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system)
 {
-    F_ValveControl_AllOff(platform, system);
+    return F_ValveControl_AllOff(platform, system);
 }
 
 /*

@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现压力串口、十九路阀门和毫秒时基的平台硬件操作。
@@ -308,6 +308,7 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
     bool timebase_ready; // timebase_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
     bool direction_ready; // direction_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
     bool valve_pins_ready; // valve_pins_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
+    bool valves_off; // 上电全关结果标志；使用范围：当前初始化函数；false表示至少一路GPIO关闭写入失败，true表示全部成功。
     bool uart_ready = false; // uart_ready 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 
     if (context == NULL)
@@ -317,7 +318,7 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
 
     (void) memset(context, 0, sizeof(*context));
     valve_pins_ready = H_GasPlatform_ConfigureValvePins();
-    H_GasPlatform_AllValvesOff(context);
+    valves_off = H_GasPlatform_AllValvesOff(context);
     direction_ready = H_GasPlatform_SensorDirectionReceive();
 
     if ((R_SCI_UART_BaudCalculate(GAS_SENSOR_UART_BAUDRATE,
@@ -351,7 +352,7 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
                      (SystemCoreClock >= 1000U);
     // DWT 时基由任务读取时累计，不占用公共 SysTick 中断，也不需要全局回调对象。
 
-    return (uart_ready && timebase_ready && direction_ready && valve_pins_ready &&
+    return (uart_ready && timebase_ready && direction_ready && valve_pins_ready && valves_off &&
             (GAS_BOARD_VALVE_OUTPUTS_ENABLED == 1U));
 }
 
@@ -660,11 +661,11 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 
 /*
  * 函数名：H_GasPlatform_AllValvesOff。
- * 说明：把板上全部已知阀门 GPIO 写为关闭电平，并清除指定实例的阀门状态。
+ * 说明：把板上全部已知阀门GPIO写为关闭电平，仅在全部写入成功后清除阀门状态。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
- * 输出：无；所有阀门 GPIO 均尝试写入关闭电平，并清零软件镜像状态。
+ * 输出：所有阀门GPIO均写入成功时返回true，参数无效或任一写入失败时返回false并保留软件镜像。
  */
-void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
+bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
 {
     const bsp_io_port_pin_t all_valve_pins[] =
     {
@@ -673,13 +674,25 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         VAL13, VAL14, VAL15, VAL_P5, VAL16, VAL17, VAL18, VAL_P6, VAL_CAL
     };
     size_t i; // 当前作用域变量，用于保存当前处理数据。
+    bool success = true; // 全关结果标志；使用范围：当前函数；false表示至少一路GPIO写入失败，true表示全部成功。
+
+    if (context == NULL)
+    {
+        return false;
+    }
 
     for (i = 0U; i < (sizeof(all_valve_pins) / sizeof(all_valve_pins[0])); ++i)
     {
-        (void) R_IOPORT_PinWrite(&g_ioport_ctrl, all_valve_pins[i], H_GasPlatform_ValveLevel(false));
+        if (R_IOPORT_PinWrite(&g_ioport_ctrl,
+                              all_valve_pins[i],
+                              H_GasPlatform_ValveLevel(false)) != FSP_SUCCESS)
+        {
+            success = false;
+        }
     }
+    // 即使某一路失败也继续尝试其余阀门，最大化紧急关断覆盖范围。
 
-    if (context != NULL)
+    if (success)
     {
         (void) memset(context->supply_state, 0, sizeof(context->supply_state));
         (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
@@ -689,6 +702,7 @@ void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         (void) memset(context->boost_deadline_ms, 0, sizeof(context->boost_deadline_ms));
         // 运行中全关不清除强吸合最短间隔，防止停止后立即重启绕过线圈保护。
     }
+    return success;
 }
 
 /*

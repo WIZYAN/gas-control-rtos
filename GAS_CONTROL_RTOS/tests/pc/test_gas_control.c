@@ -1,5 +1,5 @@
 /*
- * Version: v1.12
+ * Version: v1.13
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现气源控制、通信、日志、HMI和参数迁移的PC回归测试。
@@ -21,6 +21,8 @@ typedef struct
     uint32_t hmi_tx_count;                   // 模拟HMI累计发送帧数，用于识别分步查询期间的新帧。
     H_Can_Frame can_tx;                      // 最近一帧模拟CAN发送数据。
     uint32_t can_tx_count;                   // 模拟CAN累计发送帧数。
+    bool all_valves_off_fail;                // 全关故障注入标志；使用范围：主机测试硬件模拟层；false表示写入成功，true表示模拟至少一路关阀失败。
+    uint32_t all_valves_off_count;            // 模拟硬件全关调用次数，用于验证失败后的周期重试。
 } Test_State;
 
 static Test_State g_test_state; // 主机测试唯一状态实例。
@@ -254,18 +256,25 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
  * 函数名：H_GasPlatform_AllValvesOff。
  * 说明：清除十八路分瓶模拟阀门和一路总测试阀状态。
  * 输入：context 为硬件上下文。
- * 输出：无。
+ * 输出：未注入故障时返回true并清除模拟阀门，注入故障时返回false并保留原状态。
  */
-void H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
+bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
 {
-    if (context != NULL)
+    if (context == NULL)
     {
-        (void) memset(context->supply_state, 0, sizeof(context->supply_state));
-        (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
-        (void) memset(context->test_state, 0, sizeof(context->test_state));
-        context->total_test_state = false;
-        (void) memset(context->boost_state, 0, sizeof(context->boost_state));
+        return false;
     }
+    g_test_state.all_valves_off_count++;
+    if (g_test_state.all_valves_off_fail)
+    {
+        return false;
+    }
+    (void) memset(context->supply_state, 0, sizeof(context->supply_state));
+    (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
+    (void) memset(context->test_state, 0, sizeof(context->test_state));
+    context->total_test_state = false;
+    (void) memset(context->boost_state, 0, sizeof(context->boost_state));
+    return true;
 }
 
 /*
@@ -1550,6 +1559,100 @@ static void Test_ManualAndDisabled(void)
 }
 
 /*
+ * 函数名：Test_PlatformReadyValveGate。
+ * 说明：验证平台未就绪时串口屏和业务接口都无法开启排气阀或测试阀，但仍可安全关阀。
+ * 输入：无。
+ * 输出：无；通过阀门命令、待开掩码和总测试阀状态断言保护生效。
+ */
+static void Test_PlatformReadyValveGate(void)
+{
+    const uint8_t exhaust_on_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,1U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 1号瓶排气阀开启事件。
+    const uint8_t test_on_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,7U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 1号瓶测试阀开启事件。
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存气源控制上下文。
+
+    Test_Prepare(&context);
+    context.system.platform_ready = false;
+    assert(!A_GasControl_StartExhaust(&context, 0U));
+    assert(!A_GasControl_SetTestValve(&context, 0U, true));
+    assert(!context.system.cylinder[0].exhaust_cmd &&
+           !context.system.cylinder[0].test_cmd &&
+           !context.system.total_test_cmd &&
+           (context.total_test.pending_open_mask == 0U));
+
+    Test_PushHmiFrame(&context, exhaust_on_frame, sizeof(exhaust_on_frame));
+    A_GasControl_Task(&context);
+    Test_PushHmiFrame(&context, test_on_frame, sizeof(test_on_frame));
+    A_GasControl_Task(&context);
+    assert(!context.system.cylinder[0].exhaust_cmd &&
+           !context.system.cylinder[0].test_cmd &&
+           !context.system.total_test_cmd &&
+           (context.total_test.pending_open_mask == 0U));
+    // 串口屏开阀事件必须在业务层被拒绝，不得留下延时开阀请求。
+
+    Test_Prepare(&context);
+    assert(A_GasControl_StartExhaust(&context, 0U));
+    assert(A_GasControl_SetTestValve(&context, 0U, true));
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
+    assert(context.system.total_test_cmd && !context.system.cylinder[0].test_cmd);
+    Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
+    assert(context.system.cylinder[0].exhaust_cmd &&
+           context.system.cylinder[0].test_cmd &&
+           context.system.total_test_cmd);
+    context.system.platform_ready = false;
+    assert(A_GasControl_StopExhaust(&context, 0U));
+    assert(A_GasControl_SetTestValve(&context, 0U, false));
+    assert(!context.system.cylinder[0].exhaust_cmd &&
+           !context.system.cylinder[0].test_cmd &&
+           !context.system.total_test_cmd);
+    // 平台就绪标志丢失后仍必须能关闭已开阀门，避免保护反而阻断安全收敛。
+}
+
+/*
+ * 函数名：Test_EmergencyAllOffRetry。
+ * 说明：验证紧急全关的GPIO写入失败不会清除软件阀位，并在后续周期持续重试直到成功。
+ * 输入：无。
+ * 输出：无；通过业务命令、硬件镜像、重试标志、报警位和全关调用次数断言。
+ */
+static void Test_EmergencyAllOffRetry(void)
+{
+    A_Gas_Control_Context context; // 当前作用域变量，用于保存气源控制上下文。
+    uint32_t close_count; // 故障注入前的全关调用次数，用于判断首次尝试和周期重试。
+
+    Test_Prepare(&context);
+    context.system.mode = GAS_MODE_STOPPED;
+    context.system.active_index = 0U;
+    context.system.switch_new_index = 1U;
+    context.system.switch_state = GAS_SWITCH_VERIFY_NEW;
+    context.system.cylinder[0].supply_cmd = true;
+    context.system.cylinder[1].supply_cmd = true;
+    context.runtime_service.platform.supply_state[0] = true;
+    context.runtime_service.platform.supply_state[1] = true;
+    close_count = g_test_state.all_valves_off_count;
+    g_test_state.all_valves_off_fail = true;
+
+    A_GasControl_Task(&context);
+    assert(context.emergency_close_pending);
+    assert(!context.system.platform_ready);
+    assert((context.system.alarm_bits & GAS_ALARM_PLATFORM_NOT_READY) != 0U);
+    assert(context.system.cylinder[0].supply_cmd &&
+           context.system.cylinder[1].supply_cmd);
+    assert(context.runtime_service.platform.supply_state[0] &&
+           context.runtime_service.platform.supply_state[1]);
+    assert(g_test_state.all_valves_off_count == (close_count + 1U));
+    // 全关失败时业务和硬件镜像均保留“可能仍开启”，不得误报已关闭。
+
+    g_test_state.all_valves_off_fail = false;
+    A_GasControl_Task(&context);
+    assert(!context.emergency_close_pending);
+    assert(!context.system.cylinder[0].supply_cmd &&
+           !context.system.cylinder[1].supply_cmd);
+    assert(!context.runtime_service.platform.supply_state[0] &&
+           !context.runtime_service.platform.supply_state[1]);
+    assert(g_test_state.all_valves_off_count == (close_count + 2U));
+    // 故障解除后的下一周期必须自动重试成功，然后才同步清零两层镜像。
+}
+
+/*
  * 函数名：Test_Hmi。
  * 说明：验证按钮业务映射、中文状态、双色阀位图标、状态高亮、总压力和RTC时间。
  * 输入：无。
@@ -2696,10 +2799,12 @@ int main(void)
     Test_QualificationGate();
     Test_StateAndSwitch();
     Test_ManualAndDisabled();
+    Test_PlatformReadyValveGate();
+    Test_EmergencyAllOffRetry();
     Test_Hmi();
     Test_HmiLogMenuSelect();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.12测试阀分钟配置、V2/V3迁移、日志查询、总测试阀联动和通讯回归测试通过。");
+    puts("V1.13平台就绪开阀保护、紧急全关失败重试、日志查询和通讯回归测试通过。");
     return 0;
 }

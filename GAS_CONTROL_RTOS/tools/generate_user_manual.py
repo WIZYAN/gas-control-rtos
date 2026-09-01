@@ -1,5 +1,5 @@
 # /*
-#  * Version: v1.12
+#  * Version: v1.13
 #  * Author: YXZ
 #  * Created: 2026-08-24
 #  * Description: 根据Markdown源稿和当前大彩工程画面生成用户操作手册PDF。
