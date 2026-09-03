@@ -135,7 +135,7 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
 /*
  * 函数名：F_Hmi_ParseFrame。
  * 说明：区分EE B1 11按钮和文本输入、EE B1 14下拉菜单选择上传帧，或解析EE F7 RTC响应帧并锁存对应事件。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context 为 HMI 功能层上下文；hardware 为配对的 SCI9 硬件层实例。
  * 输出：无；格式合法且对应事件槽空闲时更新按钮或 RTC 事件字段。
  */
 static void F_Hmi_ParseFrame(F_Hmi_Context *context)
@@ -206,36 +206,36 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
 /*
  * 函数名：F_Hmi_Init。
  * 说明：初始化大彩协议解析功能和 SCI9 硬件层。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context 为 HMI 功能层上下文；hardware 为配对的 SCI9 硬件层实例。
  * 输出：初始化成功时返回 true，否则返回 false。
  */
-bool F_Hmi_Init(F_Hmi_Context *context)
+bool F_Hmi_Init(F_Hmi_Context *context, H_Hmi_Context *hardware)
 {
-    if (context == NULL)
+    if ((context == NULL) || (hardware == NULL))
     {
         return false;
     }
 
     (void) memset(context, 0, sizeof(*context));
-    return H_Hmi_Init(&context->hardware);
+    return H_Hmi_Init(hardware);
 }
 
 /*
  * 函数名：F_Hmi_Task。
  * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context 为 HMI 功能层上下文；hardware 为配对的 SCI9 硬件层实例。
  * 输出：无；解析成功后在上下文中锁存一条按钮或下拉菜单选择事件。
  */
-void F_Hmi_Task(F_Hmi_Context *context)
+void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware)
 {
     uint8_t value; // 当前作用域变量，用于保存当前处理值。
 
-    if (context == NULL)
+    if ((context == NULL) || (hardware == NULL))
     {
         return;
     }
 
-    while (H_Hmi_ReadByte(&context->hardware, &value))
+    while (H_Hmi_ReadByte(hardware, &value))
     {
         if (!context->receiving)
         {
@@ -351,17 +351,17 @@ bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
  * 输入：context 为 HMI 功能层上下文输入输出指针。
  * 输出：成功启动异步发送时返回 true，否则返回 false。
  */
-bool F_Hmi_SendReadRtc(F_Hmi_Context *context)
+bool F_Hmi_SendReadRtc(F_Hmi_Context *context, H_Hmi_Context *hardware)
 {
     const uint8_t command[6] = {0xEEU, 0x82U, 0xFFU, 0xFCU, 0xFFU, 0xFFU}; // 当前作用域变量，用于保存操作命令数组。
 
-    if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
 
     (void) memcpy(context->tx_frame, command, sizeof(command));
-    return H_Hmi_Write(&context->hardware, context->tx_frame, sizeof(command));
+    return H_Hmi_Write(hardware, context->tx_frame, sizeof(command));
 }
 
 /*
@@ -385,10 +385,11 @@ bool F_Hmi_TakeRtcTime(F_Hmi_Context *context, F_Hmi_Rtc_Time *rtc_time)
 /*
  * 函数名：F_Hmi_SendText。
  * 说明：按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本。
- * 输入：context 为功能层上下文；page_id 为画面 ID；control_id 为控件 ID；text 为文本；length 为文本长度。
+ * 输入：context和hardware为配对的协议层及SCI9实例；page_id、control_id、text和length为待发送文本参数。
  * 输出：成功启动异步发送时返回 true，否则返回 false。
  */
 bool F_Hmi_SendText(F_Hmi_Context *context,
+                    H_Hmi_Context *hardware,
                     uint16_t page_id,
                     uint16_t control_id,
                     const char *text,
@@ -396,8 +397,8 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
 {
     size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || (text == NULL) || (length == 0U) ||
-        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || (text == NULL) || (length == 0U) ||
+        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
@@ -415,23 +416,24 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
     context->tx_frame[9U + length] = 0xFFU;
     context->tx_frame[10U + length] = 0xFFU;
     // 文本后追加大彩协议固定结束序列 FF FC FF FF，frame_length 已包含这 4 个字节。
-    return H_Hmi_Write(&context->hardware, context->tx_frame, frame_length);
+    return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }
 
 /*
  * 函数名：F_Hmi_SendButtonState。
  * 说明：按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态。
- * 输入：context为功能层上下文；page_id和control_id指定按钮；pressed为false弹起、true按下。
+ * 输入：context和hardware为配对的协议层及SCI9实例；page_id和control_id指定按钮；pressed为false弹起、true按下。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendButtonState(F_Hmi_Context *context,
+                           H_Hmi_Context *hardware,
                            uint16_t page_id,
                            uint16_t control_id,
                            bool pressed)
 {
     const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
@@ -449,23 +451,24 @@ bool F_Hmi_SendButtonState(F_Hmi_Context *context,
     context->tx_frame[10] = 0xFFU;
     context->tx_frame[11] = 0xFFU;
     // 按钮和文本均使用B1 10，按钮数据固定为一字节0或1。
-    return H_Hmi_Write(&context->hardware, context->tx_frame, frame_length);
+    return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }
 
 /*
  * 函数名：F_Hmi_SendIconFrame。
  * 说明：按大彩B1 23指令设置指定图标控件当前显示帧，用于状态图层切换。
- * 输入：context为功能层上下文；page_id为画面ID；control_id为图标控件ID；frame_id为从0开始的帧索引。
+ * 输入：context和hardware为配对的协议层及SCI9实例；page_id为画面ID；control_id为图标控件ID；frame_id为从0开始的帧索引。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
+                         H_Hmi_Context *hardware,
                          uint16_t page_id,
                          uint16_t control_id,
                          uint8_t frame_id)
 {
     const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
@@ -483,22 +486,23 @@ bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
     context->tx_frame[10] = 0xFFU;
     context->tx_frame[11] = 0xFFU;
     // 指定帧指令只携带一个8位帧索引，高亮资源固定使用0、1、2三帧。
-    return H_Hmi_Write(&context->hardware, context->tx_frame, frame_length);
+    return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }
 
 /*
  * 函数名：F_Hmi_SendRecordClear。
  * 说明：按大彩B1 53指令清空指定数据记录控件中的现有行。
- * 输入：context为功能层上下文；page_id为画面ID；control_id为数据记录控件ID。
+ * 输入：context和hardware为配对的协议层及SCI9实例；page_id为画面ID；control_id为数据记录控件ID。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
+                           H_Hmi_Context *hardware,
                            uint16_t page_id,
                            uint16_t control_id)
 {
     const size_t frame_length = 11U; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
@@ -514,16 +518,17 @@ bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
     context->tx_frame[8] = 0xFCU;
     context->tx_frame[9] = 0xFFU;
     context->tx_frame[10] = 0xFFU;
-    return H_Hmi_Write(&context->hardware, context->tx_frame, frame_length);
+    return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }
 
 /*
  * 函数名：F_Hmi_SendRecordAdd。
  * 说明：按大彩B1 52指令向指定通用表格添加一行以分号分隔的GBK文本。
- * 输入：context为功能层上下文；page_id和control_id指定表格；record为行文本；length为字节数。
+ * 输入：context和hardware为配对的协议层及SCI9实例；page_id和control_id指定表格；record为行文本；length为字节数。
  * 输出：成功启动异步发送时返回true，串口忙、参数无效或帧过长时返回false。
  */
 bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
+                         H_Hmi_Context *hardware,
                          uint16_t page_id,
                          uint16_t control_id,
                          const char *record,
@@ -531,8 +536,8 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
 {
     size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || (record == NULL) || (length == 0U) ||
-        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(&context->hardware))
+    if ((context == NULL) || (hardware == NULL) || (record == NULL) || (length == 0U) ||
+        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
@@ -550,5 +555,5 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
     context->tx_frame[9U + length] = 0xFFU;
     context->tx_frame[10U + length] = 0xFFU;
     // 单行字段之间保留英文分号，具体列数由VisualTFT数据记录控件属性决定。
-    return H_Hmi_Write(&context->hardware, context->tx_frame, frame_length);
+    return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }

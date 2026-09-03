@@ -14,7 +14,7 @@
 #include "gas_common.h"
 #include "A_Gas_Config.h"
 #include "A_Gas_Log.h"
-#include "F_Gas_Runtime.h"
+#include "H_Gas_Platform.h"
 #include "F_Valve_Control.h"
 #include "../AT24C256/A_Storage.h"
 #include "../CAN/A_Can.h"
@@ -24,19 +24,12 @@
 #include "../modbus/A_Modbus.h"
 #include "../modbus_poll/A_Modbus_Poll.h"
 
-// 总测试阀内部联动上下文，只保存等待总阀建立后再打开的分路测试请求。
-typedef struct
-{
-    uint8_t pending_open_mask;                         // 测试阀控制上下文的等待开启位图；bit0～bit5分别对应1～6号测试阀，0表示无需等待，1表示等待总测试阀稳定后开启，bit6～bit7保留为0。
-    uint32_t open_not_before_ms[GAS_CYLINDER_COUNT];  // 各分路允许开启的最早毫秒时间。
-} A_Gas_Total_Test_Context;
-
 // 气源控制应用层上下文，拥有单个系统实例及其所需的全部功能层上下文，不依赖模块全局变量。
 typedef struct
 {
     Gas_Config config;                       // 当前实际用于控制并从 EEPROM 加载的运行参数。
     Gas_System system;                       // 六瓶气源的完整业务状态。
-    F_Gas_Runtime_Context runtime_service;   // 平台初始化、时基和空闲处理功能实例。
+    H_Gas_Platform_Context platform;         // 硬件平台、毫秒时基和阀门输出状态，应用层直接持有。
     A_Modbus_Poll_Context sensor_poll;       // SCI1 内部传感器 Modbus 轮询实例。
     A_Can_Context external_can;              // CAN0外部通讯实例，默认使用250 kbit/s扩展帧。
     A_Modbus_Context external_modbus;        // 保留的SCI0/RS485外部Modbus从站实例。
@@ -46,7 +39,14 @@ typedef struct
     A_Hmi_Log_Context hmi_log;               // 串口屏事件15条、常规10条分页索引查询实例。
     A_Storage_Context storage_service;       // 软件 IIC 和 AT24C256 存储实例。
     A_Gas_Log_Context log_service;           // AT24C256常规记录和状态事件循环日志实例。
-    A_Gas_Total_Test_Context total_test;      // VAL_CAL总测试阀与六路测试阀的内部联动状态。
+    uint8_t total_test_pending_open_mask;     // 等待总测试阀稳定后开启的分路位图；bit0～bit5对应1～6号测试阀。
+    uint32_t test_open_not_before_ms[GAS_CYLINDER_COUNT]; // 各分路测试阀允许开启的最早毫秒时间。
+    uint8_t switch_old_index;                 // 自动切瓶流程中的原工作瓶索引。
+    uint8_t switch_new_index;                 // 自动切瓶流程中的目标备用瓶索引。
+    uint8_t switch_low_sample_count;           // 当前低压确认累计的独立有效样本数。
+    uint32_t switch_low_last_sample_ms;        // 已计入低压确认的最后压力样本时间戳。
+    uint32_t switch_enter_ms;                  // 进入当前切瓶子状态的毫秒时间。
+    uint32_t switch_low_start_ms;              // 本次低压确认开始的毫秒时间。
     bool emergency_close_pending;            // 紧急全关重试标志；使用范围：气源控制任务；false表示无待重试请求，true表示上次全关失败需每周期继续尝试。
 } A_Gas_Control_Context;
 

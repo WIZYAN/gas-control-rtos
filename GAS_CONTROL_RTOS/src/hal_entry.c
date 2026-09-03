@@ -21,8 +21,9 @@ void hal_entry(void)
     R_BSP_NonSecureEnter();
 #else
     static A_Gas_Rtos_Context gas_rtos_context; // 当前作用域变量，用于保存模块上下文。
+    static A_Gas_Control_Context gas_control_context; // 气源业务长期实例，与RTOS任务资源分开静态分配。
 
-    if (!A_GasRtos_Start(&gas_rtos_context))
+    if (!A_GasRtos_Start(&gas_rtos_context, &gas_control_context))
     {
         for (;;)
         {

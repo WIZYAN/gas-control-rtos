@@ -19,10 +19,10 @@
 #define A_GAS_RTOS_CONTROL_PRIORITY      (3U)    // 气源控制任务优先级，高于后续通讯和存储任务。
 #define A_GAS_RTOS_CONTROL_PERIOD_MS     (5U)    // 气源综合任务的固定调度周期，单位ms。
 
-// FreeRTOS气源应用上下文，聚合业务实例、静态任务控制块和栈空间。
+// FreeRTOS任务资源上下文，仅保存调度资源和所运行的气源业务实例引用。
 typedef struct
 {
-    A_Gas_Control_Context gas_control; // 气源控制系统完整业务实例。
+    A_Gas_Control_Context *gas_control; // 由入口静态分配的气源业务实例，不在RTOS资源结构内重复嵌套。
     StaticTask_t control_task_buffer; // 气源控制任务的FreeRTOS静态TCB内存。
     StackType_t control_task_stack[A_GAS_RTOS_CONTROL_STACK_WORDS]; // 气源控制任务静态栈。
     TaskHandle_t control_task_handle; // 气源控制任务句柄，创建失败时为NULL。
@@ -32,10 +32,11 @@ typedef struct
 /*
  * 函数名：A_GasRtos_Start。
  * 说明：使用调用者提供的上下文静态创建气源控制任务，然后启动FreeRTOS调度器。
- * 输入：context为FreeRTOS气源应用上下文输入输出指针。
+ * 输入：context为FreeRTOS任务资源；gas_control为长期有效的气源业务实例。
  * 输出：任务创建失败或调度器异常返回时返回false；正常运行时函数不返回。
  */
-bool A_GasRtos_Start(A_Gas_Rtos_Context *context);
+bool A_GasRtos_Start(A_Gas_Rtos_Context *context,
+                     A_Gas_Control_Context *gas_control);
 
 /*
  * 函数名：vApplicationGetIdleTaskMemory。

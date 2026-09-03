@@ -11,7 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "A_Hmi.h"
+#include "F_Hmi.h"
 #include "../MyUnitFile/A_Gas_Config.h"
 
 #define A_HMI_CONFIG_PAGE_ID              (4U)  // 密码保护的运行参数设置画面ID。
@@ -58,7 +58,8 @@ typedef enum
 // 串口屏参数页状态由气源主上下文持有，所有编辑值先暂存，保存成功前不影响运行控制。
 typedef struct
 {
-    A_Hmi_Context *hmi;          // 复用SCI9协议和发送队列的HMI应用实例。
+    F_Hmi_Context *transport;    // 复用SCI9协议解析和发送队列的HMI功能实例。
+    H_Hmi_Context *hardware;     // 与transport配对的SCI9硬件实例，仅在发送时显式传入。
     Gas_Config edit_config;      // 参数页11项可见参数及2项内部固定参数组成的完整编辑缓存。
     uint16_t refresh_mask;       // 参数编辑上下文待刷新位图；bit0～bit10依次表示切换压力、待用压力、低压警告、压力上限、吸合时间、低压确认时间、低压样本数、关阀等待、开阀等待、排气时长和测试阀最长时长，bit11表示状态提示，bit12～bit15依次表示确认页名称、旧值、新值和说明；0表示无需刷新，1表示等待刷新。
     uint8_t status;              // 当前提示文本编号，由模块内部解释。
@@ -79,10 +80,12 @@ typedef struct
 /*
  * 函数名：A_HmiConfig_Init。
  * 说明：初始化串口屏参数编辑模块并关联已有HMI通信实例。
- * 输入：context为参数模块上下文；hmi为已经初始化或即将初始化的HMI应用实例。
+ * 输入：context为参数模块上下文；transport和hardware为配对的HMI协议及SCI9硬件实例。
  * 输出：参数有效时返回true，否则返回false。
  */
-bool A_HmiConfig_Init(A_Hmi_Config_Context *context, A_Hmi_Context *hmi);
+bool A_HmiConfig_Init(A_Hmi_Config_Context *context,
+                      F_Hmi_Context *transport,
+                      H_Hmi_Context *hardware);
 
 /*
  * 函数名：A_HmiConfig_Open。

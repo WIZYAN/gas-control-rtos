@@ -128,7 +128,6 @@ typedef struct
     H_Modbus_Context hardware; // 外部 SCI0/RS485 硬件层实例。
     F_Modbus_Context function; // 外部 Modbus RTU 从站功能层实例。
     Gas_Config pending_config; // 已通过寄存器解码和校验、等待业务层应用的运行参数。
-    Gas_Config current_config; // 当前完整13项参数镜像；外部解码只覆盖开放的原有10项。
     bool config_pending; // 存在尚未由气源业务层取走的参数提交请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint16_t pending_log_index; // 等待日志模块读取的零起始逻辑序号。
     bool log_read_pending; // 存在尚未由气源应用层取走的日志读取请求；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
@@ -162,10 +161,10 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system);
 /*
  * 函数名：A_Modbus_Task。
  * 说明：周期处理外部主站请求，并把合法写寄存器操作转换为控制、运行参数或日志读取请求。
- * 输入：context 为外部 Modbus 应用层上下文输入输出指针。
+ * 输入：context为外部Modbus应用层上下文；config为当前生效的完整运行参数。
  * 输出：无；待执行控制、参数和日志请求及对应结果状态写入context。
  */
-void A_Modbus_Task(A_Modbus_Context *context);
+void A_Modbus_Task(A_Modbus_Context *context, const Gas_Config *config);
 
 /*
  * 函数名：A_Modbus_SetCommandResult。

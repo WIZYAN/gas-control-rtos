@@ -127,17 +127,22 @@ static uint8_t A_HmiLog_DaysInMonth(uint16_t year, uint8_t month)
  * 输入：value为待校验的日期时间。
  * 输出：六个字段组成合法时间时返回true，否则返回false。
  */
-static bool A_HmiLog_DateTimeValid(const A_Hmi_Log_Date_Time *value)
+static bool A_HmiLog_DateTimeValid(uint16_t year,
+                                   uint8_t month,
+                                   uint8_t day,
+                                   uint8_t hour,
+                                   uint8_t minute,
+                                   uint8_t second)
 {
     uint8_t maximum_day; // 当前作用域变量，用于保存日期时间字段。
 
-    if ((value == NULL) || (value->year < 2000U) || (value->year > 2099U) ||
-        (value->hour > 23U) || (value->minute > 59U) || (value->second > 59U))
+    if ((year < 2000U) || (year > 2099U) ||
+        (hour > 23U) || (minute > 59U) || (second > 59U))
     {
         return false;
     }
-    maximum_day = A_HmiLog_DaysInMonth(value->year, value->month);
-    return ((maximum_day > 0U) && (value->day > 0U) && (value->day <= maximum_day));
+    maximum_day = A_HmiLog_DaysInMonth(year, month);
+    return ((maximum_day > 0U) && (day > 0U) && (day <= maximum_day));
 }
 
 /*
@@ -146,13 +151,18 @@ static bool A_HmiLog_DateTimeValid(const A_Hmi_Log_Date_Time *value)
  * 输入：value为已校验的日期时间。
  * 输出：返回64位十进制时间键。
  */
-static uint64_t A_HmiLog_DateTimeKey(const A_Hmi_Log_Date_Time *value)
+static uint64_t A_HmiLog_DateTimeKey(uint16_t year,
+                                     uint8_t month,
+                                     uint8_t day,
+                                     uint8_t hour,
+                                     uint8_t minute,
+                                     uint8_t second)
 {
-    return ((uint64_t) value->year * 10000000000ULL) +
-           ((uint64_t) value->month * 100000000ULL) +
-           ((uint64_t) value->day * 1000000ULL) +
-           ((uint64_t) value->hour * 10000ULL) +
-           ((uint64_t) value->minute * 100ULL) + value->second;
+    return ((uint64_t) year * 10000000000ULL) +
+           ((uint64_t) month * 100000000ULL) +
+           ((uint64_t) day * 1000000ULL) +
+           ((uint64_t) hour * 10000ULL) +
+           ((uint64_t) minute * 100ULL) + second;
 }
 
 /*
@@ -163,15 +173,8 @@ static uint64_t A_HmiLog_DateTimeKey(const A_Hmi_Log_Date_Time *value)
  */
 static uint64_t A_HmiLog_RecordDateTimeKey(const uint8_t *record)
 {
-    A_Hmi_Log_Date_Time value; // 当前作用域变量，用于保存当前处理值。
-
-    value.year = (uint16_t) (2000U + record[6]);
-    value.month = record[7];
-    value.day = record[8];
-    value.hour = record[9];
-    value.minute = record[10];
-    value.second = record[11];
-    return A_HmiLog_DateTimeKey(&value);
+    return A_HmiLog_DateTimeKey((uint16_t) (2000U + record[6]),
+                                record[7], record[8], record[9], record[10], record[11]);
 }
 
 /*
@@ -184,13 +187,34 @@ static bool A_HmiLog_FilterValid(const A_Hmi_Log_Filter *filter)
 {
     if ((filter == NULL) || (filter->cylinder_number > GAS_CYLINDER_COUNT) ||
         (filter->target_state > (uint8_t) GAS_CYL_WAIT_TEST) ||
-        !A_HmiLog_DateTimeValid(&filter->start) ||
-        !A_HmiLog_DateTimeValid(&filter->end))
+        !A_HmiLog_DateTimeValid(filter->start_year,
+                                filter->start_month,
+                                filter->start_day,
+                                filter->start_hour,
+                                filter->start_minute,
+                                filter->start_second) ||
+        !A_HmiLog_DateTimeValid(filter->end_year,
+                                filter->end_month,
+                                filter->end_day,
+                                filter->end_hour,
+                                filter->end_minute,
+                                filter->end_second))
     {
         return false;
     }
     return (!filter->time_enabled ||
-            (A_HmiLog_DateTimeKey(&filter->start) <= A_HmiLog_DateTimeKey(&filter->end)));
+            (A_HmiLog_DateTimeKey(filter->start_year,
+                                  filter->start_month,
+                                  filter->start_day,
+                                  filter->start_hour,
+                                  filter->start_minute,
+                                  filter->start_second) <=
+             A_HmiLog_DateTimeKey(filter->end_year,
+                                  filter->end_month,
+                                  filter->end_day,
+                                  filter->end_hour,
+                                  filter->end_minute,
+                                  filter->end_second)));
 }
 
 /*
@@ -218,8 +242,18 @@ static bool A_HmiLog_RecordMatchesFilter(const A_Hmi_Log_Context *context,
     if (context->active_filter.time_enabled)
     {
         record_key = A_HmiLog_RecordDateTimeKey(record);
-        if ((record_key < A_HmiLog_DateTimeKey(&context->active_filter.start)) ||
-            (record_key > A_HmiLog_DateTimeKey(&context->active_filter.end)))
+        if ((record_key < A_HmiLog_DateTimeKey(context->active_filter.start_year,
+                                               context->active_filter.start_month,
+                                               context->active_filter.start_day,
+                                               context->active_filter.start_hour,
+                                               context->active_filter.start_minute,
+                                               context->active_filter.start_second)) ||
+            (record_key > A_HmiLog_DateTimeKey(context->active_filter.end_year,
+                                               context->active_filter.end_month,
+                                               context->active_filter.end_day,
+                                               context->active_filter.end_hour,
+                                               context->active_filter.end_minute,
+                                               context->active_filter.end_second)))
         {
             return false;
         }
@@ -476,15 +510,15 @@ static void A_HmiLog_SetDefaultFilter(A_Hmi_Log_Filter *filter)
         return;
     }
     (void) memset(filter, 0, sizeof(*filter));
-    filter->start.year = 2000U;
-    filter->start.month = 1U;
-    filter->start.day = 1U;
-    filter->end.year = 2099U;
-    filter->end.month = 12U;
-    filter->end.day = 31U;
-    filter->end.hour = 23U;
-    filter->end.minute = 59U;
-    filter->end.second = 59U;
+    filter->start_year = 2000U;
+    filter->start_month = 1U;
+    filter->start_day = 1U;
+    filter->end_year = 2099U;
+    filter->end_month = 12U;
+    filter->end_day = 31U;
+    filter->end_hour = 23U;
+    filter->end_minute = 59U;
+    filter->end_second = 59U;
     filter->time_enabled = false;
 }
 
@@ -532,7 +566,6 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     const char ready_text[] = "\xCC\xF5\xBC\xFE\xD2\xD1\xBE\xCD\xD0\xF7"; // 条件已就绪。
     const char input_error_text[] = "\xC8\xD5\xC6\xDA\xBB\xF2\xCA\xB1\xBC\xE4\xB8\xF1\xCA\xBD\xB4\xED\xCE\xF3"; // 日期或时间格式错误。
     const char reset_text[] = "\xD2\xD1\xBB\xD6\xB8\xB4\xC8\xAB\xB2\xBF\xBC\xC7\xC2\xBC"; // 已恢复全部记录。
-    const A_Hmi_Log_Date_Time *date_time; // 当前作用域变量，用于保存当前处理数据指针。
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (text == NULL))
@@ -541,16 +574,39 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     }
     if (slot <= 3U)
     {
-        date_time = (slot < 2U) ? &context->edit_filter.start : &context->edit_filter.end; // 当前作用域变量，用于保存当前处理数据。
-        if ((slot == 0U) || (slot == 2U))
+        if (slot == 0U)
         {
-            return (A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->year, 4U) &&
-                    A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->month, 2U) &&
-                    A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->day, 2U)) ? length : 0U;
+            return (A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_year, 4U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_month, 2U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_day, 2U)) ? length : 0U;
         }
-        return (A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->hour, 2U) &&
-                A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->minute, 2U) &&
-                A_HmiLog_AppendUnsigned(text, &length, capacity, date_time->second, 2U)) ? length : 0U;
+        if (slot == 1U)
+        {
+            return (A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_hour, 2U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_minute, 2U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.start_second, 2U)) ? length : 0U;
+        }
+        if (slot == 2U)
+        {
+            return (A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.end_year, 4U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.end_month, 2U) &&
+                    A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                            context->edit_filter.end_day, 2U)) ? length : 0U;
+        }
+        return (A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                        context->edit_filter.end_hour, 2U) &&
+                A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                        context->edit_filter.end_minute, 2U) &&
+                A_HmiLog_AppendUnsigned(text, &length, capacity,
+                                        context->edit_filter.end_second, 2U)) ? length : 0U;
     }
     if (slot == 5U)
     {
@@ -629,7 +685,8 @@ static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
         }
         if (slot == 4U)
         {
-            sent = F_Hmi_SendButtonState(&context->hmi->function,
+            sent = F_Hmi_SendButtonState(context->transport,
+                                         context->hardware,
                                          A_HMI_LOG_FILTER_PAGE_ID,
                                          control_id[slot],
                                          !context->edit_filter.time_enabled);
@@ -638,7 +695,8 @@ static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
         {
             length = A_HmiLog_FormatFilterField(context, slot, text, sizeof(text));
             sent = ((length > 0U) &&
-                    F_Hmi_SendText(&context->hmi->function,
+                    F_Hmi_SendText(context->transport,
+                                   context->hardware,
                                    A_HMI_LOG_FILTER_PAGE_ID,
                                    control_id[slot], text, length));
         }
@@ -1056,7 +1114,8 @@ static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
         return false;
     }
 
-    return F_Hmi_SendText(&context->hmi->function,
+    return F_Hmi_SendText(context->transport,
+                          context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
                           A_HmiLog_GetStatusControlId(context->query_type),
                           status,
@@ -1069,7 +1128,7 @@ static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：成功启动发送时返回true，否则返回false并在后续周期重试。
  */
-static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
+static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context, bool rtc_valid)
 {
     const char event_text[] = "\xCA\xC2\xBC\xFE\x20"; // 事件。
     const char regular_text[] = "\xB3\xA3\xB9\xE6\x20"; // 常规。
@@ -1098,7 +1157,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
         fixed_text = changed_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(changed_text) - 1U;
     }
-    else if ((context->system == NULL) || !context->system->date_time.valid)
+    else if (!rtc_valid)
     {
         fixed_text = rtc_text; // 当前作用域变量，用于保存当前处理数据。
         fixed_length = sizeof(rtc_text) - 1U;
@@ -1127,7 +1186,8 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context)
         }
     }
 
-    return F_Hmi_SendText(&context->hmi->function,
+    return F_Hmi_SendText(context->transport,
+                          context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
                           A_HmiLog_GetStatusControlId(context->query_type),
                           status,
@@ -1191,7 +1251,8 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
         return false;
     }
 
-    return F_Hmi_SendText(&context->hmi->function,
+    return F_Hmi_SendText(context->transport,
+                          context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
                           A_HmiLog_GetPageInfoControlId(context->query_type),
                           status,
@@ -1200,24 +1261,24 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
 
 /*
  * 函数名：A_HmiLog_Init。
- * 说明：初始化串口屏分页日志实例，并关联HMI、EEPROM日志和气源系统状态。
- * 输入：context为日志查询上下文；hmi为HMI应用实例；log为EEPROM日志实例；system为气源系统只读实例。
+ * 说明：初始化串口屏分页日志实例，并关联HMI协议层、SCI9硬件层和EEPROM日志。
+ * 输入：context为日志查询上下文；transport和hardware为配对的HMI协议及SCI9实例；log为EEPROM日志实例。
  * 输出：参数有效时返回true，否则返回false。
  */
 bool A_HmiLog_Init(A_Hmi_Log_Context *context,
-                   A_Hmi_Context *hmi,
-                   A_Gas_Log_Context *log,
-                   const Gas_System *system)
+                   F_Hmi_Context *transport,
+                   H_Hmi_Context *hardware,
+                   A_Gas_Log_Context *log)
 {
-    if ((context == NULL) || (hmi == NULL) || (log == NULL) || (system == NULL))
+    if ((context == NULL) || (transport == NULL) || (hardware == NULL) || (log == NULL))
     {
         return false;
     }
 
     (void) memset(context, 0, sizeof(*context));
-    context->hmi = hmi;
+    context->transport = transport;
+    context->hardware = hardware;
     context->log = log;
-    context->system = system;
     context->query_type = A_HMI_LOG_QUERY_EVENT;
     context->pending_type = A_HMI_LOG_QUERY_EVENT;
     A_HmiLog_SetDefaultFilter(&context->edit_filter);
@@ -1318,7 +1379,6 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
 void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 {
     A_Hmi_Log_Filter candidate; // 当前作用域变量，用于保存待校验候选值。
-    A_Hmi_Log_Date_Time *date_time; // 当前作用域变量，用于保存当前处理数据指针。
     char text[F_HMI_TEXT_MAX_SIZE + 1U]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
     uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
     uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
@@ -1327,16 +1387,16 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
     size_t length; // 当前作用域变量，用于保存有效数据长度。
     bool valid = false; // valid 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无效，true表示有效。
 
-    if ((context == NULL) || !context->ready || (context->hmi == NULL))
+    if ((context == NULL) || !context->ready || (context->transport == NULL))
     {
         return;
     }
-    while (A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) &&
+    while (F_Hmi_PeekTextEvent(context->transport, &page_id, &control_id) &&
            (page_id == A_HMI_LOG_FILTER_PAGE_ID) &&
            (control_id >= A_HMI_LOG_FILTER_START_DATE_ID) &&
            (control_id <= A_HMI_LOG_FILTER_END_TIME_ID))
     {
-        length = A_Hmi_TakeTextEvent(context->hmi, &page_id, &control_id,
+        length = F_Hmi_TakeTextEvent(context->transport, &page_id, &control_id,
                                      text, sizeof(text));
         if (length == 0U)
         {
@@ -1345,23 +1405,58 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 
         candidate = context->edit_filter;
         slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
-        date_time = (slot < 2U) ? &candidate.start : &candidate.end; // 当前作用域变量，用于保存当前处理数据。
         valid = false;
-        if (((slot == 0U) || (slot == 2U)) && (length == 8U) &&
+        if ((slot == 0U) && (length == 8U) &&
             A_HmiLog_ParseDigits(text, length, &value))
         {
-            date_time->year = (uint16_t) (value / 10000U);
-            date_time->month = (uint8_t) ((value / 100U) % 100U);
-            date_time->day = (uint8_t) (value % 100U);
-            valid = A_HmiLog_DateTimeValid(date_time);
+            candidate.start_year = (uint16_t) (value / 10000U);
+            candidate.start_month = (uint8_t) ((value / 100U) % 100U);
+            candidate.start_day = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(candidate.start_year,
+                                           candidate.start_month,
+                                           candidate.start_day,
+                                           candidate.start_hour,
+                                           candidate.start_minute,
+                                           candidate.start_second);
         }
-        else if (((slot == 1U) || (slot == 3U)) && (length == 6U) &&
+        else if ((slot == 1U) && (length == 6U) &&
                  A_HmiLog_ParseDigits(text, length, &value))
         {
-            date_time->hour = (uint8_t) (value / 10000U);
-            date_time->minute = (uint8_t) ((value / 100U) % 100U);
-            date_time->second = (uint8_t) (value % 100U);
-            valid = A_HmiLog_DateTimeValid(date_time);
+            candidate.start_hour = (uint8_t) (value / 10000U);
+            candidate.start_minute = (uint8_t) ((value / 100U) % 100U);
+            candidate.start_second = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(candidate.start_year,
+                                           candidate.start_month,
+                                           candidate.start_day,
+                                           candidate.start_hour,
+                                           candidate.start_minute,
+                                           candidate.start_second);
+        }
+        else if ((slot == 2U) && (length == 8U) &&
+                 A_HmiLog_ParseDigits(text, length, &value))
+        {
+            candidate.end_year = (uint16_t) (value / 10000U);
+            candidate.end_month = (uint8_t) ((value / 100U) % 100U);
+            candidate.end_day = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(candidate.end_year,
+                                           candidate.end_month,
+                                           candidate.end_day,
+                                           candidate.end_hour,
+                                           candidate.end_minute,
+                                           candidate.end_second);
+        }
+        else if ((slot == 3U) && (length == 6U) &&
+                 A_HmiLog_ParseDigits(text, length, &value))
+        {
+            candidate.end_hour = (uint8_t) (value / 10000U);
+            candidate.end_minute = (uint8_t) ((value / 100U) % 100U);
+            candidate.end_second = (uint8_t) (value % 100U);
+            valid = A_HmiLog_DateTimeValid(candidate.end_year,
+                                           candidate.end_month,
+                                           candidate.end_day,
+                                           candidate.end_hour,
+                                           candidate.end_minute,
+                                           candidate.end_second);
         }
 
         if (valid)
@@ -1470,12 +1565,12 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：无；查询进度保存在context中。
  */
-void A_HmiLog_Task(A_Hmi_Log_Context *context)
+void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
 {
     uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
     uint16_t record_control_id; // 当前作用域变量，用于保存串口屏控件标识。
 
-    if ((context == NULL) || !context->ready || !context->hmi->ready)
+    if ((context == NULL) || !context->ready || (context->transport == NULL))
     {
         return;
     }
@@ -1524,7 +1619,10 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
     switch (context->state)
     {
         case A_HMI_LOG_QUERY_CLEAR:
-            if (F_Hmi_SendRecordClear(&context->hmi->function, page_id, record_control_id))
+            if (F_Hmi_SendRecordClear(context->transport,
+                                      context->hardware,
+                                      page_id,
+                                      record_control_id))
             {
                 context->table_is_clear = true;
                 if (context->read_failed || context->filter_error)
@@ -1575,7 +1673,10 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
             break;
 
         case A_HMI_LOG_QUERY_PAGE_CLEAR:
-            if (F_Hmi_SendRecordClear(&context->hmi->function, page_id, record_control_id))
+            if (F_Hmi_SendRecordClear(context->transport,
+                                      context->hardware,
+                                      page_id,
+                                      record_control_id))
             {
                 context->table_is_clear = true;
                 context->state = A_HMI_LOG_QUERY_PAGE_READ;
@@ -1615,7 +1716,8 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
                 A_HmiLog_FailAndClear(context);
                 break;
             }
-            if (F_Hmi_SendRecordAdd(&context->hmi->function,
+            if (F_Hmi_SendRecordAdd(context->transport,
+                                    context->hardware,
                                     page_id,
                                     record_control_id,
                                     context->row,
@@ -1661,7 +1763,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context)
             break;
 
         case A_HMI_LOG_QUERY_STATUS:
-            if (A_HmiLog_SendStatus(context))
+            if (A_HmiLog_SendStatus(context, rtc_valid))
             {
                 context->state = A_HMI_LOG_QUERY_IDLE;
             }

@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "A_Hmi.h"
+#include "F_Hmi.h"
 #include "../MyUnitFile/A_Gas_Log.h"
 
 #define A_HMI_EVENT_LOG_PAGE_ID                (2U)   // 事件日志查询画面的画面ID。
@@ -90,22 +90,21 @@ typedef enum
     A_HMI_LOG_QUERY_STATUS      // 发送扫描结果、日志变化、RTC无效或读取错误提示。
 } A_Hmi_Log_Query_State;
 
-// 日志条件使用的日期时间，只保存用于比较的六个字段。
+// 串口屏日志筛选条件；起止时间直接展开，便于按字段名搜索其输入、校验和使用位置。
 typedef struct
 {
-    uint16_t year;  // 完整年份，范围2000～2099。
-    uint8_t month;  // 月份，范围1～12。
-    uint8_t day;    // 日期，按月份和闰年校验。
-    uint8_t hour;   // 小时，范围0～23。
-    uint8_t minute; // 分钟，范围0～59。
-    uint8_t second; // 秒，范围0～59。
-} A_Hmi_Log_Date_Time;
-
-// 串口屏日志筛选条件，常规日志只使用时间条件。
-typedef struct
-{
-    A_Hmi_Log_Date_Time start; // 包含边界的开始时间。
-    A_Hmi_Log_Date_Time end;   // 包含边界的结束时间。
+    uint16_t start_year;       // 包含边界的开始年份，范围2000～2099。
+    uint8_t start_month;       // 开始月份，范围1～12。
+    uint8_t start_day;         // 开始日期，按月份和闰年校验。
+    uint8_t start_hour;        // 开始小时，范围0～23。
+    uint8_t start_minute;      // 开始分钟，范围0～59。
+    uint8_t start_second;      // 开始秒，范围0～59。
+    uint16_t end_year;         // 包含边界的结束年份，范围2000～2099。
+    uint8_t end_month;         // 结束月份，范围1～12。
+    uint8_t end_day;           // 结束日期，按月份和闰年校验。
+    uint8_t end_hour;          // 结束小时，范围0～23。
+    uint8_t end_minute;        // 结束分钟，范围0～59。
+    uint8_t end_second;        // 结束秒，范围0～59。
     uint8_t cylinder_number;   // 0表示全部，1～6表示指定事件气瓶。
     uint8_t target_state;      // 0表示全部，1～7表示事件的新状态。
     bool time_enabled; // true按起止时间筛选，false查询全部时间；使用范围：当前声明作用域内使用；取值范围：false/true，false表示禁用，true表示启用。
@@ -122,9 +121,9 @@ typedef enum
 // 串口屏分页日志应用上下文，保存模块引用、单类型索引、查询快照和当前页面发送进度。
 typedef struct
 {
-    A_Hmi_Context *hmi;                                       // 已初始化的串口屏应用实例。
+    F_Hmi_Context *transport;                                 // 已初始化的串口屏协议和发送实例。
+    H_Hmi_Context *hardware;                                  // 与transport配对的SCI9硬件实例，仅在发送时显式传入。
     A_Gas_Log_Context *log;                                   // AT24C256循环日志实例。
-    const Gas_System *system;                                 // 气源系统只读实例，用于判断RTC有效性。
     A_Hmi_Log_Query_State state;                              // 当前非阻塞查询或分页步骤。
     A_Hmi_Log_Query_Type query_type;                          // RAM索引及当前页面对应的日志类型。
     A_Hmi_Log_Query_Type pending_type;                        // 最近一次刷新请求指定的日志类型。
@@ -165,14 +164,14 @@ typedef struct
 
 /*
  * 函数名：A_HmiLog_Init。
- * 说明：初始化串口屏分页日志实例，并关联HMI、EEPROM日志和气源系统状态。
- * 输入：context为日志查询上下文；hmi为HMI应用实例；log为EEPROM日志实例；system为气源系统只读实例。
+ * 说明：初始化串口屏分页日志实例，并关联HMI发送实例和EEPROM日志。
+ * 输入：context为日志查询上下文；transport和hardware为配对的HMI协议及SCI9硬件实例；log为EEPROM日志实例。
  * 输出：参数有效时返回true，否则返回false。
  */
 bool A_HmiLog_Init(A_Hmi_Log_Context *context,
-                   A_Hmi_Context *hmi,
-                   A_Gas_Log_Context *log,
-                   const Gas_System *system);
+                   F_Hmi_Context *transport,
+                   H_Hmi_Context *hardware,
+                   A_Gas_Log_Context *log);
 
 /*
  * 函数名：A_HmiLog_Request。
@@ -214,10 +213,10 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context);
 /*
  * 函数名：A_HmiLog_Task。
  * 说明：非阻塞执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多读一条或发一行。
- * 输入：context为日志查询上下文输入输出指针。
+ * 输入：context为日志查询上下文；rtc_valid表示当前系统时间是否有效。
  * 输出：无；索引和分页进度保存在context中。
  */
-void A_HmiLog_Task(A_Hmi_Log_Context *context);
+void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid);
 
 /*
  * 函数名：A_HmiLog_IsBusy。

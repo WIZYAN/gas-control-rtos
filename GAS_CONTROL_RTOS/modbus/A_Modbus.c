@@ -62,18 +62,20 @@ static uint16_t A_Modbus_PressureToRegister(float pressure_mpa)
  * 输入：context 为只读外部 Modbus 上下文；config 为运行参数输出指针。
  * 输出：全部寄存器读取成功时返回 true，否则返回 false。
  */
-static bool A_Modbus_ReadConfigRegisters(const A_Modbus_Context *context, Gas_Config *config)
+static bool A_Modbus_ReadConfigRegisters(const A_Modbus_Context *context,
+                                         const Gas_Config *active_config,
+                                         Gas_Config *candidate)
 {
     uint16_t value[A_GAS_CONFIG_REGISTER_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
     uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
-    if ((context == NULL) || (config == NULL))
+    if ((context == NULL) || (active_config == NULL) || (candidate == NULL))
     {
         return false;
     }
 
-    *config = context->current_config;
-    // 先复制完整参数镜像，再覆盖外部开放的10项，确保HMI专属三项不会被未初始化数据替换。
+    *candidate = *active_config;
+    // 先复制唯一的生效参数，再覆盖外部开放的10项，确保HMI专属三项不会被未初始化数据替换。
 
     for (index = 0U; index < A_GAS_CONFIG_REGISTER_COUNT; ++index)
     {
@@ -85,20 +87,20 @@ static bool A_Modbus_ReadConfigRegisters(const A_Modbus_Context *context, Gas_Co
         }
     }
 
-    config->switch_pressure_mpa = (float) value[A_MODBUS_CONFIG_SWITCH_PRESSURE] /
-                                  GAS_CONFIG_PRESSURE_SCALE;
-    config->switch_release_mpa = (float) value[A_MODBUS_CONFIG_SWITCH_RELEASE] /
-                                 GAS_CONFIG_PRESSURE_SCALE;
-    config->valve_pull_in_time_ms = value[A_MODBUS_CONFIG_VALVE_PULL_IN_TIME];
-    config->ready_min_pressure_mpa = (float) value[A_MODBUS_CONFIG_READY_MIN_PRESSURE] /
+    candidate->switch_pressure_mpa = (float) value[A_MODBUS_CONFIG_SWITCH_PRESSURE] /
                                      GAS_CONFIG_PRESSURE_SCALE;
-    config->pressure_max_mpa = (float) value[A_MODBUS_CONFIG_PRESSURE_MAX] /
-                               GAS_CONFIG_PRESSURE_SCALE;
-    config->low_confirm_time_ms = value[A_MODBUS_CONFIG_LOW_CONFIRM_TIME];
-    config->low_confirm_samples = value[A_MODBUS_CONFIG_LOW_CONFIRM_SAMPLES];
-    config->valve_close_wait_ms = value[A_MODBUS_CONFIG_VALVE_CLOSE_WAIT];
-    config->valve_open_wait_ms = value[A_MODBUS_CONFIG_VALVE_OPEN_WAIT];
-    config->pressure_fresh_ms = value[A_MODBUS_CONFIG_PRESSURE_FRESH];
+    candidate->switch_release_mpa = (float) value[A_MODBUS_CONFIG_SWITCH_RELEASE] /
+                                    GAS_CONFIG_PRESSURE_SCALE;
+    candidate->valve_pull_in_time_ms = value[A_MODBUS_CONFIG_VALVE_PULL_IN_TIME];
+    candidate->ready_min_pressure_mpa = (float) value[A_MODBUS_CONFIG_READY_MIN_PRESSURE] /
+                                        GAS_CONFIG_PRESSURE_SCALE;
+    candidate->pressure_max_mpa = (float) value[A_MODBUS_CONFIG_PRESSURE_MAX] /
+                                  GAS_CONFIG_PRESSURE_SCALE;
+    candidate->low_confirm_time_ms = value[A_MODBUS_CONFIG_LOW_CONFIRM_TIME];
+    candidate->low_confirm_samples = value[A_MODBUS_CONFIG_LOW_CONFIRM_SAMPLES];
+    candidate->valve_close_wait_ms = value[A_MODBUS_CONFIG_VALVE_CLOSE_WAIT];
+    candidate->valve_open_wait_ms = value[A_MODBUS_CONFIG_VALVE_OPEN_WAIT];
+    candidate->pressure_fresh_ms = value[A_MODBUS_CONFIG_PRESSURE_FRESH];
     return true;
 }
 
@@ -156,7 +158,7 @@ bool A_Modbus_Deinit(A_Modbus_Context *context)
     {
         return false;
     }
-    success = F_Modbus_Deinit(&context->function);
+    success = F_Modbus_Deinit(&context->function, &context->hardware);
     context->ready = false;
     return success;
 }
@@ -289,10 +291,11 @@ static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
 /*
  * 函数名：A_Modbus_ProcessConfigCommit。
  * 说明：处理参数提交键值，解码 10 个三阀版参数并完成范围及关系校验。
- * 输入：context 为外部 Modbus 应用层上下文输入输出指针。
+ * 输入：context为外部Modbus应用层上下文；config为当前生效的完整运行参数。
  * 输出：无；合法参数保存为待应用请求，处理状态写入参数结果寄存器。
  */
-static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context)
+static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context,
+                                         const Gas_Config *config)
 {
     uint16_t key; // 当前作用域变量，用于保存当前处理数据。
     Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
@@ -318,7 +321,7 @@ static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context)
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY);
         return;
     }
-    if (!A_Modbus_ReadConfigRegisters(context, &candidate))
+    if (!A_Modbus_ReadConfigRegisters(context, config, &candidate))
     {
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_RANGE);
         return;
@@ -340,16 +343,17 @@ static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context)
     context->pending_config = candidate;
     context->config_pending = true;
     A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_PENDING);
-    // 候选参数与正在运行的context->config分离，EEPROM保存成功前不影响控制逻辑。
+    // 候选参数与气源总控的生效config分离，EEPROM保存成功前不影响控制逻辑。
 }
 
 /*
  * 函数名：A_Modbus_ProcessConfigDefault。
  * 说明：处理恢复默认键值并生成一份待业务层保存和应用的默认参数。
- * 输入：context 为外部 Modbus 应用层上下文输入输出指针。
+ * 输入：context为外部Modbus应用层上下文；config为当前生效的完整运行参数。
  * 输出：无；键值正确时在 context 中形成参数请求，否则写入错误结果。
  */
-static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context)
+static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context,
+                                          const Gas_Config *config)
 {
     uint16_t key; // 当前作用域变量，用于保存当前处理数据。
     float low_warning_pressure_mpa; // 当前作用域变量，用于保存压力值。
@@ -377,9 +381,9 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context)
         return;
     }
 
-    low_warning_pressure_mpa = context->current_config.low_warning_pressure_mpa;
-    manual_exhaust_time_ms = context->current_config.manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
-    test_valve_max_time_ms = context->current_config.test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    low_warning_pressure_mpa = config->low_warning_pressure_mpa;
+    manual_exhaust_time_ms = config->manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    test_valve_max_time_ms = config->test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
     A_GasConfig_LoadDefaults(&context->pending_config);
     context->pending_config.low_warning_pressure_mpa = low_warning_pressure_mpa;
     context->pending_config.manual_exhaust_time_ms = manual_exhaust_time_ms;
@@ -434,20 +438,20 @@ static void A_Modbus_ProcessLogCommandWrite(A_Modbus_Context *context)
 /*
  * 函数名：A_Modbus_Task。
  * 说明：周期处理外部主站请求，并把写寄存器操作转换为控制、运行参数或日志读取请求。
- * 输入：context 为外部 Modbus 应用层上下文输入输出指针。
+ * 输入：context为外部Modbus应用层上下文；config为当前生效的完整运行参数。
  * 输出：无；待执行控制、参数和日志请求及对应结果状态写入context。
  */
-void A_Modbus_Task(A_Modbus_Context *context)
+void A_Modbus_Task(A_Modbus_Context *context, const Gas_Config *config)
 {
     uint16_t write_start; // 当前作用域变量，用于保存起始边界。
     uint16_t write_count; // 当前作用域变量，用于保存数量计数。
 
-    if ((context == NULL) || !context->ready)
+    if ((context == NULL) || (config == NULL) || !context->ready)
     {
         return;
     }
 
-    F_Modbus_Task(&context->function);
+    F_Modbus_Task(&context->function, &context->hardware);
     if (!F_Modbus_TakeWriteEvent(&context->function, &write_start, &write_count))
     {
         return;
@@ -463,13 +467,13 @@ void A_Modbus_Task(A_Modbus_Context *context)
                                             write_count,
                                             A_MODBUS_HOLDING_CONFIG_COMMIT))
     {
-        A_Modbus_ProcessConfigCommit(context);
+        A_Modbus_ProcessConfigCommit(context, config);
     }
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
                                             A_MODBUS_HOLDING_CONFIG_DEFAULT))
     {
-        A_Modbus_ProcessConfigDefault(context);
+        A_Modbus_ProcessConfigDefault(context, config);
     }
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
@@ -539,7 +543,6 @@ bool A_Modbus_UpdateConfigRegisters(A_Modbus_Context *context, const Gas_Config 
             return false;
         }
     }
-    context->current_config = *config;
     return true;
 }
 
@@ -706,5 +709,5 @@ bool A_Modbus_IsReady(const A_Modbus_Context *context)
 bool A_Modbus_HasFault(const A_Modbus_Context *context)
 {
     return ((context == NULL) || !context->ready ||
-            F_Modbus_HasFault(&context->function));
+            F_Modbus_HasFault(&context->function, &context->hardware));
 }

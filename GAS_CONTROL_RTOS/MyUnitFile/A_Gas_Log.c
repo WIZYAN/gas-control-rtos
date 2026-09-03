@@ -532,7 +532,7 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
     const A_Gas_Log_Header_Candidate *selected = NULL; // 当前作用域变量，用于保存当前处理数据指针。
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
-    if ((context == NULL) || (storage == NULL) || (system == NULL) || !storage->ready)
+    if ((context == NULL) || (storage == NULL) || (system == NULL) || !storage->initialized)
     {
         return false;
     }

@@ -49,7 +49,6 @@ typedef struct
 // CAN自定义协议功能层上下文，不使用模块全局变量。
 typedef struct
 {
-    H_Can_Context *hardware;                         // 所属CAN0硬件层实例。
     H_Can_Frame transmit_queue[F_CAN_TX_QUEUE_CAPACITY]; // 等待发送的响应帧队列。
     uint8_t transmit_head;                           // 响应队列下一个写入索引。
     uint8_t transmit_tail;                           // 响应队列下一个读取索引。
@@ -63,7 +62,7 @@ typedef struct
 
 /*
  * 函数名：F_CanProtocol_Init。
- * 说明：初始化CAN0硬件层、自定义协议功能层并绑定两个上下文。
+ * 说明：初始化CAN0硬件层和自定义协议功能层；两个上下文仍由上层并列持有。
  * 输入：context为功能层上下文；hardware为CAN硬件层；local_type和local_address为本机节点标识。
  * 输出：参数、节点标识及CAN0初始化均有效时返回true，否则返回false。
  */
@@ -75,26 +74,27 @@ bool F_CanProtocol_Init(F_Can_Protocol_Context *context,
 /*
  * 函数名：F_CanProtocol_Deinit。
  * 说明：通过硬件层关闭CAN0并清除协议就绪状态。
- * 输入：context为CAN协议功能层上下文输入输出指针。
+ * 输入：context为CAN协议功能层上下文；hardware为其所属CAN硬件层实例。
  * 输出：CAN0已经关闭或成功关闭时返回true，否则返回false。
  */
-bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context);
+bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context, H_Can_Context *hardware);
 
 /*
  * 函数名：F_CanProtocol_HasFault。
  * 说明：逐层查询CAN0硬件是否存在影响通讯的故障。
- * 输入：context为只读CAN协议功能层上下文。
+ * 输入：context为只读CAN协议功能层上下文；hardware为只读CAN硬件层实例。
  * 输出：功能层未就绪或硬件层故障时返回true，否则返回false。
  */
-bool F_CanProtocol_HasFault(const F_Can_Protocol_Context *context);
+bool F_CanProtocol_HasFault(const F_Can_Protocol_Context *context,
+                            const H_Can_Context *hardware);
 
 /*
  * 函数名：F_CanProtocol_Task。
  * 说明：非阻塞处理一帧接收数据及一帧待发送响应，并校验29位标识符和自定义CRC。
- * 输入：context 为CAN协议功能层上下文输入输出指针。
+ * 输入：context为CAN协议功能层上下文；hardware为其所属CAN硬件层实例。
  * 输出：无；合法请求和响应发送状态保存在context中。
  */
-void F_CanProtocol_Task(F_Can_Protocol_Context *context);
+void F_CanProtocol_Task(F_Can_Protocol_Context *context, H_Can_Context *hardware);
 
 /*
  * 函数名：F_CanProtocol_TakeRequest。

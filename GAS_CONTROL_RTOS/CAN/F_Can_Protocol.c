@@ -87,7 +87,7 @@ uint8_t F_CanProtocol_CalculateCrc(uint32_t id, const uint8_t data[H_CAN_FRAME_D
 
 /*
  * 函数名：F_CanProtocol_Init。
- * 说明：初始化CAN0硬件层、自定义协议功能层并绑定两个上下文。
+ * 说明：初始化CAN0硬件层和自定义协议功能层，两者由上层并列持有。
  * 输入：context为功能层上下文；hardware为CAN硬件层；local_type和local_address为本机节点标识。
  * 输出：参数、节点标识及CAN0初始化均有效时返回true，否则返回false。
  */
@@ -103,12 +103,10 @@ bool F_CanProtocol_Init(F_Can_Protocol_Context *context,
     }
 
     (void) memset(context, 0, sizeof(*context));
-    context->hardware = hardware;
     context->local_type = local_type;
     context->local_address = local_address;
     if (!H_Can_Init(hardware))
     {
-        context->hardware = NULL;
         return false;
     }
     context->ready = true;
@@ -121,22 +119,16 @@ bool F_CanProtocol_Init(F_Can_Protocol_Context *context,
  * 输入：context为CAN协议功能层上下文输入输出指针。
  * 输出：CAN0已经关闭或成功关闭时返回true，否则返回false。
  */
-bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context)
+bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context, H_Can_Context *hardware)
 {
     bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
-    if (context == NULL)
+    if ((context == NULL) || (hardware == NULL))
     {
         return false;
     }
-    if (context->hardware == NULL)
-    {
-        context->ready = false;
-        return true;
-    }
-    success = H_Can_Deinit(context->hardware);
+    success = H_Can_Deinit(hardware);
     context->ready = false;
-    context->hardware = NULL;
     return success;
 }
 
@@ -146,10 +138,11 @@ bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context)
  * 输入：context为只读CAN协议功能层上下文。
  * 输出：功能层未就绪或硬件层故障时返回true，否则返回false。
  */
-bool F_CanProtocol_HasFault(const F_Can_Protocol_Context *context)
+bool F_CanProtocol_HasFault(const F_Can_Protocol_Context *context,
+                            const H_Can_Context *hardware)
 {
-    return ((context == NULL) || !context->ready ||
-            H_Can_HasFault(context->hardware));
+    return ((context == NULL) || (hardware == NULL) || !context->ready ||
+            H_Can_HasFault(hardware));
 }
 
 /*
@@ -244,24 +237,24 @@ bool F_CanProtocol_QueueWriteResponse(F_Can_Protocol_Context *context,
  * 输入：context 为CAN协议功能层上下文输入输出指针。
  * 输出：无；合法请求和响应发送状态保存在context中。
  */
-void F_CanProtocol_Task(F_Can_Protocol_Context *context)
+void F_CanProtocol_Task(F_Can_Protocol_Context *context, H_Can_Context *hardware)
 {
     H_Can_Frame frame; // 当前作用域变量，用于保存通信帧缓冲区或长度。
 
-    if ((context == NULL) || !context->ready || (context->hardware == NULL))
+    if ((context == NULL) || (hardware == NULL) || !context->ready)
     {
         return;
     }
 
     if ((context->transmit_tail != context->transmit_head) &&
-        !H_Can_IsTransmitBusy(context->hardware) &&
-        H_Can_Send(context->hardware, &context->transmit_queue[context->transmit_tail]))
+        !H_Can_IsTransmitBusy(hardware) &&
+        H_Can_Send(hardware, &context->transmit_queue[context->transmit_tail]))
     {
         context->transmit_tail = F_CanProtocol_NextQueueIndex(context->transmit_tail);
         // 只有硬件层成功接收发送请求后才移出队列，CAN忙时保留到下一个周期重试。
     }
 
-    if (context->request_pending || !H_Can_TakeFrame(context->hardware, &frame))
+    if (context->request_pending || !H_Can_TakeFrame(hardware, &frame))
     {
         return;
     }

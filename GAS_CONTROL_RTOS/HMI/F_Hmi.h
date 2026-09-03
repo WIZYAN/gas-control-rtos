@@ -43,7 +43,6 @@ typedef struct
 // 大彩指令集解析和发送功能上下文，由上层实例持有并通过指针传递。
 typedef struct
 {
-    H_Hmi_Context hardware;                 // SCI9 硬件层实例。
     uint8_t rx_frame[F_HMI_FRAME_MAX_SIZE]; // 当前正在组装的接收帧。
     uint16_t rx_length;                     // 当前接收帧已有字节数。
     bool receiving; // 是否已经收到 0xEE 帧头；使用范围：当前声明作用域内使用；取值范围：false/true，false表示当前未接收协议帧，true表示当前正在接收协议帧。
@@ -61,18 +60,18 @@ typedef struct
 /*
  * 函数名：F_Hmi_Init。
  * 说明：初始化大彩协议解析功能和 SCI9 硬件层。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context为HMI协议上下文；hardware为由上层持有的SCI9硬件实例。
  * 输出：初始化成功时返回 true，否则返回 false。
  */
-bool F_Hmi_Init(F_Hmi_Context *context);
+bool F_Hmi_Init(F_Hmi_Context *context, H_Hmi_Context *hardware);
 
 /*
  * 函数名：F_Hmi_Task。
  * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context为HMI协议上下文；hardware为由上层持有的SCI9硬件实例。
  * 输出：无；解析成功后锁存按钮/下拉菜单事件，并按顺序写入文本输入FIFO。
  */
-void F_Hmi_Task(F_Hmi_Context *context);
+void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware);
 
 /*
  * 函数名：F_Hmi_TakeButtonEvent。
@@ -107,10 +106,10 @@ bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
 /*
  * 函数名：F_Hmi_SendReadRtc。
  * 说明：按大彩协议发送读取串口屏全局 RTC 的 0x82 指令；RTC 控件 ID 不包含在此全局命令中。
- * 输入：context 为 HMI 功能层上下文输入输出指针。
+ * 输入：context为HMI协议上下文；hardware为由上层持有的SCI9硬件实例。
  * 输出：成功启动异步发送时返回 true，否则返回 false。
  */
-bool F_Hmi_SendReadRtc(F_Hmi_Context *context);
+bool F_Hmi_SendReadRtc(F_Hmi_Context *context, H_Hmi_Context *hardware);
 
 /*
  * 函数名：F_Hmi_TakeRtcTime。
@@ -123,10 +122,11 @@ bool F_Hmi_TakeRtcTime(F_Hmi_Context *context, F_Hmi_Rtc_Time *rtc_time);
 /*
  * 函数名：F_Hmi_SendText。
  * 说明：按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本。
- * 输入：context 为功能层上下文；page_id 为画面 ID；control_id 为控件 ID；text 为文本；length 为文本长度。
+ * 输入：context为协议上下文；hardware为SCI9硬件实例；page_id和control_id指定控件；text和length指定文本。
  * 输出：成功启动异步发送时返回 true，否则返回 false。
  */
 bool F_Hmi_SendText(F_Hmi_Context *context,
+                    H_Hmi_Context *hardware,
                     uint16_t page_id,
                     uint16_t control_id,
                     const char *text,
@@ -135,10 +135,11 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
 /*
  * 函数名：F_Hmi_SendButtonState。
  * 说明：按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态。
- * 输入：context为功能层上下文；page_id和control_id指定按钮；pressed为false弹起、true按下。
+ * 输入：context为协议上下文；hardware为SCI9硬件实例；page_id和control_id指定按钮；pressed为目标状态。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendButtonState(F_Hmi_Context *context,
+                           H_Hmi_Context *hardware,
                            uint16_t page_id,
                            uint16_t control_id,
                            bool pressed);
@@ -146,10 +147,11 @@ bool F_Hmi_SendButtonState(F_Hmi_Context *context,
 /*
  * 函数名：F_Hmi_SendIconFrame。
  * 说明：按大彩B1 23指令设置指定图标控件当前显示帧，用于状态图层切换。
- * 输入：context为功能层上下文；page_id为画面ID；control_id为图标控件ID；frame_id为从0开始的帧索引。
+ * 输入：context为协议上下文；hardware为SCI9硬件实例；page_id和control_id指定图标；frame_id为帧索引。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
+                         H_Hmi_Context *hardware,
                          uint16_t page_id,
                          uint16_t control_id,
                          uint8_t frame_id);
@@ -157,20 +159,22 @@ bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
 /*
  * 函数名：F_Hmi_SendRecordClear。
  * 说明：按大彩B1 53指令清空指定数据记录控件中的现有行。
- * 输入：context为功能层上下文；page_id为画面ID；control_id为数据记录控件ID。
+ * 输入：context为协议上下文；hardware为SCI9硬件实例；page_id和control_id指定数据记录控件。
  * 输出：成功启动异步发送时返回true，串口忙或参数无效时返回false。
  */
 bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
+                           H_Hmi_Context *hardware,
                            uint16_t page_id,
                            uint16_t control_id);
 
 /*
  * 函数名：F_Hmi_SendRecordAdd。
  * 说明：按大彩B1 52指令向指定通用表格添加一行以分号分隔的GBK文本。
- * 输入：context为功能层上下文；page_id和control_id指定表格；record为行文本；length为字节数。
+ * 输入：context为协议上下文；hardware为SCI9硬件实例；page_id和control_id指定表格；record和length指定行文本。
  * 输出：成功启动异步发送时返回true，串口忙、参数无效或帧过长时返回false。
  */
 bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
+                         H_Hmi_Context *hardware,
                          uint16_t page_id,
                          uint16_t control_id,
                          const char *record,

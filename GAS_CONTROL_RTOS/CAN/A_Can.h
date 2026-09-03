@@ -120,12 +120,11 @@ typedef struct
     bool enabled; // CAN人工控制请求的动作值；使用范围：A_Can_Control_Request请求对象内；取值范围：false/true；排气阀和测试阀请求中false表示关闭、true表示开启，停用请求中false表示重新启用、true表示停用，测试结论请求中false表示未通过、true表示通过。
 } A_Can_Control_Request;
 
-// CAN外部通讯应用层上下文，集中保存协议、暂存参数、命令和日志窗口。
+// CAN外部通讯应用层上下文，只保存协议运行状态、待提交参数、命令和日志窗口。
 typedef struct
 {
     H_Can_Context hardware;                 // CAN0硬件层实例。
     F_Can_Protocol_Context function;        // 自定义29位扩展帧协议功能层实例。
-    Gas_Config staged_config;               // 当前已经保存并实际生效的10项CAN公开参数镜像。
     gas_external_result_t command_result;   // 最近一次命令执行结果。
     Gas_Config pending_config;              // 已校验并等待保存应用的参数。
     gas_external_config_result_t config_result; // 最近一次参数处理结果。
@@ -159,7 +158,7 @@ typedef struct
 
 /*
  * 函数名：A_Can_Init。
- * 说明：初始化CAN0、自定义协议和当前运行参数镜像。
+ * 说明：校验当前运行参数，并初始化CAN0和自定义协议。
  * 输入：context为待初始化上下文；config为当前有效运行参数。
  * 输出：硬件层和功能层均初始化成功时返回true，否则返回false。
  */
@@ -176,20 +175,13 @@ bool A_Can_Deinit(A_Can_Context *context);
 /*
  * 函数名：A_Can_Task。
  * 说明：周期解析CAN读写请求、访问地址表并组织非阻塞响应。
- * 输入：context为CAN应用层上下文；system为只读气源系统状态；comm_mode为当前外部通讯模式。
+ * 输入：context为CAN应用层上下文；system为只读气源系统状态；config为当前生效参数；comm_mode为当前外部通讯模式。
  * 输出：无；请求、结果及发送队列状态保存在context中。
  */
 void A_Can_Task(A_Can_Context *context,
                 const Gas_System *system,
+                const Gas_Config *config,
                 gas_external_comm_mode_t comm_mode);
-
-/*
- * 函数名：A_Can_UpdateConfig。
- * 说明：用当前生效参数同时刷新CAN读值和下一轮写入暂存区。
- * 输入：context为CAN上下文；config为当前有效运行参数。
- * 输出：参数有效且更新成功时返回true，否则返回false。
- */
-bool A_Can_UpdateConfig(A_Can_Context *context, const Gas_Config *config);
 
 /*
  * 函数名：A_Can_TakeConfigRequest。

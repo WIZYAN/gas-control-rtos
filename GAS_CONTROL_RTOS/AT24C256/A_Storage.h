@@ -14,12 +14,8 @@
 
 #include "F_At24c256.h"
 
-// EEPROM 存储功能层上下文，聚合 AT24C256 驱动状态并为应用层提供稳定接口。
-typedef struct
-{
-    F_At24c256_Context device; // 当前实例使用的 AT24C256 驱动上下文。
-    bool ready; // EEPROM 是否已经应答并允许执行存储操作；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
-} A_Storage_Context;
+// 存储接口直接使用AT24C256驱动上下文；该别名只保留原有应用接口名称，不再增加一层结构体嵌套。
+typedef F_At24c256_Context A_Storage_Context;
 
 /*
  * 函数名：A_Storage_Init。

@@ -198,7 +198,7 @@ bool A_Hmi_Init(A_Hmi_Context *context)
     }
 
     (void) memset(context, 0, sizeof(*context));
-    context->ready = F_Hmi_Init(&context->function);
+    context->ready = F_Hmi_Init(&context->function, &context->hardware);
     return context->ready;
 }
 
@@ -217,7 +217,7 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
         return;
     }
 
-    F_Hmi_Task(&context->function);
+    F_Hmi_Task(&context->function, &context->hardware);
     if (F_Hmi_TakeRtcTime(&context->function, &rtc_time))
     {
         system->date_time.year = rtc_time.year;
@@ -241,7 +241,7 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
     }
 
     if (A_Hmi_TimeReached(now_ms, context->next_rtc_read_ms) &&
-        F_Hmi_SendReadRtc(&context->function))
+        F_Hmi_SendReadRtc(&context->function, &context->hardware))
     {
         context->next_rtc_read_ms = now_ms + A_HMI_RTC_READ_INTERVAL_MS;
     }
@@ -373,7 +373,9 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
                     size_t length)
 {
     return ((context != NULL) && context->ready &&
-            F_Hmi_SendText(&context->function, page_id, control_id, text, length));
+            F_Hmi_SendText(&context->function,
+                           &context->hardware,
+                           page_id, control_id, text, length));
 }
 
 /*
@@ -514,6 +516,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_EXHAUST_BUTTON_BASE + index),
                                      (exhaust_bits & (uint8_t) (1U << index)) != 0U);
@@ -536,6 +539,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_TEST_BUTTON_BASE + index),
                                      (test_bits & (uint8_t) (1U << index)) != 0U);
@@ -558,6 +562,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_DISABLE_BUTTON_BASE + index),
                                      (disable_bits & (uint8_t) (1U << index)) != 0U);
@@ -580,6 +585,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
                                      (qualification_bits & (uint8_t) (1U << index)) != 0U);
@@ -602,6 +608,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_SUPPLY_ICON_BASE + index),
                                    ((supply_bits & (uint8_t) (1U << index)) != 0U) ?
@@ -625,6 +632,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_EXHAUST_ICON_BASE + index),
                                    ((exhaust_bits & (uint8_t) (1U << index)) != 0U) ?
@@ -648,6 +656,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             }
         }
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_TEST_ICON_BASE + index),
                                    ((test_bits & (uint8_t) (1U << index)) != 0U) ?
@@ -697,6 +706,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 18U);
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_SUPPLY_ICON_BASE + index),
                                    system->cylinder[index].supply_cmd ?
@@ -706,6 +716,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 24U);
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_EXHAUST_ICON_BASE + index),
                                    system->cylinder[index].exhaust_cmd ?
@@ -715,6 +726,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 30U);
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    (uint16_t) (A_HMI_TEST_ICON_BASE + index),
                                    system->cylinder[index].test_cmd ?
@@ -750,6 +762,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
         index = (uint8_t) (context->refresh_slot - 38U);
         control_id = (uint16_t) (A_HMI_HIGHLIGHT_ICON_BASE + index);
         sent = F_Hmi_SendIconFrame(&context->function,
+                                   &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
                                    control_id,
                                    A_Hmi_GetHighlightFrame(system->cylinder[index].state));
@@ -759,6 +772,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 44U);
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_EXHAUST_BUTTON_BASE + index),
                                      system->cylinder[index].exhaust_cmd);
@@ -768,6 +782,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 50U);
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_TEST_BUTTON_BASE + index),
                                      system->cylinder[index].test_cmd);
@@ -777,6 +792,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 56U);
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_DISABLE_BUTTON_BASE + index),
                                      system->cylinder[index].state == GAS_CYL_DISABLED);
@@ -786,6 +802,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 62U);
         sent = F_Hmi_SendButtonState(&context->function,
+                                     &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
                                      (uint16_t) (A_HMI_QUALIFIED_BUTTON_BASE + index),
                                      system->cylinder[index].qualification_passed);
@@ -795,6 +812,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     if (!sent && (length > 0U))
     {
         sent = F_Hmi_SendText(&context->function,
+                              &context->hardware,
                               A_HMI_MONITOR_PAGE_ID,
                               control_id,
                               text,

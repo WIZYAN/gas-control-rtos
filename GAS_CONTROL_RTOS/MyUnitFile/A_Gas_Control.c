@@ -58,13 +58,16 @@ static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
     }
 
     context->emergency_close_pending = true;
-    if (!F_ValveControl_AllOff(&context->runtime_service.platform, &context->system))
+    if (!F_ValveControl_AllOff(&context->platform, &context->system))
     {
         context->system.platform_ready = false;
         context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
         return false;
     }
-    (void) memset(&context->total_test, 0, sizeof(context->total_test));
+    context->total_test_pending_open_mask = 0U;
+    (void) memset(context->test_open_not_before_ms,
+                  0,
+                  sizeof(context->test_open_not_before_ms));
     context->emergency_close_pending = false;
     return true;
 }
@@ -242,12 +245,12 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
     }
 
     cylinder = &context->system.cylinder[index];
-    supply_ok = F_ValveControl_SetSupply(&context->runtime_service.platform,
+    supply_ok = F_ValveControl_SetSupply(&context->platform,
                                          &context->system,
                                          &context->config,
                                          index,
                                          false);
-    exhaust_ok = F_ValveControl_SetExhaust(&context->runtime_service.platform,
+    exhaust_ok = F_ValveControl_SetExhaust(&context->platform,
                                            &context->system,
                                            &context->config,
                                            index,
@@ -360,7 +363,7 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
     {
         Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
         bool switching_new = ((system->switch_state == GAS_SWITCH_VERIFY_NEW) &&
-                              (index == system->switch_new_index));
+                              (index == context->switch_new_index));
 
         if (cylinder->state == GAS_CYL_DISABLED)
         {
@@ -449,8 +452,8 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
         return false;
     }
 
-    start_index = (system->switch_old_index < GAS_CYLINDER_COUNT) ?
-                  system->switch_old_index : (uint8_t) (GAS_CYLINDER_COUNT - 1U);
+    start_index = (context->switch_old_index < GAS_CYLINDER_COUNT) ?
+                  context->switch_old_index : (uint8_t) (GAS_CYLINDER_COUNT - 1U);
     next_index = A_GasControl_FindNextReady(system, &context->config, start_index, now_ms);
     // 无历史工作瓶时从6号之后开始，使首次选择自然落到1号瓶。
     if (next_index >= GAS_CYLINDER_COUNT)
@@ -460,7 +463,7 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
     }
 
     if (!A_GasControl_CloseCylinderValves(context, next_index) ||
-        !F_ValveControl_SetSupply(&context->runtime_service.platform,
+        !F_ValveControl_SetSupply(&context->platform,
                                   system,
                                   &context->config,
                                   next_index,
@@ -470,7 +473,7 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
     }
 
     system->active_index = next_index;
-    system->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
+    context->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
     system->cylinder[next_index].state = GAS_CYL_ACTIVE;
     system->alarm_bits &= ~(uint32_t) GAS_ALARM_NO_BACKUP;
     // 只有阀门实际打开成功后才提交active_index，避免软件状态领先于硬件输出。
@@ -503,7 +506,7 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
         if (cylinder->exhaust_cmd &&
             A_GasControl_TimeReached(now_ms, cylinder->exhaust_deadline_ms))
         {
-            if (!F_ValveControl_SetExhaust(&context->runtime_service.platform,
+            if (!F_ValveControl_SetExhaust(&context->platform,
                                            &context->system,
                                            &context->config,
                                            index,
@@ -545,19 +548,19 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
     }
     // 平台未就绪或紧急全关尚未成功时保留待开请求供诊断，但禁止总阀和分路再次开启。
 
-    if ((context->total_test.pending_open_mask != 0U) &&
+    if ((context->total_test_pending_open_mask != 0U) &&
         !context->system.total_test_cmd &&
-        F_ValveControl_TotalTestCanOpen(&context->runtime_service.platform, now_ms))
+        F_ValveControl_TotalTestCanOpen(&context->platform, now_ms))
     {
-        if (!F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+        if (!F_ValveControl_SetTotalTest(&context->platform,
                                          &context->system,
                                          &context->config,
                                          true))
         {
-            context->total_test.pending_open_mask = 0U;
-            (void) memset(context->total_test.open_not_before_ms,
+            context->total_test_pending_open_mask = 0U;
+            (void) memset(context->test_open_not_before_ms,
                           0,
-                          sizeof(context->total_test.open_not_before_ms));
+                          sizeof(context->test_open_not_before_ms));
             context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
         }
         else
@@ -565,16 +568,16 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
             for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
             {
                 bit = (uint8_t) (1U << index);
-                if ((context->total_test.pending_open_mask & bit) != 0U)
+                if ((context->total_test_pending_open_mask & bit) != 0U)
                 {
-                    context->total_test.open_not_before_ms[index] =
+                    context->test_open_not_before_ms[index] =
                         now_ms + GAS_VALVE_BOOST_MIN_INTERVAL_MS;
                 }
             }
         }
         // 共享电源可用后先吸合总阀，所有等待分路统一再等待500 ms才允许打开。
     }
-    if ((context->total_test.pending_open_mask != 0U) &&
+    if ((context->total_test_pending_open_mask != 0U) &&
         !context->system.total_test_cmd)
     {
         return;
@@ -582,28 +585,29 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        Gas_Cylinder *cylinder = &context->system.cylinder[index]; // 当前循环处理的气瓶运行状态。
+
         bit = (uint8_t) (1U << index);
-        if (((context->total_test.pending_open_mask & bit) == 0U) ||
+        if (((context->total_test_pending_open_mask & bit) == 0U) ||
             !A_GasControl_TimeReached(now_ms,
-                                      context->total_test.open_not_before_ms[index]))
+                                      context->test_open_not_before_ms[index]))
         {
             continue;
         }
 
-        context->total_test.pending_open_mask &= (uint8_t) ~bit;
-        context->total_test.open_not_before_ms[index] = 0U;
-        if (F_ValveControl_SetTest(&context->runtime_service.platform,
+        context->total_test_pending_open_mask &= (uint8_t) ~bit;
+        context->test_open_not_before_ms[index] = 0U;
+        if (F_ValveControl_SetTest(&context->platform,
                                    &context->system,
                                    &context->config,
                                    index,
                                    true))
         {
-            context->system.cylinder[index].test_deadline_ms =
-                now_ms + context->config.test_valve_max_time_ms;
+            cylinder->test_deadline_ms = now_ms + context->config.test_valve_max_time_ms;
         }
         else
         {
-            context->system.cylinder[index].test_deadline_ms = 0U;
+            cylinder->test_deadline_ms = 0U;
             context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
         }
         A_Hmi_RequestTestSync(&context->hmi, index);
@@ -611,9 +615,9 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
     }
 
     if (!A_GasControl_AnyTestValveOn(&context->system) &&
-        (context->total_test.pending_open_mask == 0U) &&
+        (context->total_test_pending_open_mask == 0U) &&
         context->system.total_test_cmd &&
-        !F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+        !F_ValveControl_SetTotalTest(&context->platform,
                                      &context->system,
                                      &context->config,
                                      false))
@@ -652,7 +656,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             if (active->state == GAS_CYL_DISABLED)
             {
                 (void) A_GasControl_CloseCylinderValves(context, system->active_index);
-                system->switch_old_index = system->active_index;
+                context->switch_old_index = system->active_index;
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
                 (void) A_GasControl_SelectInitialBottle(context, now_ms);
                 break;
@@ -669,9 +673,9 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
                             GAS_CYL_LOW_WARNING : GAS_CYL_ACTIVE;
             if (active->pressure_mpa <= context->config.switch_pressure_mpa)
             {
-                system->low_sample_count = 1U;
-                system->low_last_sample_ms = active->pressure_timestamp_ms;
-                system->low_start_ms = now_ms;
+                context->switch_low_sample_count = 1U;
+                context->switch_low_last_sample_ms = active->pressure_timestamp_ms;
+                context->switch_low_start_ms = now_ms;
                 system->switch_state = GAS_SWITCH_LOW_CONFIRM;
                 // 同时记录第一个低压样本及起始时间，样本数和持续时间必须同时满足。
             }
@@ -681,29 +685,29 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             if (!A_GasControl_PressureIsFresh(active, &context->config, now_ms))
             {
                 system->switch_state = GAS_SWITCH_IDLE;
-                system->low_sample_count = 0U;
+                context->switch_low_sample_count = 0U;
                 system->alarm_bits |= GAS_ALARM_ACTIVE_SENSOR;
                 break;
             }
             if (active->pressure_mpa >= context->config.switch_release_mpa)
             {
                 system->switch_state = GAS_SWITCH_IDLE;
-                system->low_sample_count = 0U;
+                context->switch_low_sample_count = 0U;
                 break;
             }
             if ((active->pressure_mpa <= context->config.switch_pressure_mpa) &&
-                (active->pressure_timestamp_ms != system->low_last_sample_ms))
+                (active->pressure_timestamp_ms != context->switch_low_last_sample_ms))
             {
-                if (system->low_sample_count < UINT8_MAX)
+                if (context->switch_low_sample_count < UINT8_MAX)
                 {
-                    system->low_sample_count++;
+                    context->switch_low_sample_count++;
                 }
-                system->low_last_sample_ms = active->pressure_timestamp_ms;
+                context->switch_low_last_sample_ms = active->pressure_timestamp_ms;
                 // 只累计传感器产生的新样本，主循环重复读取同一数值不会增加计数。
             }
-            if ((system->low_sample_count >= context->config.low_confirm_samples) &&
+            if ((context->switch_low_sample_count >= context->config.low_confirm_samples) &&
                 A_GasControl_TimeReached(now_ms,
-                                         system->low_start_ms + context->config.low_confirm_time_ms))
+                                         context->switch_low_start_ms + context->config.low_confirm_time_ms))
             {
                 system->switch_state = GAS_SWITCH_FIND_NEXT;
             }
@@ -720,38 +724,38 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             }
             else
             {
-                system->switch_old_index = system->active_index;
-                system->switch_new_index = next_index;
+                context->switch_old_index = system->active_index;
+                context->switch_new_index = next_index;
                 system->switch_state = GAS_SWITCH_CLOSE_OLD;
             }
             break;
 
         case GAS_SWITCH_CLOSE_OLD: // 先关闭旧瓶，切换过程中允许短暂断气但禁止两瓶同时供气。
-            if (F_ValveControl_SetSupply(&context->runtime_service.platform,
+            if (F_ValveControl_SetSupply(&context->platform,
                                          system,
                                          &context->config,
-                                         system->switch_old_index,
+                                         context->switch_old_index,
                                          false))
             {
-                system->switch_enter_ms = now_ms;
+                context->switch_enter_ms = now_ms;
                 system->switch_state = GAS_SWITCH_DEAD_TIME;
             }
             break;
 
         case GAS_SWITCH_DEAD_TIME: // 等待旧阀机械释放完成后才允许进入新瓶开阀阶段。
             if (A_GasControl_TimeReached(now_ms,
-                                         system->switch_enter_ms + context->config.valve_close_wait_ms))
+                                         context->switch_enter_ms + context->config.valve_close_wait_ms))
             {
                 system->switch_state = GAS_SWITCH_OPEN_NEW;
             }
             break;
 
         case GAS_SWITCH_OPEN_NEW: // 开阀前再次强制关闭目标瓶三阀，确保供气与排气、测试互斥。
-            if (!A_GasControl_CloseCylinderValves(context, system->switch_new_index) ||
-                !F_ValveControl_SetSupply(&context->runtime_service.platform,
+            if (!A_GasControl_CloseCylinderValves(context, context->switch_new_index) ||
+                !F_ValveControl_SetSupply(&context->platform,
                                           system,
                                           &context->config,
-                                          system->switch_new_index,
+                                          context->switch_new_index,
                                           true))
             {
                 A_GasControl_ForceAllValvesOff(context);
@@ -762,24 +766,24 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
                 // 新瓶无法安全打开时全关并停机，禁止继续使用不确定的阀门状态。
                 break;
             }
-            system->switch_enter_ms = now_ms;
+            context->switch_enter_ms = now_ms;
             system->switch_state = GAS_SWITCH_VERIFY_NEW;
             break;
 
         case GAS_SWITCH_VERIFY_NEW: // 等待新阀机械动作完成后再正式交换工作瓶身份。
             if (A_GasControl_TimeReached(now_ms,
-                                         system->switch_enter_ms + context->config.valve_open_wait_ms))
+                                         context->switch_enter_ms + context->config.valve_open_wait_ms))
             {
-                if (system->cylinder[system->switch_old_index].state != GAS_CYL_DISABLED)
+                if (system->cylinder[context->switch_old_index].state != GAS_CYL_DISABLED)
                 {
-                    F_GasControl_EnterLowReplace(context, system->switch_old_index);
+                    F_GasControl_EnterLowReplace(context, context->switch_old_index);
                 }
-                system->cylinder[system->switch_new_index].state = GAS_CYL_ACTIVE;
-                system->active_index = system->switch_new_index;
+                system->cylinder[context->switch_new_index].state = GAS_CYL_ACTIVE;
+                system->active_index = context->switch_new_index;
                 system->switch_state = GAS_SWITCH_IDLE;
-                system->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
-                system->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
-                system->low_sample_count = 0U;
+                context->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
+                context->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
+                context->switch_low_sample_count = 0U;
                 system->alarm_bits &= ~(uint32_t) GAS_ALARM_NO_BACKUP;
                 // 旧瓶转入待换、新瓶转入使用以及索引清理作为一次完整状态提交。
             }
@@ -788,13 +792,13 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
         case GAS_SWITCH_NO_BACKUP: // 没有备用瓶时不主动切断旧瓶，仅报警并继续低压供气。
             system->alarm_bits |= GAS_ALARM_NO_BACKUP;
             active->state = GAS_CYL_LOW_WARNING;
-            system->low_sample_count = 0U;
+            context->switch_low_sample_count = 0U;
             system->switch_state = GAS_SWITCH_IDLE;
             break;
 
         default:
             system->switch_state = GAS_SWITCH_IDLE;
-            system->low_sample_count = 0U;
+            context->switch_low_sample_count = 0U;
             break;
     }
 }
@@ -976,7 +980,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
     }
 
     if ((any_test_on && !context->system.total_test_cmd) ||
-        (!any_test_on && (context->total_test.pending_open_mask == 0U) &&
+        (!any_test_on && (context->total_test_pending_open_mask == 0U) &&
          context->system.total_test_cmd))
     {
         conflict = true;
@@ -1119,16 +1123,19 @@ static bool A_GasControl_TakeExternalConfig(A_Gas_Control_Context *context, Gas_
 
 /*
  * 函数名：A_GasControl_UpdateExternalConfig。
- * 说明：把当前生效参数刷新到当前外部通讯实例。
+ * 说明：校验CAN直接读取的生效参数，或将其刷新到Modbus保持寄存器。
  * 输入：context为应用上下文；config为只读生效参数。
- * 输出：参数镜像更新成功时返回true，否则返回false。
+ * 输出：参数有效且当前通讯视图同步成功时返回true，否则返回false。
  */
 static bool A_GasControl_UpdateExternalConfig(A_Gas_Control_Context *context,
                                               const Gas_Config *config)
 {
-    return (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN) ?
-           A_Can_UpdateConfig(&context->external_can, config) :
-           A_Modbus_UpdateConfigRegisters(&context->external_modbus, config);
+    if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
+    {
+        return (config != NULL) &&
+               (A_GasConfig_Validate(config) == A_GAS_CONFIG_VALID);
+    }
+    return A_Modbus_UpdateConfigRegisters(&context->external_modbus, config);
 }
 
 /*
@@ -1379,9 +1386,9 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
         (context->system.switch_state == GAS_SWITCH_NO_BACKUP))
     {
         context->system.switch_state = GAS_SWITCH_IDLE;
-        context->system.low_sample_count = 0U;
-        context->system.low_last_sample_ms = 0U;
-        context->system.low_start_ms = 0U;
+        context->switch_low_sample_count = 0U;
+        context->switch_low_last_sample_ms = 0U;
+        context->switch_low_start_ms = 0U;
         // CAN稳定运行中修改阈值后重新开始尚未进入机械动作的低压判断，已经完成的阀门动作不会被追溯修改。
     }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
@@ -1430,9 +1437,9 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
         (context->system.switch_state == GAS_SWITCH_NO_BACKUP))
     {
         context->system.switch_state = GAS_SWITCH_IDLE;
-        context->system.low_sample_count = 0U;
-        context->system.low_last_sample_ms = 0U;
-        context->system.low_start_ms = 0U;
+        context->switch_low_sample_count = 0U;
+        context->switch_low_last_sample_ms = 0U;
+        context->switch_low_start_ms = 0U;
         // 尚未进入机械切瓶的低压确认按新阈值重新开始，已关旧阀或开新阀的过程不被中途打断。
     }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
@@ -1572,8 +1579,8 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     system = &context->system;
     system->mode = GAS_MODE_AUTO;
     system->active_index = GAS_NO_ACTIVE_CYLINDER;
-    system->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
-    system->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
+    context->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
+    context->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
         system->cylinder[index].state = GAS_CYL_INIT;
@@ -1581,14 +1588,14 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     }
     // 先建立安全的软件初态；只有后续平台、传感器和阀门初始化成功才允许真实输出。
 
-    system->platform_ready = F_GasRuntime_Init(&context->runtime_service);
-    now_ms = F_GasRuntime_Millis(&context->runtime_service);
-    system->switch_enter_ms = now_ms;
+    system->platform_ready = H_GasPlatform_Init(&context->platform);
+    now_ms = H_GasPlatform_Millis(&context->platform);
+    context->switch_enter_ms = now_ms;
     if (!system->platform_ready)
     {
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
     }
-    if (!F_ValveControl_Init(&context->runtime_service.platform, system))
+    if (!F_ValveControl_Init(&context->platform, system))
     {
         context->emergency_close_pending = true;
         system->platform_ready = false;
@@ -1597,7 +1604,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     // 阀门初始化在任何通信和存储业务之前执行，保证上电期间十八路分瓶阀和总测试阀保持关闭。
 
     sensor_ready = A_ModbusPoll_Init(&context->sensor_poll,
-                                     &context->runtime_service.platform,
+                                     &context->platform,
                                      system);
     if (!sensor_ready)
     {
@@ -1633,7 +1640,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     }
 
     if (A_GasControl_InitExternalComm(context, context->external_comm_mode) &&
-        context->storage_service.ready && !comm_record_valid &&
+        context->storage_service.initialized && !comm_record_valid &&
         !A_GasControl_SaveCommMode(&context->storage_service, context->external_comm_mode))
     {
         system->alarm_bits |= GAS_ALARM_STORAGE;
@@ -1643,14 +1650,16 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     {
         system->alarm_bits |= GAS_ALARM_HMI_COMM;
     }
-    if (!A_HmiConfig_Init(&context->hmi_config, &context->hmi))
+    if (!A_HmiConfig_Init(&context->hmi_config,
+                          &context->hmi.function,
+                          &context->hmi.hardware))
     {
         system->alarm_bits |= GAS_ALARM_HMI_COMM;
     }
     if (!A_HmiLog_Init(&context->hmi_log,
-                       &context->hmi,
-                       &context->log_service,
-                       &context->system))
+                       &context->hmi.function,
+                       &context->hmi.hardware,
+                       &context->log_service))
     {
         system->alarm_bits |= GAS_ALARM_HMI_COMM;
     }
@@ -1690,7 +1699,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     }
 
     context->external_comm_mode = mode;
-    if (!context->storage_service.ready ||
+    if (!context->storage_service.initialized ||
         !A_GasControl_SaveCommMode(&context->storage_service, mode))
     {
         (void) A_GasControl_DeinitExternalComm(context, mode);
@@ -1713,6 +1722,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
  */
 bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
 {
+    Gas_Cylinder *cylinder; // 当前操作气瓶的运行状态。
     uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
 
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT) ||
@@ -1720,23 +1730,24 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
     {
         return false;
     }
+    cylinder = &context->system.cylinder[index];
     // 在业务入口统一检查平台就绪状态，防止串口屏等调用路径绕过CAN层的开阀保护。
-    if (context->system.cylinder[index].exhaust_cmd)
+    if (cylinder->exhaust_cmd)
     {
         return true;
         // 排气中重复点击不重新计算截止时间，防止误触延长一次人工排气过程。
     }
     if ((context->system.mode != GAS_MODE_AUTO) ||
-        ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
-         (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
-         (context->system.cylinder[index].state != GAS_CYL_READY) &&
-         (context->system.cylinder[index].state != GAS_CYL_LOW_REPLACE)))
+        ((cylinder->state != GAS_CYL_INIT) &&
+         (cylinder->state != GAS_CYL_WAIT_TEST) &&
+         (cylinder->state != GAS_CYL_READY) &&
+         (cylinder->state != GAS_CYL_LOW_REPLACE)))
     {
         return false;
     }
 
-    now_ms = F_GasRuntime_Millis(&context->runtime_service);
-    if (!F_ValveControl_SetExhaust(&context->runtime_service.platform,
+    now_ms = H_GasPlatform_Millis(&context->platform);
+    if (!F_ValveControl_SetExhaust(&context->platform,
                                    &context->system,
                                    &context->config,
                                    index,
@@ -1745,8 +1756,7 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
         return false;
     }
 
-    context->system.cylinder[index].exhaust_deadline_ms =
-        now_ms + context->config.manual_exhaust_time_ms;
+    cylinder->exhaust_deadline_ms = now_ms + context->config.manual_exhaust_time_ms;
     return true;
 }
 
@@ -1758,17 +1768,20 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
  */
 bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
 {
+    Gas_Cylinder *cylinder; // 当前操作气瓶的运行状态。
+
     if ((context == NULL) || (index >= GAS_CYLINDER_COUNT))
     {
         return false;
     }
-    if (!context->system.cylinder[index].exhaust_cmd)
+    cylinder = &context->system.cylinder[index];
+    if (!cylinder->exhaust_cmd)
     {
-        context->system.cylinder[index].exhaust_deadline_ms = 0U;
+        cylinder->exhaust_deadline_ms = 0U;
         A_Hmi_RequestExhaustSync(&context->hmi, index);
         return true;
     }
-    if (!F_ValveControl_SetExhaust(&context->runtime_service.platform,
+    if (!F_ValveControl_SetExhaust(&context->platform,
                                    &context->system,
                                    &context->config,
                                    index,
@@ -1776,7 +1789,7 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
     {
         return false;
     }
-    context->system.cylinder[index].exhaust_deadline_ms = 0U;
+    cylinder->exhaust_deadline_ms = 0U;
     A_Hmi_RequestExhaustSync(&context->hmi, index);
     // 关闭操作不受气瓶状态限制，成功后立即同步屏幕按钮并取消原自动关闭计时。
     return true;
@@ -1790,6 +1803,7 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
  */
 bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bool on)
 {
+    Gas_Cylinder *cylinder; // 当前操作气瓶的运行状态。
     uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
     uint8_t bit; // 当前作用域变量，用于保存位掩码。
 
@@ -1797,13 +1811,14 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
     {
         return false;
     }
+    cylinder = &context->system.cylinder[index];
     bit = (uint8_t) (1U << index);
     if (on && (!context->system.platform_ready ||
         (context->system.mode != GAS_MODE_AUTO) ||
-        ((context->system.cylinder[index].state != GAS_CYL_INIT) &&
-         (context->system.cylinder[index].state != GAS_CYL_WAIT_TEST) &&
-         (context->system.cylinder[index].state != GAS_CYL_READY) &&
-         (context->system.cylinder[index].state != GAS_CYL_LOW_REPLACE))))
+        ((cylinder->state != GAS_CYL_INIT) &&
+         (cylinder->state != GAS_CYL_WAIT_TEST) &&
+         (cylinder->state != GAS_CYL_READY) &&
+         (cylinder->state != GAS_CYL_LOW_REPLACE))))
     {
         return false;
     }
@@ -1811,25 +1826,25 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
 
     if (on)
     {
-        if (context->system.cylinder[index].test_cmd ||
-            ((context->total_test.pending_open_mask & bit) != 0U))
+        if (cylinder->test_cmd ||
+            ((context->total_test_pending_open_mask & bit) != 0U))
         {
             return true;
         }
 
-        now_ms = F_GasRuntime_Millis(&context->runtime_service);
-        context->total_test.pending_open_mask |= bit;
-        context->total_test.open_not_before_ms[index] = context->system.total_test_cmd ?
+        now_ms = H_GasPlatform_Millis(&context->platform);
+        context->total_test_pending_open_mask |= bit;
+        context->test_open_not_before_ms[index] = context->system.total_test_cmd ?
             now_ms + GAS_VALVE_BOOST_MIN_INTERVAL_MS : 0U;
-        context->system.cylinder[index].test_deadline_ms = 0U;
+        cylinder->test_deadline_ms = 0U;
         // 周期任务会先等待VALP1+可用并吸合总阀，再延时500 ms真正打开分路测试阀。
         return true;
     }
 
-    context->total_test.pending_open_mask &= (uint8_t) ~bit;
-    context->total_test.open_not_before_ms[index] = 0U;
-    if (context->system.cylinder[index].test_cmd &&
-        !F_ValveControl_SetTest(&context->runtime_service.platform,
+    context->total_test_pending_open_mask &= (uint8_t) ~bit;
+    context->test_open_not_before_ms[index] = 0U;
+    if (cylinder->test_cmd &&
+        !F_ValveControl_SetTest(&context->platform,
                                 &context->system,
                                 &context->config,
                                 index,
@@ -1837,12 +1852,12 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
     {
         return false;
     }
-    context->system.cylinder[index].test_deadline_ms = 0U;
+    cylinder->test_deadline_ms = 0U;
 
     if (!A_GasControl_AnyTestValveOn(&context->system) &&
-        (context->total_test.pending_open_mask == 0U) &&
+        (context->total_test_pending_open_mask == 0U) &&
         context->system.total_test_cmd &&
-        !F_ValveControl_SetTotalTest(&context->runtime_service.platform,
+        !F_ValveControl_SetTotalTest(&context->platform,
                                      &context->system,
                                      &context->config,
                                      false))
@@ -1894,14 +1909,14 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
         A_Hmi_RequestQualificationSync(&context->hmi, index);
         // 停用通常用于维护或换瓶，因此同时撤销原测试结论，重新启用后必须再次测试。
         if ((system->active_index == index) ||
-            (system->switch_old_index == index) ||
-            (system->switch_new_index == index))
+            (context->switch_old_index == index) ||
+            (context->switch_new_index == index))
         {
-            system->switch_old_index = index;
-            system->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
+            context->switch_old_index = index;
+            context->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
             system->active_index = GAS_NO_ACTIVE_CYLINDER;
             system->switch_state = GAS_SWITCH_IDLE;
-            system->low_sample_count = 0U;
+            context->switch_low_sample_count = 0U;
         }
         return true;
     }
@@ -1937,7 +1952,7 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
     cylinder = &context->system.cylinder[index];
     if (passed)
     {
-        now_ms = F_GasRuntime_Millis(&context->runtime_service);
+        now_ms = H_GasPlatform_Millis(&context->platform);
         if ((cylinder->state != GAS_CYL_WAIT_TEST) ||
             !A_GasControl_PressureIsFresh(cylinder, &context->config, now_ms) ||
             (cylinder->pressure_mpa < context->config.ready_min_pressure_mpa))
@@ -1965,21 +1980,23 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
 void A_GasControl_Task(A_Gas_Control_Context *context)
 {
     uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
+    Gas_System *system; // 本周期直接使用的系统运行状态，避免通过总上下文重复深层访问。
 
     if (context == NULL)
     {
         return;
     }
 
-    now_ms = F_GasRuntime_Millis(&context->runtime_service);//读取当前毫秒时间，供本周期各状态机使用。
-    A_ModbusPoll_Task(&context->sensor_poll, &context->system, &context->config, now_ms);//轮询并解析 1～7 号压力传感器，更新六瓶压力和总压力。
-    F_ValveControl_Task(&context->runtime_service.platform, &context->system, now_ms);//推进 12 V 吸合转 5 V 保持的阀门时序。
+    system = &context->system;
+    now_ms = H_GasPlatform_Millis(&context->platform);//读取当前毫秒时间，供本周期各状态机使用。
+    A_ModbusPoll_Task(&context->sensor_poll, system, &context->config, now_ms);//轮询并解析 1～7 号压力传感器，更新六瓶压力和总压力。
+    F_ValveControl_Task(&context->platform, system, now_ms);//推进 12 V 吸合转 5 V 保持的阀门时序。
     if (context->emergency_close_pending)
     {
         (void) A_GasControl_ForceAllValvesOff(context);
     }
     // 紧急全关失败后每个5 ms控制周期都先重试，成功前保留命令镜像和未就绪锁定。
-    A_Hmi_Task(&context->hmi, &context->system, now_ms);//解析串口屏按钮帧、文本输入和 RTC 响应，并周期请求 RTC。
+    A_Hmi_Task(&context->hmi, system, now_ms);//解析串口屏按钮帧、文本输入和 RTC 响应，并周期请求 RTC。
     A_HmiLog_InputTask(&context->hmi_log);//处理日志查询页的日期、时间输入。
     A_HmiConfig_InputTask(&context->hmi_config,
                           &context->config);//`处理参数页文本输入。
@@ -1995,12 +2012,12 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     // 状态机处理完成后统一检查硬安全不变量，日志只记录经过安全检查后的最终状态。
     if (!A_GasLog_IsClearBusy(&context->log_service) &&
         A_GasLog_IsReady(&context->log_service) &&
-        !A_GasLog_Task(&context->log_service, &context->system))
+       !A_GasLog_Task(&context->log_service, system))
     {
-        context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        system->alarm_bits |= GAS_ALARM_STORAGE;
     }
     A_HmiConfig_Task(&context->hmi_config);//分时刷新参数页显示。
-    A_HmiLog_Task(&context->hmi_log);
+    A_HmiLog_Task(&context->hmi_log, system->date_time.valid);
     // 参数刷新先尝试占用SCI9；无待发参数时日志和监控继续运行，避免返回事件丢失后长期暂停刷新。非阻塞执行日志索引、读页和逐行发送。
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
@@ -2008,15 +2025,16 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
                             A_GasLog_GetCount(&context->log_service),
                             A_GAS_LOG_RECORD_CAPACITY);
         A_Can_Task(&context->external_can,
-                   &context->system,
+                   system,
+                   &context->config,
                    context->external_comm_mode);
         if (A_Can_HasFault(&context->external_can))
         {
-            context->system.alarm_bits |= GAS_ALARM_EXTERNAL_CAN;
+            system->alarm_bits |= GAS_ALARM_EXTERNAL_CAN;
         }
         else
         {
-            context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_CAN;
+            system->alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_CAN;
         }
     }
     else
@@ -2024,15 +2042,15 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
         A_Modbus_UpdateLogInfo(&context->external_modbus,
                                A_GasLog_GetCount(&context->log_service),
                                A_GAS_LOG_RECORD_CAPACITY);
-        A_Modbus_Refresh(&context->external_modbus, &context->system);
-        A_Modbus_Task(&context->external_modbus);
+        A_Modbus_Refresh(&context->external_modbus, system);
+        A_Modbus_Task(&context->external_modbus, &context->config);
         if (A_Modbus_HasFault(&context->external_modbus))
         {
-            context->system.alarm_bits |= GAS_ALARM_EXTERNAL_MODBUS;
+            system->alarm_bits |= GAS_ALARM_EXTERNAL_MODBUS;
         }
         else
         {
-            context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
+            system->alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
         }
     }
     A_GasControl_ProcessCanControl(context);//执行 CAN 收到的人工控制请求。
@@ -2041,10 +2059,9 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     // 协议层先解析一帧请求，再由气源应用层执行控制、参数持久化或EEPROM日志读取。
     if (!A_HmiLog_IsBusy(&context->hmi_log))
     {
-        A_Hmi_Refresh(&context->hmi, &context->system, now_ms);
+        A_Hmi_Refresh(&context->hmi, system, now_ms);
     }
     // 查询期间暂停监控控件轮询刷新，把SCI9带宽优先让给日志清表和逐行发送。
-    F_GasRuntime_Idle(&context->runtime_service);//把本周期剩余空闲处理转交硬件平台层。
 }
 
 /*

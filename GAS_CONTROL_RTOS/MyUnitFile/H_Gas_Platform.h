@@ -51,14 +51,6 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context);
 uint32_t H_GasPlatform_Millis(H_Gas_Platform_Context *context);
 
 /*
- * 函数名：H_GasPlatform_Idle。
- * 说明：执行指定硬件实例的空闲处理。
- * 输入：context 为硬件逻辑层上下文指针。
- * 输出：无。
- */
-void H_GasPlatform_Idle(H_Gas_Platform_Context *context);
-
-/*
  * 函数名：H_GasPlatform_SensorTxStart。
  * 说明：启动压力传感器 RS485 异步发送。
  * 输入：context 为硬件上下文；data 为发送缓冲区；length 为发送字节数。

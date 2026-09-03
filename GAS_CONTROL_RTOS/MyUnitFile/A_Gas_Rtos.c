@@ -21,17 +21,17 @@ static void F_GasRtos_ControlTask(void *argument)
     A_Gas_Rtos_Context *context = (A_Gas_Rtos_Context *) argument; // 当前作用域变量，用于保存模块上下文指针。
     TickType_t last_wake_tick; // 当前作用域变量，用于保存当前处理数据。
 
-    if (context == NULL)
+    if ((context == NULL) || (context->gas_control == NULL))
     {
         vTaskDelete(NULL);
         return;
     }
 
-    A_GasControl_Init(&context->gas_control);
+    A_GasControl_Init(context->gas_control);
     last_wake_tick = xTaskGetTickCount(); // 当前作用域变量，用于保存当前处理数据。
     for (;;)
     {
-        A_GasControl_Task(&context->gas_control);
+        A_GasControl_Task(context->gas_control);
         vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(A_GAS_RTOS_CONTROL_PERIOD_MS));
         // 使用绝对周期延时减少任务执行时间波动导致的长期漂移。
     }
@@ -40,17 +40,19 @@ static void F_GasRtos_ControlTask(void *argument)
 /*
  * 函数名：A_GasRtos_Start。
  * 说明：使用调用者提供的上下文静态创建气源控制任务，然后启动FreeRTOS调度器。
- * 输入：context为FreeRTOS气源应用上下文输入输出指针。
+ * 输入：context为FreeRTOS任务资源；gas_control为长期有效的气源业务实例。
  * 输出：任务创建失败或调度器异常返回时返回false；正常运行时函数不返回。
  */
-bool A_GasRtos_Start(A_Gas_Rtos_Context *context)
+bool A_GasRtos_Start(A_Gas_Rtos_Context *context,
+                     A_Gas_Control_Context *gas_control)
 {
-    if (context == NULL)
+    if ((context == NULL) || (gas_control == NULL))
     {
         return false;
     }
 
     (void) memset(context, 0, sizeof(*context));
+    context->gas_control = gas_control;
     context->control_task_handle = xTaskCreateStatic(F_GasRtos_ControlTask,
                                                      "GasControl",
                                                      A_GAS_RTOS_CONTROL_STACK_WORDS,

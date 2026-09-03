@@ -34,7 +34,10 @@ static void F_ModbusPoll_FinishTransaction(F_Modbus_Poll_Context *context,
         return;
     }
 
-    H_ModbusPoll_Abort(&context->hardware);
+    if (context->platform != NULL)
+    {
+        H_GasPlatform_SensorAbort(context->platform);
+    }
     context->state = MODBUS_POLL_STATE_IDLE;
     context->result = result;
     context->result_pending = true;
@@ -87,7 +90,8 @@ bool F_ModbusPoll_Init(F_Modbus_Poll_Context *context,
 
     (void) memset(context, 0, sizeof(*context));
     context->state = MODBUS_POLL_STATE_IDLE;
-    return H_ModbusPoll_Init(&context->hardware, platform);
+    context->platform = platform;
+    return platform->sensor_uart_open;
 }
 
 /*
@@ -107,7 +111,8 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
     uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
     size_t response_length; // 当前作用域变量，用于保存有效数据长度。
 
-    if ((context == NULL) || (context->state != MODBUS_POLL_STATE_IDLE) ||
+    if ((context == NULL) || (context->platform == NULL) ||
+        (context->state != MODBUS_POLL_STATE_IDLE) ||
         context->result_pending || (slave_address == 0U) ||
         ((function_code != 0x03U) && (function_code != 0x04U)) ||
         (register_count == 0U))
@@ -142,9 +147,9 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
     context->result = MODBUS_POLL_RESULT_NONE;
     // 同一个截止时间覆盖发送和接收全过程，任一阶段停滞都能退出本次事务。
 
-    if (!H_ModbusPoll_TxStart(&context->hardware,
-                                context->request,
-                                sizeof(context->request)))
+    if (!H_GasPlatform_SensorTxStart(context->platform,
+                                     context->request,
+                                     sizeof(context->request)))
     {
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
         return false;
@@ -165,7 +170,8 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
     uint16_t received_crc; // 当前作用域变量，用于保存CRC校验值。
     uint16_t calculated_crc; // 当前作用域变量，用于保存CRC校验值。
 
-    if ((context == NULL) || (context->state == MODBUS_POLL_STATE_IDLE))
+    if ((context == NULL) || (context->platform == NULL) ||
+        (context->state == MODBUS_POLL_STATE_IDLE))
     {
         return;
     }
@@ -178,12 +184,12 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
 
     if (context->state == MODBUS_POLL_STATE_TX)
     {
-        if (H_ModbusPoll_TxDone(&context->hardware))
+        if (H_GasPlatform_SensorTxDone(context->platform))
         {
             // RS485 必须等最后一个发送字节完成并切回接收方向后，才允许启动响应接收。
-            if (H_ModbusPoll_RxStart(&context->hardware,
-                                       context->response,
-                                       context->expected_response_length))
+            if (H_GasPlatform_SensorRxStart(context->platform,
+                                            context->response,
+                                            context->expected_response_length))
             {
                 context->state = MODBUS_POLL_STATE_RX;
             }
@@ -196,7 +202,7 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
     }
 
     if ((context->state != MODBUS_POLL_STATE_RX) ||
-        !H_ModbusPoll_RxDone(&context->hardware))
+        !H_GasPlatform_SensorRxDone(context->platform))
     {
         return;
     }

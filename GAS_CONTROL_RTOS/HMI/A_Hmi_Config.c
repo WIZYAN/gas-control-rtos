@@ -656,18 +656,21 @@ static void A_HmiConfig_RequestDialogRefresh(A_Hmi_Config_Context *context)
 
 /*
  * 函数名：A_HmiConfig_Init。
- * 说明：初始化串口屏参数编辑模块并关联已有HMI通信实例。
- * 输入：context为参数模块上下文；hmi为已经初始化或即将初始化的HMI应用实例。
+ * 说明：初始化串口屏参数编辑模块，并关联已有HMI协议层和SCI9硬件层实例。
+ * 输入：context为参数模块上下文；transport和hardware为配对的HMI协议及SCI9硬件实例。
  * 输出：参数有效时返回true，否则返回false。
  */
-bool A_HmiConfig_Init(A_Hmi_Config_Context *context, A_Hmi_Context *hmi)
+bool A_HmiConfig_Init(A_Hmi_Config_Context *context,
+                      F_Hmi_Context *transport,
+                      H_Hmi_Context *hardware)
 {
-    if ((context == NULL) || (hmi == NULL))
+    if ((context == NULL) || (transport == NULL) || (hardware == NULL))
     {
         return false;
     }
     (void) memset(context, 0, sizeof(*context));
-    context->hmi = hmi;
+    context->transport = transport;
+    context->hardware = hardware;
     return true;
 }
 
@@ -680,7 +683,7 @@ bool A_HmiConfig_Init(A_Hmi_Config_Context *context, A_Hmi_Context *hmi)
 bool A_HmiConfig_Open(A_Hmi_Config_Context *context,
                       const Gas_Config *config)
 {
-    if ((context == NULL) || (config == NULL) || (context->hmi == NULL))
+    if ((context == NULL) || (config == NULL) || (context->transport == NULL))
     {
         return false;
     }
@@ -813,18 +816,18 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     A_Hmi_Config_Input_Result input_result; // 当前作用域变量，用于保存操作结果。
     A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
-    if ((context == NULL) || (current_config == NULL) || (context->hmi == NULL))
+    if ((context == NULL) || (current_config == NULL) || (context->transport == NULL))
     {
         return;
     }
-    if (!A_Hmi_PeekTextEvent(context->hmi, &page_id, &control_id) ||
+    if (!F_Hmi_PeekTextEvent(context->transport, &page_id, &control_id) ||
         (page_id != A_HMI_CONFIG_PAGE_ID) ||
         (control_id < A_HMI_CONFIG_TEXT_BASE) ||
         (control_id >= (A_HMI_CONFIG_TEXT_BASE + A_HMI_CONFIG_TEXT_COUNT)))
     {
         return;
     }
-    length = A_Hmi_TakeTextEvent(context->hmi,
+    length = F_Hmi_TakeTextEvent(context->transport,
                                  &page_id,
                                  &control_id,
                                  text,
@@ -974,7 +977,7 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
  */
 bool A_HmiConfig_OpenLogClear(A_Hmi_Config_Context *context, uint16_t log_count)
 {
-    if ((context == NULL) || (context->hmi == NULL) || !context->active)
+    if ((context == NULL) || (context->transport == NULL) || !context->active)
     {
         return false;
     }
@@ -1114,7 +1117,7 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
     uint16_t control_id; // 当前作用域变量，用于保存串口屏控件标识。
     uint8_t slot; // 当前作用域变量，用于保存数组或队列槽位。
 
-    if ((context == NULL) || !context->active || (context->hmi == NULL))
+    if ((context == NULL) || !context->active || (context->transport == NULL))
     {
         return;
     }
@@ -1147,7 +1150,8 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
                                                        sizeof(text));
             slot = 1U;
         }
-        if ((length != 0U) && A_Hmi_SendText(context->hmi,
+        if ((length != 0U) && F_Hmi_SendText(context->transport,
+                                             context->hardware,
                                              A_HMI_LOG_CLEAR_PAGE_ID,
                                              control_id,
                                              text,
@@ -1224,7 +1228,8 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
         }
     }
 
-    if ((length != 0U) && A_Hmi_SendText(context->hmi,
+    if ((length != 0U) && F_Hmi_SendText(context->transport,
+                                          context->hardware,
                                           page_id,
                                           control_id,
                                           fixed_text,

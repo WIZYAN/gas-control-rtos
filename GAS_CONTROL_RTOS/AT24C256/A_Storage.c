@@ -7,8 +7,6 @@
 
 #include "A_Storage.h"
 
-#include <string.h>
-
 #include "hal_data.h"
 
 /*
@@ -24,13 +22,11 @@ bool A_Storage_Init(A_Storage_Context *context)
         return false;
     }
 
-    (void) memset(context, 0, sizeof(*context));
-    context->ready = F_At24c256_Init(&context->device,
-                                   AT24C_SCL,
-                                   AT24C_SDA,
-                                   AT24C_WP,
-                                   AT24C256_DEFAULT_ADDRESS_7BIT);
-    return context->ready;
+    return F_At24c256_Init(context,
+                          AT24C_SCL,
+                          AT24C_SDA,
+                          AT24C_WP,
+                          AT24C256_DEFAULT_ADDRESS_7BIT);
 }
 
 /*
@@ -44,8 +40,7 @@ bool A_Storage_Read(A_Storage_Context *context,
                          uint8_t *buffer,
                          size_t length)
 {
-    return ((context != NULL) && context->ready &&
-            F_At24c256_Read(&context->device, address, buffer, length));
+    return F_At24c256_Read(context, address, buffer, length);
 }
 
 /*
@@ -59,8 +54,7 @@ bool A_Storage_Write(A_Storage_Context *context,
                           const uint8_t *data,
                           size_t length)
 {
-    return ((context != NULL) && context->ready &&
-            F_At24c256_Write(&context->device, address, data, length));
+    return F_At24c256_Write(context, address, data, length);
 }
 
 /*
@@ -73,6 +67,5 @@ bool A_Storage_EraseRange(A_Storage_Context *context,
                           uint16_t address,
                           size_t length)
 {
-    return ((context != NULL) && context->ready &&
-            F_At24c256_EraseRange(&context->device, address, length));
+    return F_At24c256_EraseRange(context, address, length);
 }

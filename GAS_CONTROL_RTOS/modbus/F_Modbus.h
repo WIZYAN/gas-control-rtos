@@ -21,7 +21,6 @@
 // 外部 Modbus 功能层上下文，保存寄存器表、从站地址以及最近一次写寄存器事件。
 typedef struct
 {
-    H_Modbus_Context *hardware; // 下层 SCI0 Modbus 硬件实例指针。
     uint16_t input_register[F_MODBUS_INPUT_REGISTER_COUNT]; // 功能码 04 只读输入寄存器表。
     uint16_t holding_register[F_MODBUS_HOLDING_REGISTER_COUNT]; // 功能码 03/06/10 保持寄存器表。
     uint16_t write_start_offset; // 最近一次主站写入的保持寄存器起始偏移。
@@ -43,26 +42,27 @@ bool F_Modbus_Init(F_Modbus_Context *context,
 /*
  * 函数名：F_Modbus_Deinit。
  * 说明：通过硬件层关闭SCI0外部Modbus接口并清除功能层状态。
- * 输入：context为功能层上下文输入输出指针。
+ * 输入：context为功能层上下文；hardware为其所属SCI0硬件层实例。
  * 输出：接口已经关闭或成功关闭时返回true，否则返回false。
  */
-bool F_Modbus_Deinit(F_Modbus_Context *context);
+bool F_Modbus_Deinit(F_Modbus_Context *context, H_Modbus_Context *hardware);
 
 /*
  * 函数名：F_Modbus_HasFault。
  * 说明：逐层查询SCI0外部Modbus是否存在硬件通讯故障。
- * 输入：context为只读功能层上下文。
+ * 输入：context为只读功能层上下文；hardware为只读SCI0硬件层实例。
  * 输出：功能层无硬件实例或硬件故障时返回true，否则返回false。
  */
-bool F_Modbus_HasFault(const F_Modbus_Context *context);
+bool F_Modbus_HasFault(const F_Modbus_Context *context,
+                       const H_Modbus_Context *hardware);
 
 /*
  * 函数名：F_Modbus_Task。
  * 说明：处理一帧外部 Modbus RTU 请求，支持功能码 03、04、06 和 10。
- * 输入：context 为功能层上下文输入输出指针。
+ * 输入：context为功能层上下文；hardware为其所属SCI0硬件层实例。
  * 输出：无；响应通过硬件层发送，写寄存器事件记录在 context 中。
  */
-void F_Modbus_Task(F_Modbus_Context *context);
+void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware);
 
 /*
  * 函数名：F_Modbus_SetInputRegister。

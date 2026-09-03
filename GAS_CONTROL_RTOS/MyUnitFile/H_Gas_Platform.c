@@ -387,21 +387,6 @@ uint32_t H_GasPlatform_Millis(H_Gas_Platform_Context *context)
 }
 
 /*
- * 函数名：H_GasPlatform_Idle。
- * 说明：提供指定硬件实例的主循环空闲处理钩子，后续可用于看门狗或低功耗处理。
- * 输入：context 为硬件逻辑层上下文指针，当前实现仅检查其有效性。
- * 输出：无。
- */
-void H_GasPlatform_Idle(H_Gas_Platform_Context *context)
-{
-    if (context != NULL)
-    {
-        __NOP();
-        // 当前仅执行空操作，接入看门狗后可在此处喂狗。
-    }
-}
-
-/*
  * 函数名：H_GasPlatform_SensorTxStart。
  * 说明：切换 RS485 到发送方向，并通过 SCI1 异步发送一帧传感器请求。
  * 输入：context 为硬件上下文；data 为只读发送缓冲区；length 为发送字节数。

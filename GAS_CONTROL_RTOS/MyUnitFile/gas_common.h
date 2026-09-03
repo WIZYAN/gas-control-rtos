@@ -275,12 +275,6 @@ typedef struct
     gas_mode_t mode;                           // 当前系统运行模式。
     gas_switch_state_t switch_state;           // 自动切瓶状态机当前状态。
     uint8_t active_index;                      // 当前工作瓶索引，0～5；无工作瓶时为 GAS_NO_ACTIVE_CYLINDER。
-    uint8_t switch_old_index;                  // 本次切换的原工作瓶索引。
-    uint8_t switch_new_index;                  // 本次切换的目标备用瓶索引。
-    uint8_t low_sample_count;                  // 当前低压确认累计的独立有效样本数。
-    uint32_t low_last_sample_ms;               // 已计入低压确认的最后一个压力样本时间戳。
-    uint32_t switch_enter_ms;                  // 进入当前切瓶子状态时的毫秒时间戳。
-    uint32_t low_start_ms;                     // 本次低压确认开始的毫秒时间戳。
     uint32_t alarm_bits;                       // 系统运行期报警位图；bit0～bit10依次表示无备用瓶、工作瓶传感器异常、传感器通信异常、阀互锁、多个供气阀、人工阀操作中止、外部CAN异常、平台未就绪、存储异常、外部Modbus异常和HMI通信异常；0表示对应报警未发生，1表示报警有效，bit11～bit31保留为0。
     bool platform_ready; // 硬件平台和安全使能是否允许进入自动模式；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } Gas_System;

@@ -214,18 +214,19 @@ static uint32_t A_Can_GetCylinderMask(const Gas_System *system, uint8_t kind)
 /*
  * 函数名：A_Can_ReadValue。
  * 说明：将一个CAN数据地址映射为当前压力、状态、参数、命令结果或日志原始数据。
- * 输入：context为CAN上下文；system为系统状态；comm_mode为通讯模式；address为数据地址；value为32位输出指针。
+ * 输入：context为CAN上下文；system为系统状态；config为当前生效参数；comm_mode为通讯模式；address和value为地址及输出。
  * 输出：地址可读且成功输出时返回true，不存在的地址返回false。
  */
 static bool A_Can_ReadValue(const A_Can_Context *context,
                             const Gas_System *system,
+                            const Gas_Config *config,
                             gas_external_comm_mode_t comm_mode,
                             uint16_t address,
                             uint32_t *value)
 {
     uint16_t offset; // 当前作用域变量，用于保存数据偏移量。
 
-    if ((context == NULL) || (system == NULL) || (value == NULL))
+    if ((context == NULL) || (system == NULL) || (config == NULL) || (value == NULL))
     {
         return false;
     }
@@ -268,16 +269,16 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
         case A_CAN_ADDRESS_SUPPLY_MASK: *value = A_Can_GetCylinderMask(system, 0U); return true;
         case A_CAN_ADDRESS_TEST_MASK: *value = A_Can_GetCylinderMask(system, 2U); return true;
         case A_CAN_ADDRESS_COMM_MODE: *value = (uint32_t) comm_mode; return true;
-        case A_CAN_ADDRESS_SWITCH_PRESSURE: *value = A_Can_FloatToRaw(context->staged_config.switch_pressure_mpa); return true;
-        case A_CAN_ADDRESS_SWITCH_RELEASE: *value = A_Can_FloatToRaw(context->staged_config.switch_release_mpa); return true;
-        case A_CAN_ADDRESS_READY_MIN_PRESSURE: *value = A_Can_FloatToRaw(context->staged_config.ready_min_pressure_mpa); return true;
-        case A_CAN_ADDRESS_PRESSURE_MAX: *value = A_Can_FloatToRaw(context->staged_config.pressure_max_mpa); return true;
-        case A_CAN_ADDRESS_VALVE_PULL_IN_TIME: *value = context->staged_config.valve_pull_in_time_ms; return true;
-        case A_CAN_ADDRESS_LOW_CONFIRM_TIME: *value = context->staged_config.low_confirm_time_ms; return true;
-        case A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES: *value = context->staged_config.low_confirm_samples; return true;
-        case A_CAN_ADDRESS_VALVE_CLOSE_WAIT: *value = context->staged_config.valve_close_wait_ms; return true;
-        case A_CAN_ADDRESS_VALVE_OPEN_WAIT: *value = context->staged_config.valve_open_wait_ms; return true;
-        case A_CAN_ADDRESS_PRESSURE_FRESH: *value = context->staged_config.pressure_fresh_ms; return true;
+        case A_CAN_ADDRESS_SWITCH_PRESSURE: *value = A_Can_FloatToRaw(config->switch_pressure_mpa); return true;
+        case A_CAN_ADDRESS_SWITCH_RELEASE: *value = A_Can_FloatToRaw(config->switch_release_mpa); return true;
+        case A_CAN_ADDRESS_READY_MIN_PRESSURE: *value = A_Can_FloatToRaw(config->ready_min_pressure_mpa); return true;
+        case A_CAN_ADDRESS_PRESSURE_MAX: *value = A_Can_FloatToRaw(config->pressure_max_mpa); return true;
+        case A_CAN_ADDRESS_VALVE_PULL_IN_TIME: *value = config->valve_pull_in_time_ms; return true;
+        case A_CAN_ADDRESS_LOW_CONFIRM_TIME: *value = config->low_confirm_time_ms; return true;
+        case A_CAN_ADDRESS_LOW_CONFIRM_SAMPLES: *value = config->low_confirm_samples; return true;
+        case A_CAN_ADDRESS_VALVE_CLOSE_WAIT: *value = config->valve_close_wait_ms; return true;
+        case A_CAN_ADDRESS_VALVE_OPEN_WAIT: *value = config->valve_open_wait_ms; return true;
+        case A_CAN_ADDRESS_PRESSURE_FRESH: *value = config->pressure_fresh_ms; return true;
         case A_CAN_ADDRESS_COMMAND: *value = 0U; return true;
         case A_CAN_ADDRESS_COMMAND_RESULT: *value = (uint32_t) context->command_result; return true;
         case A_CAN_ADDRESS_CONFIG_COMMIT: *value = 0U; return true;
@@ -416,11 +417,12 @@ static bool A_Can_AssignParameterCandidate(Gas_Config *candidate,
 /*
  * 函数名：A_Can_StartConfigWrite。
  * 说明：校验单地址候选参数并建立等待EEPROM保存和业务应用的延迟写请求。
- * 输入：context为CAN上下文；system为系统状态；request为原写请求；candidate为待校验参数。
+ * 输入：context为CAN上下文；system为系统状态；config为当前生效参数；request为原写请求；candidate为待校验参数。
  * 输出：需要立即应答时返回true并写入result和detail；成功建立延迟请求时返回false。
  */
 static bool A_Can_StartConfigWrite(A_Can_Context *context,
                                    const Gas_System *system,
+                                   const Gas_Config *config,
                                    const F_Can_Request *request,
                                    const Gas_Config *candidate,
                                    A_Can_Write_Result *result,
@@ -445,7 +447,7 @@ static bool A_Can_StartConfigWrite(A_Can_Context *context,
         *detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
         return true;
     }
-    if (memcmp(candidate, &context->staged_config, sizeof(*candidate)) == 0)
+    if (memcmp(candidate, config, sizeof(*candidate)) == 0)
     {
         context->config_result = GAS_EXTERNAL_CONFIG_SUCCESS;
         *result = A_CAN_WRITE_SUCCESS;
@@ -508,11 +510,12 @@ static bool A_Can_DecodeControlAddress(uint16_t address,
 /*
  * 函数名：A_Can_WriteValue。
  * 说明：处理一条CAN写请求；简单操作立即给出结果，参数和阀门操作等待业务层最终完成后应答。
- * 输入：context为CAN上下文；system为系统状态；comm_mode为通讯模式；request为原写请求；result和detail为立即结果输出。
+ * 输入：context为CAN上下文；system为系统状态；config为当前生效参数；comm_mode为通讯模式；request、result和detail为请求及结果。
  * 输出：需要立即发送功能码6响应时返回true；已经建立延迟业务请求时返回false。
  */
 static bool A_Can_WriteValue(A_Can_Context *context,
                              const Gas_System *system,
+                             const Gas_Config *config,
                              gas_external_comm_mode_t comm_mode,
                              const F_Can_Request *request,
                              A_Can_Write_Result *result,
@@ -535,7 +538,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
         ((request->data_address >= A_CAN_ADDRESS_VALVE_PULL_IN_TIME) &&
          (request->data_address <= A_CAN_ADDRESS_PRESSURE_FRESH)))
     {
-        candidate = context->staged_config;
+        candidate = *config;
         if (!A_Can_AssignParameterCandidate(&candidate,
                                             request->data_address,
                                             request->value,
@@ -547,6 +550,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
         }
         return A_Can_StartConfigWrite(context,
                                       system,
+                                      config,
                                       request,
                                       &candidate,
                                       result,
@@ -578,14 +582,15 @@ static bool A_Can_WriteValue(A_Can_Context *context,
             *detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
             return true;
         }
-        candidate = context->staged_config;
+        candidate = *config;
         A_GasConfig_LoadDefaults(&candidate);
-        candidate.low_warning_pressure_mpa = context->staged_config.low_warning_pressure_mpa;
-        candidate.manual_exhaust_time_ms = context->staged_config.manual_exhaust_time_ms;
-        candidate.test_valve_max_time_ms = context->staged_config.test_valve_max_time_ms;
+        candidate.low_warning_pressure_mpa = config->low_warning_pressure_mpa;
+        candidate.manual_exhaust_time_ms = config->manual_exhaust_time_ms;
+        candidate.test_valve_max_time_ms = config->test_valve_max_time_ms;
         // 恢复默认只改变CAN公开的10项，密码页管理的三项安全参数保持不变。
         return A_Can_StartConfigWrite(context,
                                       system,
+                                      config,
                                       request,
                                       &candidate,
                                       result,
@@ -655,6 +660,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
         uint32_t read_value; // 当前作用域变量，用于保存当前处理值。
         if (A_Can_ReadValue(context,
                             system,
+                            config,
                             comm_mode,
                             request->data_address,
                             &read_value))
@@ -673,7 +679,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
 
 /*
  * 函数名：A_Can_Init。
- * 说明：初始化CAN0、自定义协议和当前运行参数镜像。
+ * 说明：校验当前运行参数，并初始化CAN0和自定义协议。
  * 输入：context为待初始化上下文；config为当前有效运行参数。
  * 输出：硬件层和功能层均初始化成功时返回true，否则返回false。
  */
@@ -685,7 +691,6 @@ bool A_Can_Init(A_Can_Context *context, const Gas_Config *config)
         return false;
     }
     (void) memset(context, 0, sizeof(*context));
-    context->staged_config = *config;
     context->command_result = GAS_EXTERNAL_RESULT_IDLE;
     context->config_result = GAS_EXTERNAL_CONFIG_IDLE;
     context->log_result = GAS_EXTERNAL_LOG_IDLE;
@@ -710,7 +715,7 @@ bool A_Can_Deinit(A_Can_Context *context)
 {
     bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
     if (context == NULL) { return false; }
-    success = F_CanProtocol_Deinit(&context->function);
+    success = F_CanProtocol_Deinit(&context->function, &context->hardware);
     context->ready = false;
     return success;
 }
@@ -718,11 +723,12 @@ bool A_Can_Deinit(A_Can_Context *context)
 /*
  * 函数名：A_Can_QueueReadResponses。
  * 说明：把连续读请求按发送队列当前空闲量分批转换为单地址响应，队列满时保留进度供后续周期继续。
- * 输入：context为CAN上下文；system为只读系统状态；comm_mode为当前外部通讯模式。
+ * 输入：context为CAN上下文；system为只读系统状态；config为当前生效参数；comm_mode为当前外部通讯模式。
  * 输出：无；成功入队的地址从待发送数量中扣除，未入队部分保存在context中。
  */
 static void A_Can_QueueReadResponses(A_Can_Context *context,
                                      const Gas_System *system,
+                                     const Gas_Config *config,
                                      gas_external_comm_mode_t comm_mode)
 {
     while (context->read_response_remaining > 0U)
@@ -730,7 +736,7 @@ static void A_Can_QueueReadResponses(A_Can_Context *context,
         uint16_t address = context->read_response_address; // 当前作用域变量，用于保存存储或寄存器地址。
         uint32_t value; // 当前作用域变量，用于保存当前处理值。
 
-        if (!A_Can_ReadValue(context, system, comm_mode, address, &value))
+        if (!A_Can_ReadValue(context, system, config, comm_mode, address, &value))
         {
             value = 0xFFFFFFFFUL;
         }
@@ -756,21 +762,22 @@ static void A_Can_QueueReadResponses(A_Can_Context *context,
  */
 void A_Can_Task(A_Can_Context *context,
                 const Gas_System *system,
+                const Gas_Config *config,
                 gas_external_comm_mode_t comm_mode)
 {
     F_Can_Request request; // 当前作用域变量，用于保存待处理请求。
 
-    if ((context == NULL) || (system == NULL) || !context->ready)
+    if ((context == NULL) || (system == NULL) || (config == NULL) || !context->ready)
     {
         return;
     }
-    F_CanProtocol_Task(&context->function);
+    F_CanProtocol_Task(&context->function, &context->hardware);
     if (!A_Can_QueueDeferredWriteResponse(context))
     {
         return;
     }
     // EEPROM或阀门业务已经给出最终结果后，在这里持续重试入队，成功响应不会因发送队列短时占满而丢失。
-    A_Can_QueueReadResponses(context, system, comm_mode);
+    A_Can_QueueReadResponses(context, system, config, comm_mode);
     if (context->read_response_remaining > 0U)
     {
         return;
@@ -787,7 +794,7 @@ void A_Can_Task(A_Can_Context *context,
         context->read_response_remaining = request.data_length;
         context->read_response_target_type = request.source_type;
         context->read_response_target_address = request.source_address;
-        A_Can_QueueReadResponses(context, system, comm_mode);
+        A_Can_QueueReadResponses(context, system, config, comm_mode);
         // 连续读响应超过队列容量时分多个主循环周期发送，不再因队列暂满丢弃后续地址。
     }
     else
@@ -799,6 +806,7 @@ void A_Can_Task(A_Can_Context *context,
         A_Can_RecordWriteAttempt(context, request.data_address, request.value);
         immediate = A_Can_WriteValue(context,
                                      system,
+                                     config,
                                      comm_mode,
                                      &request,
                                      &result,
@@ -808,20 +816,6 @@ void A_Can_Task(A_Can_Context *context,
             (void) A_Can_SetImmediateWriteResult(context, &request, result, detail);
         }
     }
-}
-
-/*
- * 函数名：A_Can_UpdateConfig。
- * 说明：用当前生效参数同时刷新CAN读值和下一轮写入暂存区。
- * 输入：context为CAN上下文；config为当前有效运行参数。
- * 输出：参数有效且更新成功时返回true，否则返回false。
- */
-bool A_Can_UpdateConfig(A_Can_Context *context, const Gas_Config *config)
-{
-    if ((context == NULL) || (config == NULL) ||
-        (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID)) { return false; }
-    context->staged_config = *config;
-    return true;
 }
 
 /*
@@ -988,5 +982,5 @@ bool A_Can_IsReady(const A_Can_Context *context)
 bool A_Can_HasFault(const A_Can_Context *context)
 {
     return ((context == NULL) || !context->ready ||
-            F_CanProtocol_HasFault(&context->function));
+            F_CanProtocol_HasFault(&context->function, &context->hardware));
 }

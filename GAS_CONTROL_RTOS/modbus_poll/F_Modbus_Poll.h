@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "H_Modbus_Poll.h"
+#include "H_Gas_Platform.h"
 
 #define MODBUS_POLL_REQUEST_SIZE       (8U)  // 功能码 03/04 读寄存器请求帧的固定字节数。
 #define MODBUS_POLL_RESPONSE_MAX_SIZE  (64U) // 内部传感器响应帧缓存的最大字节数。
@@ -40,7 +40,7 @@ typedef enum
 // 内部 Modbus 主站功能层上下文，保存单笔非阻塞事务及其收发缓冲区。
 typedef struct
 {
-    H_Modbus_Poll_Context hardware;             // 当前事务使用的 SCI1 硬件接口。
+    H_Gas_Platform_Context *platform;            // 当前事务直接使用的气源硬件平台，不再经过只转发调用的中间上下文。
     uint8_t request[MODBUS_POLL_REQUEST_SIZE];          // 当前请求帧缓冲区。
     uint8_t response[MODBUS_POLL_RESPONSE_MAX_SIZE];    // 当前响应帧缓冲区。
     uint8_t slave_address;                              // 当前请求的从站地址。

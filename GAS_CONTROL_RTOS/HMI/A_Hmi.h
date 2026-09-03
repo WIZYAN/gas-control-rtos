@@ -44,6 +44,7 @@
 // 串口屏应用层上下文，集中保存协议实例和轮询刷新位置。
 typedef struct
 {
+    H_Hmi_Context hardware;         // SCI9硬件收发实例，由应用层与协议层并列持有。
     F_Hmi_Context function;        // 大彩协议解析和发送功能实例。
     float pressure_refresh_mpa[GAS_PRESSURE_SENSOR_COUNT]; // 压力双层清除与写入两槽之间使用的数值快照。
     gas_pressure_quality_t pressure_refresh_quality[GAS_PRESSURE_SENSOR_COUNT]; // 与压力数值快照对应的数据质量。

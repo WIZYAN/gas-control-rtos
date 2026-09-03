@@ -63,17 +63,6 @@ uint32_t H_GasPlatform_Millis(H_Gas_Platform_Context *context)
 }
 
 /*
- * 函数名：H_GasPlatform_Idle。
- * 说明：提供无硬件动作的测试空闲钩子。
- * 输入：context 为硬件上下文。
- * 输出：无。
- */
-void H_GasPlatform_Idle(H_Gas_Platform_Context *context)
-{
-    (void) context;
-}
-
-/*
  * 函数名：H_GasPlatform_SensorTxStart。
  * 说明：模拟启动内部传感器发送。
  * 输入：context 为上下文；data 为数据；length 为长度。
@@ -287,7 +276,7 @@ bool A_Storage_Init(A_Storage_Context *context)
 {
     if (context == NULL) return false;
     (void) memset(context, 0, sizeof(*context));
-    context->ready = true;
+    context->initialized = true;
     return true;
 }
 
@@ -299,7 +288,7 @@ bool A_Storage_Init(A_Storage_Context *context)
  */
 bool A_Storage_Read(A_Storage_Context *context, uint16_t address, uint8_t *data, size_t length)
 {
-    if ((context == NULL) || !context->ready || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
+    if ((context == NULL) || !context->initialized || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
     (void) memcpy(data, &g_test_state.eeprom[address], length);
     return true;
 }
@@ -312,7 +301,7 @@ bool A_Storage_Read(A_Storage_Context *context, uint16_t address, uint8_t *data,
  */
 bool A_Storage_Write(A_Storage_Context *context, uint16_t address, const uint8_t *data, size_t length)
 {
-    if ((context == NULL) || !context->ready || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
+    if ((context == NULL) || !context->initialized || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
     (void) memcpy(&g_test_state.eeprom[address], data, length);
     return true;
 }
@@ -325,7 +314,7 @@ bool A_Storage_Write(A_Storage_Context *context, uint16_t address, const uint8_t
  */
 bool A_Storage_EraseRange(A_Storage_Context *context, uint16_t address, size_t length)
 {
-    if ((context == NULL) || !context->ready ||
+    if ((context == NULL) || !context->initialized ||
         (((size_t) address + length) > sizeof(g_test_state.eeprom)))
     {
         return false;
@@ -572,7 +561,7 @@ static void Test_SeedPressure(A_Gas_Control_Context *context, uint8_t index, flo
 {
     context->system.cylinder[index].pressure_mpa = pressure;
     context->system.cylinder[index].pressure_quality = GAS_PRESSURE_VALID;
-    context->system.cylinder[index].pressure_timestamp_ms = context->runtime_service.platform.millis;
+    context->system.cylinder[index].pressure_timestamp_ms = context->platform.millis;
 }
 
 /*
@@ -611,7 +600,7 @@ static void Test_Prepare(A_Gas_Control_Context *context)
  */
 static void Test_Advance(A_Gas_Control_Context *context, uint32_t milliseconds)
 {
-    context->runtime_service.platform.millis += milliseconds;
+    context->platform.millis += milliseconds;
     A_GasControl_Task(context);
 }
 
@@ -625,16 +614,17 @@ static void Test_SetMaintenanceState(A_Gas_Control_Context *context)
 {
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
-    F_ValveControl_AllOff(&context->runtime_service.platform, &context->system);
-    (void) memset(&context->total_test, 0, sizeof(context->total_test));
+    F_ValveControl_AllOff(&context->platform, &context->system);
+    context->total_test_pending_open_mask = 0U;
+    (void) memset(context->test_open_not_before_ms, 0, sizeof(context->test_open_not_before_ms));
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
         context->system.cylinder[index].state = GAS_CYL_DISABLED;
         context->system.cylinder[index].qualification_passed = false;
     }
     context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
-    context->system.switch_old_index = GAS_NO_ACTIVE_CYLINDER;
-    context->system.switch_new_index = GAS_NO_ACTIVE_CYLINDER;
+    context->switch_old_index = GAS_NO_ACTIVE_CYLINDER;
+    context->switch_new_index = GAS_NO_ACTIVE_CYLINDER;
     context->system.switch_state = GAS_SWITCH_IDLE;
 }
 
@@ -1027,8 +1017,8 @@ static void Test_DefaultCanProtocol(void)
     request->data[2] = F_CanProtocol_CalculateCrc(request->id, request->data);
     context.external_can.hardware.receive_head = 1U;
 
-    A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
-    A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
+    A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
+    A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
     assert(g_test_state.can_tx_count == 1U);
     assert(((g_test_state.can_tx.id >> 24U) & 0x1FU) == F_CAN_FUNCTION_READ_RESPONSE);
     assert(((g_test_state.can_tx.id >> 7U) & 0x1FU) == F_CAN_LOCAL_TYPE);
@@ -1059,8 +1049,8 @@ static void Test_DefaultCanProtocol(void)
             (uint8_t) ((receive_head + 1U) % H_CAN_RX_QUEUE_CAPACITY);
 
         previous_tx_count = g_test_state.can_tx_count; // 当前作用域变量，用于保存数量计数。
-        A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
-        A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
+        A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
+        A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
         assert(g_test_state.can_tx_count == (previous_tx_count + 1U));
         assert(g_test_state.can_tx.data[0] == (uint8_t) address);
         assert(g_test_state.can_tx.data[1] == (uint8_t) (address >> 8U));
@@ -1086,13 +1076,13 @@ static void Test_DefaultCanProtocol(void)
     context.external_can.hardware.receive_head =
         (uint8_t) ((context.external_can.hardware.receive_head + 1U) % H_CAN_RX_QUEUE_CAPACITY);
     previous_tx_count = g_test_state.can_tx_count; // 当前作用域变量，用于保存数量计数。
-    A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
+    A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
 
     for (address = A_CAN_ADDRESS_QUALITY_BASE;
          address <= A_CAN_ADDRESS_WRITE_SEQUENCE;
          ++address)
     {
-        A_Can_Task(&context.external_can, &context.system, context.external_comm_mode);
+        A_Can_Task(&context.external_can, &context.system, &context.config, context.external_comm_mode);
         assert(g_test_state.can_tx_count == ++previous_tx_count);
         assert(g_test_state.can_tx.data[0] == (uint8_t) address);
         assert(g_test_state.can_tx.data[1] == (uint8_t) (address >> 8U));
@@ -1150,16 +1140,16 @@ static void Test_CanDirectWriteAndControl(void)
     context.system.cylinder[0].pressure_mpa = 3.0F;
     context.system.cylinder[0].pressure_quality = GAS_PRESSURE_VALID;
     context.system.cylinder[0].pressure_timestamp_ms =
-        context.runtime_service.platform.millis;
+        context.platform.millis;
     context.system.active_index = 1U;
     context.system.cylinder[1].state = GAS_CYL_ACTIVE;
     context.system.cylinder[1].qualification_passed = true;
     context.system.cylinder[1].pressure_mpa = 3.0F;
     context.system.cylinder[1].pressure_quality = GAS_PRESSURE_VALID;
     context.system.cylinder[1].pressure_timestamp_ms =
-        context.runtime_service.platform.millis;
+        context.platform.millis;
     context.system.cylinder[1].supply_cmd = true;
-    context.runtime_service.platform.supply_state[1] = true;
+    context.platform.supply_state[1] = true;
     // 固定2号瓶为当前工作瓶，避免自动选择逻辑在测试CAN人工阀请求前占用1号瓶供气阀。
 
     Test_RunCanWrite(&context, A_CAN_ADDRESS_EXHAUST_CONTROL_BASE, 1U);
@@ -1169,7 +1159,7 @@ static void Test_CanDirectWriteAndControl(void)
     Test_RunCanWrite(&context, A_CAN_ADDRESS_TEST_CONTROL_BASE, 1U);
     assert(g_test_state.can_tx.data[4] == A_CAN_WRITE_SUCCESS);
     assert(!context.system.cylinder[0].test_cmd);
-    assert((context.total_test.pending_open_mask & 0x01U) != 0U);
+    assert((context.total_test_pending_open_mask & 0x01U) != 0U);
     Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert(context.system.total_test_cmd);
     Test_Advance(&context, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
@@ -1411,9 +1401,9 @@ static void Test_QualificationGate(void)
     assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
     assert(!context.system.cylinder[0].qualification_passed);
     assert(A_GasControl_SetTestValve(&context, 0U, true));
-    assert((context.total_test.pending_open_mask & 0x01U) != 0U);
+    assert((context.total_test_pending_open_mask & 0x01U) != 0U);
     assert(A_GasControl_SetTestValve(&context, 0U, false));
-    assert((context.total_test.pending_open_mask == 0U) &&
+    assert((context.total_test_pending_open_mask == 0U) &&
            !context.system.total_test_cmd &&
            !context.system.cylinder[0].test_cmd);
     // 分路尚未实际开启前收到关闭请求，必须撤销等待且不能残留总测试阀命令。
@@ -1438,15 +1428,15 @@ static void Test_QualificationGate(void)
     assert(!context.system.cylinder[0].qualification_passed);
     assert(!A_GasControl_SetQualificationPassed(&context, 0U, true));
 
-    context.runtime_service.platform.millis++;
+    context.platform.millis++;
     Test_SeedPressure(&context, 0U, 5.0F);
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_LOW_REPLACE);
-    context.runtime_service.platform.millis++;
+    context.platform.millis++;
     Test_SeedPressure(&context, 0U, 5.0F);
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_LOW_REPLACE);
-    context.runtime_service.platform.millis++;
+    context.platform.millis++;
     Test_SeedPressure(&context, 0U, 5.0F);
     A_GasControl_Task(&context);
     assert(context.system.cylinder[0].state == GAS_CYL_WAIT_TEST);
@@ -1474,7 +1464,7 @@ static void Test_StateAndSwitch(void)
     assert(context.system.cylinder[1].state == GAS_CYL_LOW_WARNING);
     Test_SeedPressure(&context, 1U, 1.0F);
     A_GasControl_Task(&context);
-    context.runtime_service.platform.millis += 100U;
+    context.platform.millis += 100U;
     Test_SeedPressure(&context, 1U, 1.0F);
     A_GasControl_Task(&context);
     A_GasControl_Task(&context);
@@ -1551,7 +1541,7 @@ static void Test_ManualAndDisabled(void)
     assert(context.system.active_index == 2U);
     assert(A_GasControl_SetCylinderDisabled(&context, 1U, false));
     assert(context.system.cylinder[1].state == GAS_CYL_INIT);
-    F_ValveControl_AllOff(&context.runtime_service.platform, &context.system);
+    F_ValveControl_AllOff(&context.platform, &context.system);
     context.system.mode = GAS_MODE_STOPPED;
     // V1.08删除人工整机停止入口，但内部故障锁定仍必须拒绝任何人工开阀。
     assert(!A_GasControl_StartExhaust(&context, 0U));
@@ -1577,7 +1567,7 @@ static void Test_PlatformReadyValveGate(void)
     assert(!context.system.cylinder[0].exhaust_cmd &&
            !context.system.cylinder[0].test_cmd &&
            !context.system.total_test_cmd &&
-           (context.total_test.pending_open_mask == 0U));
+           (context.total_test_pending_open_mask == 0U));
 
     Test_PushHmiFrame(&context, exhaust_on_frame, sizeof(exhaust_on_frame));
     A_GasControl_Task(&context);
@@ -1586,7 +1576,7 @@ static void Test_PlatformReadyValveGate(void)
     assert(!context.system.cylinder[0].exhaust_cmd &&
            !context.system.cylinder[0].test_cmd &&
            !context.system.total_test_cmd &&
-           (context.total_test.pending_open_mask == 0U));
+           (context.total_test_pending_open_mask == 0U));
     // 串口屏开阀事件必须在业务层被拒绝，不得留下延时开阀请求。
 
     Test_Prepare(&context);
@@ -1621,12 +1611,12 @@ static void Test_EmergencyAllOffRetry(void)
     Test_Prepare(&context);
     context.system.mode = GAS_MODE_STOPPED;
     context.system.active_index = 0U;
-    context.system.switch_new_index = 1U;
+    context.switch_new_index = 1U;
     context.system.switch_state = GAS_SWITCH_VERIFY_NEW;
     context.system.cylinder[0].supply_cmd = true;
     context.system.cylinder[1].supply_cmd = true;
-    context.runtime_service.platform.supply_state[0] = true;
-    context.runtime_service.platform.supply_state[1] = true;
+    context.platform.supply_state[0] = true;
+    context.platform.supply_state[1] = true;
     close_count = g_test_state.all_valves_off_count;
     g_test_state.all_valves_off_fail = true;
 
@@ -1636,8 +1626,8 @@ static void Test_EmergencyAllOffRetry(void)
     assert((context.system.alarm_bits & GAS_ALARM_PLATFORM_NOT_READY) != 0U);
     assert(context.system.cylinder[0].supply_cmd &&
            context.system.cylinder[1].supply_cmd);
-    assert(context.runtime_service.platform.supply_state[0] &&
-           context.runtime_service.platform.supply_state[1]);
+    assert(context.platform.supply_state[0] &&
+           context.platform.supply_state[1]);
     assert(g_test_state.all_valves_off_count == (close_count + 1U));
     // 全关失败时业务和硬件镜像均保留“可能仍开启”，不得误报已关闭。
 
@@ -1646,8 +1636,8 @@ static void Test_EmergencyAllOffRetry(void)
     assert(!context.emergency_close_pending);
     assert(!context.system.cylinder[0].supply_cmd &&
            !context.system.cylinder[1].supply_cmd);
-    assert(!context.runtime_service.platform.supply_state[0] &&
-           !context.runtime_service.platform.supply_state[1]);
+    assert(!context.platform.supply_state[0] &&
+           !context.platform.supply_state[1]);
     assert(g_test_state.all_valves_off_count == (close_count + 2U));
     // 故障解除后的下一周期必须自动重试成功，然后才同步清零两层镜像。
 }
@@ -1692,6 +1682,7 @@ static void Test_Hmi(void)
     A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
     A_Hmi_Context display; // 当前作用域变量，用于保存当前处理数据。
     F_Hmi_Context hmi; // 当前作用域变量，用于保存当前处理数据。
+    H_Hmi_Context hmi_hardware; // 独立SCI9硬件测试实例，由协议函数显式接收。
     uint16_t id; // 当前作用域变量，用于保存当前处理数据。
     uint8_t value; // 当前作用域变量，用于保存当前处理值。
     size_t index; // 当前作用域变量，用于保存遍历索引。
@@ -1716,29 +1707,29 @@ static void Test_Hmi(void)
     gas.hmi_log.edit_filter.time_enabled = false;
     Test_PushHmiFrame(&gas, filter_date_frame, sizeof(filter_date_frame));
     A_GasControl_Task(&gas);
-    assert((gas.hmi_log.edit_filter.start.year == 2026U) &&
-           (gas.hmi_log.edit_filter.start.month == 8U) &&
-           (gas.hmi_log.edit_filter.start.day == 22U) &&
+    assert((gas.hmi_log.edit_filter.start_year == 2026U) &&
+           (gas.hmi_log.edit_filter.start_month == 8U) &&
+           (gas.hmi_log.edit_filter.start_day == 22U) &&
            gas.hmi_log.edit_filter.time_enabled);
     // 输入任一合法日期或时间后必须自动启用限定时间，避免已输入的范围被“全部时间”忽略。
     Test_PushHmiFrame(&gas, filter_end_date_frame, sizeof(filter_end_date_frame));
     Test_PushHmiFrame(&gas, filter_event_query_frame, sizeof(filter_event_query_frame));
     A_GasControl_Task(&gas);
-    assert((gas.hmi_log.active_filter.end.year == 2026U) &&
-           (gas.hmi_log.active_filter.end.month == 8U) &&
-           (gas.hmi_log.active_filter.end.day == 23U));
+    assert((gas.hmi_log.active_filter.end_year == 2026U) &&
+           (gas.hmi_log.active_filter.end_month == 8U) &&
+           (gas.hmi_log.active_filter.end_day == 23U));
     // 输入框失焦帧和查询按钮同批到达时，查询快照必须采用本批刚提交的最后一个输入值。
     Test_PushHmiFrame(&gas, filter_range_start_frame, sizeof(filter_range_start_frame));
     Test_PushHmiFrame(&gas, filter_range_end_frame, sizeof(filter_range_end_frame));
     Test_PushHmiFrame(&gas, filter_event_query_frame, sizeof(filter_event_query_frame));
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.active_filter.time_enabled &&
-           (gas.hmi_log.active_filter.start.year == 2026U) &&
-           (gas.hmi_log.active_filter.start.month == 8U) &&
-           (gas.hmi_log.active_filter.start.day == 29U) &&
-           (gas.hmi_log.active_filter.end.year == 2026U) &&
-           (gas.hmi_log.active_filter.end.month == 8U) &&
-           (gas.hmi_log.active_filter.end.day == 30U));
+           (gas.hmi_log.active_filter.start_year == 2026U) &&
+           (gas.hmi_log.active_filter.start_month == 8U) &&
+           (gas.hmi_log.active_filter.start_day == 29U) &&
+           (gas.hmi_log.active_filter.end_year == 2026U) &&
+           (gas.hmi_log.active_filter.end_month == 8U) &&
+           (gas.hmi_log.active_filter.end_day == 30U));
     // 开始、结束日期与查询按钮连续到达时必须完整入队，查询范围不能退回旧日期而包含8月28日记录。
     // Screen6的开关、下拉菜单选择和YYYYMMDD文本由MCU条件结构统一保存。
     Test_PushHmiFrame(&gas, exhaust_frame, sizeof(exhaust_frame));
@@ -1762,14 +1753,14 @@ static void Test_Hmi(void)
     A_GasControl_Task(&gas);
     assert(gas.hmi_log.query_type == A_HMI_LOG_QUERY_REGULAR);
 
-    assert(F_Hmi_Init(&hmi));
-    for (index = 0U; index < sizeof(test_frame); ++index) hmi.hardware.rx_buffer[hmi.hardware.rx_head++] = test_frame[index];
-    F_Hmi_Task(&hmi);
+    assert(F_Hmi_Init(&hmi, &hmi_hardware));
+    for (index = 0U; index < sizeof(test_frame); ++index) hmi_hardware.rx_buffer[hmi_hardware.rx_head++] = test_frame[index];
+    F_Hmi_Task(&hmi, &hmi_hardware);
     assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
     assert((id == 7U) && (value == 1U));
-    assert(F_Hmi_SendText(&hmi, 0U, 19U, "1.500", 5U));
+    assert(F_Hmi_SendText(&hmi, &hmi_hardware, 0U, 19U, "1.500", 5U));
     assert((g_test_state.hmi_tx_length == 16U) && (g_test_state.hmi_tx[2] == 0x10U));
-    assert(F_Hmi_SendIconFrame(&hmi, 1U, 72U, 2U));
+    assert(F_Hmi_SendIconFrame(&hmi, &hmi_hardware, 1U, 72U, 2U));
     assert((g_test_state.hmi_tx_length == 12U) &&
            (g_test_state.hmi_tx[0] == 0xEEU) &&
            (g_test_state.hmi_tx[1] == 0xB1U) &&
@@ -1778,6 +1769,7 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[6] == 72U) &&
            (g_test_state.hmi_tx[7] == 2U));
     assert(F_Hmi_SendRecordClear(&hmi,
+                                 &hmi_hardware,
                                  A_HMI_EVENT_LOG_PAGE_ID,
                                  A_HMI_EVENT_LOG_RECORD_CONTROL_ID));
     assert((g_test_state.hmi_tx_length == 11U) &&
@@ -1785,6 +1777,7 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[4] == A_HMI_EVENT_LOG_PAGE_ID) &&
            (g_test_state.hmi_tx[6] == A_HMI_EVENT_LOG_RECORD_CONTROL_ID));
     assert(F_Hmi_SendRecordAdd(&hmi,
+                               &hmi_hardware,
                                A_HMI_EVENT_LOG_PAGE_ID,
                                A_HMI_EVENT_LOG_RECORD_CONTROL_ID,
                                sample_record,
@@ -1803,7 +1796,7 @@ static void Test_Hmi(void)
            (g_test_state.hmi_tx[1] == 0x82U));
     for (index = 0U; index < sizeof(rtc_frame); ++index)
     {
-        display.function.hardware.rx_buffer[display.function.hardware.rx_head++] = rtc_frame[index];
+        display.hardware.rx_buffer[display.hardware.rx_head++] = rtc_frame[index];
     }
     A_Hmi_Task(&display, &gas.system, 1000U);
     assert(gas.system.date_time.valid);
@@ -1815,7 +1808,7 @@ static void Test_Hmi(void)
            (gas.system.date_time.minute == 35U) &&
            (gas.system.date_time.second == 42U));
 
-    F_ValveControl_AllOff(&gas.runtime_service.platform, &gas.system);
+    F_ValveControl_AllOff(&gas.platform, &gas.system);
     display.next_refresh_ms = 0U;
     A_Hmi_Refresh(&display, &gas.system, 0U);
     assert((g_test_state.hmi_tx_length == 12U) &&
@@ -2023,7 +2016,7 @@ static void Test_PushHmiFrame(A_Gas_Control_Context *context,
     assert((context != NULL) && (frame != NULL));
     for (index = 0U; index < length; ++index)
     {
-        H_Hmi_Context *hardware = &context->hmi.function.hardware; // 当前作用域变量，用于保存当前处理数据指针。
+        H_Hmi_Context *hardware = &context->hmi.hardware; // 当前作用域变量，用于保存当前处理数据指针。
         hardware->rx_buffer[hardware->rx_head] = frame[index];
         hardware->rx_head = (uint16_t) ((hardware->rx_head + 1U) % H_HMI_RX_BUFFER_SIZE);
     }
@@ -2057,6 +2050,7 @@ static void Test_HmiLogMenuSelect(void)
         {0xEEU,0xB1U,0x14U,0U,6U,0U,149U,0x1AU,4U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
     A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
     F_Hmi_Context hmi; // 当前作用域变量，用于保存当前处理数据。
+    H_Hmi_Context hmi_hardware; // 独立SCI9硬件测试实例，由协议函数显式接收。
     uint16_t id; // 当前作用域变量，用于保存当前处理数据。
     uint8_t value; // 当前作用域变量，用于保存当前处理值。
     size_t index; // 当前作用域变量，用于保存遍历索引。
@@ -2093,12 +2087,12 @@ static void Test_HmiLogMenuSelect(void)
            (gas.hmi_log.filter_status == A_HMI_LOG_FILTER_STATUS_RESET));
     assert((gas.system.alarm_bits & GAS_ALARM_MANUAL_VALVE_ABORTED) == 0UL);
 
-    assert(F_Hmi_Init(&hmi));
+    assert(F_Hmi_Init(&hmi, &hmi_hardware));
     for (index = 0U; index < sizeof(direct_menu_frame); ++index)
     {
-        hmi.hardware.rx_buffer[hmi.hardware.rx_head++] = direct_menu_frame[index];
+        hmi_hardware.rx_buffer[hmi_hardware.rx_head++] = direct_menu_frame[index];
     }
-    F_Hmi_Task(&hmi);
+    F_Hmi_Task(&hmi, &hmi_hardware);
     assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
     assert((id == A_HMI_LOG_FILTER_CYLINDER_MENU_ID) && (value == 4U));
     // B1 14下拉菜单帧解析为“控件ID＋选中项索引”，由应用层按控件ID分流处理。
@@ -2149,6 +2143,7 @@ static void Test_HmiConfig(void)
         {0xEEU,0xB1U,0x11U,0U,4U,0U,82U,0x11U,'2','.','5',0U,0xFFU,0xFCU,0xFFU,0xFFU};
     A_Gas_Control_Context gas; // 当前作用域变量，用于保存当前处理数据。
     F_Hmi_Context protocol; // 当前作用域变量，用于保存当前处理数据。
+    H_Hmi_Context protocol_hardware; // 独立SCI9硬件测试实例，由协议函数显式接收。
     Gas_Config stored; // 当前作用域变量，用于保存当前处理数据。
     char text[8]; // 当前作用域变量，用于保存显示文本缓冲区或长度。
     uint16_t page_id; // 当前作用域变量，用于保存串口屏画面标识。
@@ -2157,12 +2152,12 @@ static void Test_HmiConfig(void)
     size_t index; // 当前作用域变量，用于保存遍历索引。
     uint16_t clear_step; // 当前作用域变量，用于保存当前处理数据。
 
-    assert(F_Hmi_Init(&protocol));
+    assert(F_Hmi_Init(&protocol, &protocol_hardware));
     for (index = 0U; index < sizeof(protocol_text_frame); ++index)
     {
-        protocol.hardware.rx_buffer[protocol.hardware.rx_head++] = protocol_text_frame[index];
+        protocol_hardware.rx_buffer[protocol_hardware.rx_head++] = protocol_text_frame[index];
     }
-    F_Hmi_Task(&protocol);
+    F_Hmi_Task(&protocol, &protocol_hardware);
     length = F_Hmi_TakeTextEvent(&protocol, &page_id, &control_id, text, sizeof(text));
     assert((length == 3U) && (page_id == 4U) && (control_id == 82U));
     assert(memcmp(text, "2.5", 4U) == 0);
@@ -2212,8 +2207,8 @@ static void Test_HmiConfig(void)
     assert(gas.hmi_config.confirm_pending &&
            (gas.config.low_warning_pressure_mpa > 1.999F));
     gas.system.switch_state = GAS_SWITCH_LOW_CONFIRM;
-    gas.system.low_sample_count = 2U;
-    gas.system.low_start_ms = 10U;
+    gas.switch_low_sample_count = 2U;
+    gas.switch_low_start_ms = 10U;
     Test_PushHmiFrame(&gas, confirm_frame, sizeof(confirm_frame));
     A_GasControl_Task(&gas);
     assert(!gas.hmi_config.confirm_pending && !gas.hmi_config.save_pending);
@@ -2221,7 +2216,7 @@ static void Test_HmiConfig(void)
     assert((gas.config.low_warning_pressure_mpa > 3.499F) &&
            (gas.config.low_warning_pressure_mpa < 3.501F));
     assert((gas.system.switch_state == GAS_SWITCH_IDLE) &&
-           (gas.system.low_sample_count == 0U));
+           (gas.switch_low_sample_count == 0U));
 
     Test_PushHmiFrame(&gas, exhaust_frame, sizeof(exhaust_frame));
     A_GasControl_Task(&gas);
@@ -2279,7 +2274,7 @@ static void Test_HmiConfig(void)
     gas.system.cylinder[0].state = GAS_CYL_READY;
     assert(A_GasControl_StartExhaust(&gas, 0U));
     assert((gas.system.cylinder[0].exhaust_deadline_ms -
-            gas.runtime_service.platform.millis) == 65535U);
+            gas.platform.millis) == 65535U);
     Test_Advance(&gas, 65535U);
     assert(!gas.system.cylinder[0].exhaust_cmd);
     gas.system.cylinder[0].state = GAS_CYL_READY;
@@ -2289,7 +2284,7 @@ static void Test_HmiConfig(void)
     assert(gas.system.total_test_cmd && !gas.system.cylinder[0].test_cmd);
     Test_Advance(&gas, GAS_VALVE_BOOST_MIN_INTERVAL_MS);
     assert((gas.system.cylinder[0].test_deadline_ms -
-            gas.runtime_service.platform.millis) == (45U * GAS_MILLISECONDS_PER_MINUTE));
+            gas.platform.millis) == (45U * GAS_MILLISECONDS_PER_MINUTE));
     // 测试阀实际打开后才启动保存的45分钟上限，不能把总阀预开启等待计入测试时间。
     Test_Advance(&gas, (45U * GAS_MILLISECONDS_PER_MINUTE) - 1U);
     assert(gas.system.cylinder[0].test_cmd && gas.system.total_test_cmd);
@@ -2433,7 +2428,7 @@ static void Test_HmiLogQuery(void)
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
         if (previous_tx_count == g_test_state.hmi_tx_count)
         {
             continue;
@@ -2516,7 +2511,7 @@ static void Test_HmiLogQuery(void)
                                 A_HMI_LOG_PAGE_NEXT));
     for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
         if (previous_tx_count == g_test_state.hmi_tx_count)
         {
             continue;
@@ -2544,7 +2539,7 @@ static void Test_HmiLogQuery(void)
                                 A_HMI_LOG_PAGE_PREVIOUS));
     for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(gas.hmi_log.current_page == 0U);
@@ -2560,7 +2555,7 @@ static void Test_HmiLogQuery(void)
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_REGULAR));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
         if (previous_tx_count == g_test_state.hmi_tx_count)
         {
             continue;
@@ -2655,7 +2650,7 @@ static void Test_HmiLogQuery(void)
                                 A_HMI_LOG_PAGE_NEXT));
     for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
         if (previous_tx_count == g_test_state.hmi_tx_count)
         {
             continue;
@@ -2685,51 +2680,53 @@ static void Test_HmiLogQuery(void)
                                 A_HMI_LOG_PAGE_LATEST));
     for (step = 0U; (step < 1024U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(gas.hmi_log.current_page == 0U);
     // “最新页”直接返回零起始页0，不重新扫描已经完成的EEPROM日志索引。
 
     gas.hmi_log.edit_filter.time_enabled = true;
-    gas.hmi_log.edit_filter.start.year = 2026U;
-    gas.hmi_log.edit_filter.start.month = 8U;
-    gas.hmi_log.edit_filter.start.day = 22U;
-    gas.hmi_log.edit_filter.start.hour = 0U;
-    gas.hmi_log.edit_filter.start.minute = 0U;
-    gas.hmi_log.edit_filter.start.second = 0U;
-    gas.hmi_log.edit_filter.end = gas.hmi_log.edit_filter.start;
-    gas.hmi_log.edit_filter.end.hour = 23U;
-    gas.hmi_log.edit_filter.end.minute = 59U;
-    gas.hmi_log.edit_filter.end.second = 59U;
+    gas.hmi_log.edit_filter.start_year = 2026U;
+    gas.hmi_log.edit_filter.start_month = 8U;
+    gas.hmi_log.edit_filter.start_day = 22U;
+    gas.hmi_log.edit_filter.start_hour = 0U;
+    gas.hmi_log.edit_filter.start_minute = 0U;
+    gas.hmi_log.edit_filter.start_second = 0U;
+    gas.hmi_log.edit_filter.end_year = gas.hmi_log.edit_filter.start_year;
+    gas.hmi_log.edit_filter.end_month = gas.hmi_log.edit_filter.start_month;
+    gas.hmi_log.edit_filter.end_day = gas.hmi_log.edit_filter.start_day;
+    gas.hmi_log.edit_filter.end_hour = 23U;
+    gas.hmi_log.edit_filter.end_minute = 59U;
+    gas.hmi_log.edit_filter.end_second = 59U;
     gas.hmi_log.edit_filter.cylinder_number = 1U;
     gas.hmi_log.edit_filter.target_state = (uint8_t) GAS_CYL_INIT;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(gas.hmi_log.matched_count == filtered_event_count);
     // 事件查询同时按包含边界的时间、1号瓶和新状态“初始化”筛选。
 
-    gas.hmi_log.edit_filter.start.day = 23U;
-    gas.hmi_log.edit_filter.end.day = 23U;
+    gas.hmi_log.edit_filter.start_day = 23U;
+    gas.hmi_log.edit_filter.end_day = 23U;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_REGULAR));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(gas.hmi_log.matched_count == filtered_regular_count);
     // 常规日志应按23日时间范围匹配，并忽略事件专用的气瓶和进入状态条件。
 
-    gas.hmi_log.edit_filter.start.day = 24U;
-    gas.hmi_log.edit_filter.end.day = 23U;
+    gas.hmi_log.edit_filter.start_day = 24U;
+    gas.hmi_log.edit_filter.end_day = 23U;
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 256U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert(gas.hmi_log.filter_error && (gas.hmi_log.scanned_count == 0U));
@@ -2739,8 +2736,8 @@ static void Test_HmiLogQuery(void)
                    "\xCA\xB1\xBC\xE4\xB7\xB6\xCE\xA7\xB4\xED\xCE\xF3", 12U) == 0));
     // 开始晚于结束时不读取EEPROM，结果页直接显示GBK“时间范围错误”。
     gas.hmi_log.edit_filter.time_enabled = false;
-    gas.hmi_log.edit_filter.start.day = 1U;
-    gas.hmi_log.edit_filter.end.day = 31U;
+    gas.hmi_log.edit_filter.start_day = 1U;
+    gas.hmi_log.edit_filter.end_day = 31U;
     gas.hmi_log.edit_filter.cylinder_number = 0U;
     gas.hmi_log.edit_filter.target_state = 0U;
 
@@ -2748,7 +2745,7 @@ static void Test_HmiLogQuery(void)
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
         if ((gas.hmi_log.scanned_count > 0U) &&
             (gas.log_service.next_sequence == saved_next_sequence))
         {
@@ -2769,7 +2766,7 @@ static void Test_HmiLogQuery(void)
     assert(A_HmiLog_Request(&gas.hmi_log, A_HMI_LOG_QUERY_EVENT));
     for (step = 0U; (step < 4096U) && A_HmiLog_IsBusy(&gas.hmi_log); ++step)
     {
-        A_HmiLog_Task(&gas.hmi_log);
+        A_HmiLog_Task(&gas.hmi_log, gas.system.date_time.valid);
     }
     assert(!A_HmiLog_IsBusy(&gas.hmi_log));
     assert((g_test_state.hmi_tx[2] == 0x10U) &&

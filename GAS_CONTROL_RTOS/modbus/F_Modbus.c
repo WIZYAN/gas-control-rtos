@@ -85,8 +85,9 @@ static bool F_Modbus_FrameCrcIsValid(const uint8_t *frame, uint16_t length)
  * 输出：无；生成的五字节 RTU 响应通过硬件层发送。
  */
 static void F_Modbus_SendException(F_Modbus_Context *context,
-                          uint8_t function_code,
-                          uint8_t exception_code)
+                                   H_Modbus_Context *hardware,
+                                   uint8_t function_code,
+                                   uint8_t exception_code)
 {
     uint8_t response[5]; // 当前作用域变量，用于保存协议响应数组。
 
@@ -94,7 +95,7 @@ static void F_Modbus_SendException(F_Modbus_Context *context,
     response[1] = (uint8_t) (function_code | 0x80U);
     response[2] = exception_code;
     F_Modbus_AppendCrc(response, 3U);
-    (void) H_Modbus_Send(context->hardware, response, sizeof(response));
+    (void) H_Modbus_Send(hardware, response, sizeof(response));
 }
 
 /*
@@ -104,8 +105,9 @@ static void F_Modbus_SendException(F_Modbus_Context *context,
  * 输出：无；合法请求通过硬件层发送寄存器数据，非法请求发送异常响应。
  */
 static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
-                                const uint8_t *request,
-                                uint8_t function_code)
+                                         H_Modbus_Context *hardware,
+                                         const uint8_t *request,
+                                         uint8_t function_code)
 {
     uint8_t response[H_MODBUS_FRAME_MAX_LENGTH]; // 当前作用域变量，用于保存协议响应数组。
     const uint16_t *register_table; // 当前作用域变量，用于保存当前处理数据指针。
@@ -118,7 +120,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
 
     if (quantity == 0U)
     {
-        F_Modbus_SendException(context, function_code, MODBUS_EXCEPTION_VALUE);
+        F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_VALUE);
         return;
     }
 
@@ -134,7 +136,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
         table_count = F_MODBUS_HOLDING_REGISTER_COUNT;
         if (start_address < F_MODBUS_HOLDING_BASE_ADDRESS)
         {
-            F_Modbus_SendException(context, function_code, MODBUS_EXCEPTION_ADDRESS);
+            F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_ADDRESS);
             return;
         }
         start_offset = (uint16_t) (start_address - F_MODBUS_HOLDING_BASE_ADDRESS);
@@ -144,7 +146,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
     if ((start_offset >= table_count) || (quantity > (uint16_t) (table_count - start_offset)) ||
         ((uint32_t) (5U + (quantity * 2U)) > H_MODBUS_FRAME_MAX_LENGTH))
     {
-        F_Modbus_SendException(context, function_code, MODBUS_EXCEPTION_ADDRESS);
+        F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
     // 同时检查地址范围和响应缓存容量，避免数量合法但组帧后越过128字节缓存。
@@ -159,7 +161,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
 
     response_length = (uint16_t) (3U + (quantity * 2U));
     F_Modbus_AppendCrc(response, response_length);
-    (void) H_Modbus_Send(context->hardware, response, (uint16_t) (response_length + 2U));
+    (void) H_Modbus_Send(hardware, response, (uint16_t) (response_length + 2U));
 }
 
 /*
@@ -168,7 +170,9 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
  * 输入：context 为功能层上下文；request 为完整的八字节请求帧。
  * 输出：无；合法请求回送原请求，非法地址发送异常响应。
  */
-static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context, const uint8_t *request)
+static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context,
+                                       H_Modbus_Context *hardware,
+                                       const uint8_t *request)
 {
     uint8_t response[8]; // 当前作用域变量，用于保存协议响应数组。
     uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]); // 当前作用域变量，用于保存存储或寄存器地址。
@@ -178,7 +182,7 @@ static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context, const uint8_t 
     if ((address < F_MODBUS_HOLDING_BASE_ADDRESS) ||
         (address >= (F_MODBUS_HOLDING_BASE_ADDRESS + F_MODBUS_HOLDING_REGISTER_COUNT)))
     {
-        F_Modbus_SendException(context, MODBUS_FUNCTION_WRITE_SINGLE, MODBUS_EXCEPTION_ADDRESS);
+        F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_SINGLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
 
@@ -189,7 +193,7 @@ static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context, const uint8_t 
     context->write_pending = true;
     memcpy(response, request, sizeof(response));
     // 功能码06要求成功响应原样回显，应用层通过write_pending异步解释该寄存器含义。
-    (void) H_Modbus_Send(context->hardware, response, sizeof(response));
+    (void) H_Modbus_Send(hardware, response, sizeof(response));
 }
 
 /*
@@ -199,8 +203,9 @@ static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context, const uint8_t 
  * 输出：无；合法请求返回起始地址和数量，非法参数发送异常响应。
  */
 static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
-                                const uint8_t *request,
-                                uint16_t request_length)
+                                         H_Modbus_Context *hardware,
+                                         const uint8_t *request,
+                                         uint16_t request_length)
 {
     uint8_t response[8]; // 当前作用域变量，用于保存协议响应数组。
     uint16_t address = F_Modbus_ReadU16BigEndian(&request[2]); // 当前作用域变量，用于保存存储或寄存器地址。
@@ -212,21 +217,21 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     if ((quantity == 0U) || (byte_count != (uint8_t) (quantity * 2U)) ||
         (request_length != (uint16_t) (9U + byte_count)))
     {
-        F_Modbus_SendException(context, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_VALUE);
+        F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_VALUE);
         return;
     }
 
     if ((address < F_MODBUS_HOLDING_BASE_ADDRESS) ||
         (address >= (F_MODBUS_HOLDING_BASE_ADDRESS + F_MODBUS_HOLDING_REGISTER_COUNT)))
     {
-        F_Modbus_SendException(context, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
+        F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
 
     offset = (uint16_t) (address - F_MODBUS_HOLDING_BASE_ADDRESS);
     if (quantity > (uint16_t) (F_MODBUS_HOLDING_REGISTER_COUNT - offset))
     {
-        F_Modbus_SendException(context, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
+        F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
 
@@ -241,7 +246,7 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     context->write_pending = true;
     memcpy(response, request, 6U);
     F_Modbus_AppendCrc(response, 6U);
-    (void) H_Modbus_Send(context->hardware, response, sizeof(response));
+    (void) H_Modbus_Send(hardware, response, sizeof(response));
 }
 
 /*
@@ -264,7 +269,6 @@ bool F_Modbus_Init(F_Modbus_Context *context,
     {
         return false;
     }
-    context->hardware = hardware;
     context->slave_address = slave_address;
     return true;
 }
@@ -275,20 +279,15 @@ bool F_Modbus_Init(F_Modbus_Context *context,
  * 输入：context为功能层上下文输入输出指针。
  * 输出：接口已经关闭或成功关闭时返回true，否则返回false。
  */
-bool F_Modbus_Deinit(F_Modbus_Context *context)
+bool F_Modbus_Deinit(F_Modbus_Context *context, H_Modbus_Context *hardware)
 {
     bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
-    if (context == NULL)
+    if ((context == NULL) || (hardware == NULL))
     {
         return false;
     }
-    if (context->hardware == NULL)
-    {
-        return true;
-    }
-    success = H_Modbus_Deinit(context->hardware);
-    context->hardware = NULL;
+    success = H_Modbus_Deinit(hardware);
     context->write_pending = false;
     return success;
 }
@@ -299,9 +298,10 @@ bool F_Modbus_Deinit(F_Modbus_Context *context)
  * 输入：context为只读功能层上下文。
  * 输出：功能层无硬件实例或硬件故障时返回true，否则返回false。
  */
-bool F_Modbus_HasFault(const F_Modbus_Context *context)
+bool F_Modbus_HasFault(const F_Modbus_Context *context,
+                       const H_Modbus_Context *hardware)
 {
-    return ((context == NULL) || H_Modbus_HasFault(context->hardware));
+    return ((context == NULL) || (hardware == NULL) || H_Modbus_HasFault(hardware));
 }
 
 /*
@@ -310,15 +310,15 @@ bool F_Modbus_HasFault(const F_Modbus_Context *context)
  * 输入：context 为功能层上下文输入输出指针。
  * 输出：无；响应通过硬件层发送，写寄存器事件记录在 context 中。
  */
-void F_Modbus_Task(F_Modbus_Context *context)
+void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware)
 {
     uint8_t request[H_MODBUS_FRAME_MAX_LENGTH]; // 当前作用域变量，用于保存待处理请求数组。
     uint16_t request_length; // 当前作用域变量，用于保存有效数据长度。
     uint8_t function_code; // 当前作用域变量，用于保存当前处理数据。
 
-    if ((context == NULL) || (context->hardware == NULL) ||
-        H_Modbus_IsTransmitBusy(context->hardware) ||
-        !H_Modbus_TakeFrame(context->hardware, request, sizeof(request), &request_length))
+    if ((context == NULL) || (hardware == NULL) ||
+        H_Modbus_IsTransmitBusy(hardware) ||
+        !H_Modbus_TakeFrame(hardware, request, sizeof(request), &request_length))
     {
         return;
     }
@@ -334,7 +334,7 @@ void F_Modbus_Task(F_Modbus_Context *context)
          (function_code == MODBUS_FUNCTION_READ_INPUT) ||
          (function_code == MODBUS_FUNCTION_WRITE_SINGLE)) && (request_length != 8U))
     {
-        F_Modbus_SendException(context, function_code, MODBUS_EXCEPTION_VALUE);
+        F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_VALUE);
         return;
     }
     // 03、04、06请求长度固定为8字节；10的长度由字节计数字段在专用处理函数中校验。
@@ -343,19 +343,19 @@ void F_Modbus_Task(F_Modbus_Context *context)
     {
         case MODBUS_FUNCTION_READ_HOLDING:
         case MODBUS_FUNCTION_READ_INPUT:
-            F_Modbus_HandleReadRegisters(context, request, function_code);
+            F_Modbus_HandleReadRegisters(context, hardware, request, function_code);
             break;
 
         case MODBUS_FUNCTION_WRITE_SINGLE:
-            F_Modbus_HandleWriteSingle(context, request);
+            F_Modbus_HandleWriteSingle(context, hardware, request);
             break;
 
         case MODBUS_FUNCTION_WRITE_MULTIPLE:
-            F_Modbus_HandleWriteMultiple(context, request, request_length);
+            F_Modbus_HandleWriteMultiple(context, hardware, request, request_length);
             break;
 
         default:
-            F_Modbus_SendException(context, function_code, MODBUS_EXCEPTION_FUNCTION);
+            F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_FUNCTION);
             break;
     }
 }
