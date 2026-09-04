@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现七路压力传感器Modbus轮询调度和数据质量更新。

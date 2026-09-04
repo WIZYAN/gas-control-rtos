@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现气源控制、通信、日志、HMI和参数迁移的PC回归测试。
@@ -16,6 +16,7 @@
 typedef struct
 {
     uint8_t eeprom[AT24C256_CAPACITY_BYTES]; // 模拟 EEPROM 存储区。
+    uint32_t storage_access_count;           // 模拟EEPROM读、写和擦除累计次数，用于验证紧急关断期间不执行同步存储业务。
     uint8_t hmi_tx[F_HMI_TX_MAX_SIZE];       // 最近一帧HMI发送数据，容量覆盖最长日志表格行。
     size_t hmi_tx_length;                    // 最近一帧 HMI 发送长度。
     uint32_t hmi_tx_count;                   // 模拟HMI累计发送帧数，用于识别分步查询期间的新帧。
@@ -23,6 +24,13 @@ typedef struct
     uint32_t can_tx_count;                   // 模拟CAN累计发送帧数。
     bool all_valves_off_fail;                // 全关故障注入标志；使用范围：主机测试硬件模拟层；false表示写入成功，true表示模拟至少一路关阀失败。
     uint32_t all_valves_off_count;            // 模拟硬件全关调用次数，用于验证失败后的周期重试。
+    bool valve_write_fail;                    // 单路阀门写入故障注入标志；false表示正常，true表示本次阀门命令失败。
+    uint32_t valve_open_attempt_count;         // 模拟硬件层收到的开阀尝试次数，用于确认故障后不会继续处理后续开阀事件。
+    bool valve_task_fail;                     // VAL_Px保持切换故障注入标志；false表示正常，true表示周期硬件动作失败。
+    uint32_t sensor_operation_sequence;       // 模拟SCI1启动操作的递增序号，用于验证先挂接接收再启动发送。
+    uint32_t sensor_rx_start_order;            // 最近一次模拟接收启动顺序号。
+    uint32_t sensor_tx_start_order;            // 最近一次模拟发送启动顺序号。
+    bool sensor_error_after_rx_start;          // 接收预挂接后立即注入SCI错误；false表示正常，true用于验证发送启动不得清除既有错误。
 } Test_State;
 
 static Test_State g_test_state; // 主机测试唯一状态实例。
@@ -70,7 +78,14 @@ uint32_t H_GasPlatform_Millis(H_Gas_Platform_Context *context)
  */
 bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t *data, size_t length)
 {
-    return ((context != NULL) && (data != NULL) && (length > 0U));
+    if ((context == NULL) || (data == NULL) || (length == 0U))
+    {
+        return false;
+    }
+    g_test_state.sensor_operation_sequence++;
+    g_test_state.sensor_tx_start_order = g_test_state.sensor_operation_sequence;
+    context->sensor_tx_done = false;
+    return true;
 }
 
 /*
@@ -81,22 +96,48 @@ bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t 
  */
 bool H_GasPlatform_SensorRxStart(H_Gas_Platform_Context *context, uint8_t *data, size_t length)
 {
-    return ((context != NULL) && (data != NULL) && (length > 0U));
+    if ((context == NULL) || (data == NULL) || (length == 0U))
+    {
+        return false;
+    }
+    g_test_state.sensor_operation_sequence++;
+    g_test_state.sensor_rx_start_order = g_test_state.sensor_operation_sequence;
+    context->sensor_rx_done = false;
+    context->sensor_uart_error = false;
+    if (g_test_state.sensor_error_after_rx_start)
+    {
+        context->sensor_uart_error = true;
+    }
+    return true;
 }
 
 /*
  * 函数名：H_GasPlatform_SensorAbort。
  * 说明：清除模拟传感器收发完成标志。
  * 输入：context 为硬件上下文。
- * 输出：无。
+ * 输出：参数有效时返回true，否则返回false。
  */
-void H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context)
+bool H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context)
 {
-    if (context != NULL)
+    if (context == NULL)
     {
-        context->sensor_tx_done = false;
-        context->sensor_rx_done = false;
+        return false;
     }
+    context->sensor_tx_done = false;
+    context->sensor_rx_done = false;
+    context->sensor_uart_error = false;
+    return true;
+}
+
+/*
+ * 函数名：H_GasPlatform_SensorHasError。
+ * 说明：查询模拟SCI1事务错误标志。
+ * 输入：context为只读硬件上下文。
+ * 输出：上下文无效或错误锁存时返回true，否则返回false。
+ */
+bool H_GasPlatform_SensorHasError(const H_Gas_Platform_Context *context)
+{
+    return ((context == NULL) || context->sensor_uart_error);
 }
 
 /*
@@ -135,6 +176,15 @@ static bool Test_WriteValve(H_Gas_Platform_Context *context,
 {
     if ((context == NULL) || (state == NULL) || (index >= GAS_CYLINDER_COUNT) || (on && (pull_ms == 0U)))
     {
+        return false;
+    }
+    if (on)
+    {
+        g_test_state.valve_open_attempt_count++;
+    }
+    if (g_test_state.valve_write_fail)
+    {
+        context->valve_io_error = true;
         return false;
     }
     state[index] = on;
@@ -200,6 +250,11 @@ bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
     {
         return false;
     }
+    if (g_test_state.valve_write_fail)
+    {
+        context->valve_io_error = true;
+        return false;
+    }
     context->total_test_state = on;
     if (on)
     {
@@ -226,6 +281,11 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 {
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     if (context == NULL) return false;
+    if (g_test_state.valve_task_fail)
+    {
+        context->valve_io_error = true;
+        return false;
+    }
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
         if (context->boost_interval_active[index] &&
@@ -256,6 +316,7 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
     g_test_state.all_valves_off_count++;
     if (g_test_state.all_valves_off_fail)
     {
+        context->valve_io_error = true;
         return false;
     }
     (void) memset(context->supply_state, 0, sizeof(context->supply_state));
@@ -263,7 +324,19 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
     (void) memset(context->test_state, 0, sizeof(context->test_state));
     context->total_test_state = false;
     (void) memset(context->boost_state, 0, sizeof(context->boost_state));
+    context->valve_io_error = false;
     return true;
+}
+
+/*
+ * 函数名：H_GasPlatform_ValveHasIoError。
+ * 说明：查询模拟阀门GPIO错误锁存。
+ * 输入：context为只读硬件上下文。
+ * 输出：上下文无效或存在写入错误时返回true，否则返回false。
+ */
+bool H_GasPlatform_ValveHasIoError(const H_Gas_Platform_Context *context)
+{
+    return ((context == NULL) || context->valve_io_error);
 }
 
 /*
@@ -289,6 +362,7 @@ bool A_Storage_Init(A_Storage_Context *context)
 bool A_Storage_Read(A_Storage_Context *context, uint16_t address, uint8_t *data, size_t length)
 {
     if ((context == NULL) || !context->initialized || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
+    g_test_state.storage_access_count++;
     (void) memcpy(data, &g_test_state.eeprom[address], length);
     return true;
 }
@@ -302,6 +376,7 @@ bool A_Storage_Read(A_Storage_Context *context, uint16_t address, uint8_t *data,
 bool A_Storage_Write(A_Storage_Context *context, uint16_t address, const uint8_t *data, size_t length)
 {
     if ((context == NULL) || !context->initialized || (data == NULL) || (((size_t) address + length) > sizeof(g_test_state.eeprom))) return false;
+    g_test_state.storage_access_count++;
     (void) memcpy(&g_test_state.eeprom[address], data, length);
     return true;
 }
@@ -319,6 +394,7 @@ bool A_Storage_EraseRange(A_Storage_Context *context, uint16_t address, size_t l
     {
         return false;
     }
+    g_test_state.storage_access_count++;
     (void) memset(&g_test_state.eeprom[address], 0xFF, length);
     return true;
 }
@@ -549,6 +625,31 @@ bool H_Hmi_IsTxBusy(const H_Hmi_Context *context)
 {
     (void) context;
     return false;
+}
+
+/*
+ * 函数名：H_Hmi_HasFault。
+ * 说明：查询模拟SCI9是否未就绪或已锁存错误。
+ * 输入：context为只读HMI硬件上下文。
+ * 输出：上下文无效、未就绪或错误时返回true，否则返回false。
+ */
+bool H_Hmi_HasFault(const H_Hmi_Context *context)
+{
+    return ((context == NULL) || !context->ready || context->uart_error);
+}
+
+/*
+ * 函数名：H_Hmi_DiscardReceivedData。
+ * 说明：模拟丢弃SCI9环形缓冲区尚未解析的数据。
+ * 输入：context为模拟HMI硬件上下文。
+ * 输出：无。
+ */
+void H_Hmi_DiscardReceivedData(H_Hmi_Context *context)
+{
+    if (context != NULL)
+    {
+        context->rx_tail = context->rx_head;
+    }
 }
 
 /*
@@ -1383,6 +1484,54 @@ static void Test_TotalPressurePoll(void)
 }
 
 /*
+ * 函数名：Test_InternalModbusReceivePrearm。
+ * 说明：验证内部Modbus在发送请求前已经挂接接收缓冲区，并把底层SCI错误归类为IO失败。
+ * 输入：无。
+ * 输出：无；通过模拟启动顺序和事务结果断言。
+ */
+static void Test_InternalModbusReceivePrearm(void)
+{
+    H_Gas_Platform_Context platform; // 独立的模拟气源硬件平台。
+    F_Modbus_Poll_Context master; // 独立的内部Modbus事务上下文。
+    F_Modbus_Poll_Result result; // 取出的事务结束原因。
+    const uint8_t *payload; // 成功响应数据区指针；本测试仅用于满足结果接口。
+    size_t payload_length; // 成功响应数据长度；IO失败时应为0。
+
+    (void) memset(&g_test_state, 0, sizeof(g_test_state));
+    (void) memset(&platform, 0, sizeof(platform));
+    platform.sensor_uart_open = true;
+    assert(F_ModbusPoll_Init(&master, &platform));
+    assert(F_ModbusPoll_StartRead(&master,
+                                  1U,
+                                  0x04U,
+                                  0U,
+                                  2U,
+                                  100U,
+                                  100U));
+    assert((g_test_state.sensor_rx_start_order > 0U) &&
+           (g_test_state.sensor_rx_start_order < g_test_state.sensor_tx_start_order));
+    // 从站可在请求结束后立即响应，因此接收必须先于发送启动，不能等待下一个5 ms调度周期。
+
+    platform.sensor_uart_error = true;
+    F_ModbusPoll_Task(&master, 101U);
+    assert(F_ModbusPoll_TakeResult(&master, &result, &payload, &payload_length));
+    assert((result == MODBUS_POLL_RESULT_IO) && (payload_length == 0U));
+
+    g_test_state.sensor_error_after_rx_start = true;
+    assert(F_ModbusPoll_StartRead(&master,
+                                  1U,
+                                  0x04U,
+                                  0U,
+                                  2U,
+                                  200U,
+                                  100U));
+    F_ModbusPoll_Task(&master, 201U);
+    assert(F_ModbusPoll_TakeResult(&master, &result, &payload, &payload_length));
+    assert(result == MODBUS_POLL_RESULT_IO);
+    // 接收预挂接后若中断已报错，后续发送启动不能再次清零错误而误等到超时。
+}
+
+/*
  * 函数名：Test_QualificationGate。
  * 说明：验证待测试门槛、低压待换自动撤销合格结论、三样本恢复确认及人工阀门权限。
  * 输入：无。
@@ -1607,6 +1756,7 @@ static void Test_EmergencyAllOffRetry(void)
 {
     A_Gas_Control_Context context; // 当前作用域变量，用于保存气源控制上下文。
     uint32_t close_count; // 故障注入前的全关调用次数，用于判断首次尝试和周期重试。
+    uint32_t storage_access_count; // 故障注入前的同步存储访问次数，用于确认全关失败后立即结束本周期。
 
     Test_Prepare(&context);
     context.system.mode = GAS_MODE_STOPPED;
@@ -1618,6 +1768,7 @@ static void Test_EmergencyAllOffRetry(void)
     context.platform.supply_state[0] = true;
     context.platform.supply_state[1] = true;
     close_count = g_test_state.all_valves_off_count;
+    storage_access_count = g_test_state.storage_access_count;
     g_test_state.all_valves_off_fail = true;
 
     A_GasControl_Task(&context);
@@ -1629,6 +1780,8 @@ static void Test_EmergencyAllOffRetry(void)
     assert(context.platform.supply_state[0] &&
            context.platform.supply_state[1]);
     assert(g_test_state.all_valves_off_count == (close_count + 1U));
+    assert(g_test_state.storage_access_count == storage_access_count);
+    // 全关失败后本周期立即返回，不执行可能阻塞下一次5 ms重试的同步EEPROM访问。
     // 全关失败时业务和硬件镜像均保留“可能仍开启”，不得误报已关闭。
 
     g_test_state.all_valves_off_fail = false;
@@ -1643,8 +1796,90 @@ static void Test_EmergencyAllOffRetry(void)
 }
 
 /*
+ * 函数名：Test_ValveIoFailSafe。
+ * 说明：验证保持电压切换或人工关阀GPIO失败会锁定平台，并通过同一紧急全关链安全收敛。
+ * 输入：无。
+ * 输出：无；通过平台就绪、阀门镜像、截止时间和重试状态断言。
+ */
+static void Test_ValveIoFailSafe(void)
+{
+    const uint8_t exhaust_one_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,1U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 1号瓶排气阀开启事件。
+    const uint8_t exhaust_three_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,3U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 3号瓶排气阀开启事件。
+    A_Gas_Control_Context context; // 气源控制上下文。
+    uint32_t exhaust_deadline_ms; // 故障发生前的人工排气截止时间。
+    uint32_t open_attempt_count; // 同一HMI事件批次开始前的硬件开阀尝试次数。
+
+    Test_Prepare(&context);
+    assert(A_GasControl_StartExhaust(&context, 0U));
+    g_test_state.valve_task_fail = true;
+    A_GasControl_Task(&context);
+    assert(!context.system.platform_ready);
+    assert(!context.system.cylinder[0].exhaust_cmd &&
+           !context.platform.exhaust_state[0] &&
+           !context.emergency_close_pending);
+    assert((context.system.alarm_bits & GAS_ALARM_PLATFORM_NOT_READY) != 0U);
+    assert(!A_GasControl_StartExhaust(&context, 0U));
+    // VAL_Px由12 V切换到5 V失败后，即使本次全关成功，也必须保持平台锁定直到重新初始化。
+
+    Test_Prepare(&context);
+    assert(A_GasControl_StartExhaust(&context, 0U));
+    exhaust_deadline_ms = context.system.cylinder[0].exhaust_deadline_ms;
+    context.platform.millis = exhaust_deadline_ms;
+    g_test_state.valve_write_fail = true;
+    g_test_state.all_valves_off_fail = true;
+    A_GasControl_Task(&context);
+    assert(context.system.cylinder[0].exhaust_cmd);
+    assert(context.system.cylinder[0].exhaust_deadline_ms == exhaust_deadline_ms);
+    assert(context.emergency_close_pending && !context.system.platform_ready);
+    assert((context.system.alarm_bits & GAS_ALARM_PLATFORM_NOT_READY) != 0U);
+    // 到期关阀失败时保留命令和截止时间；紧急全关也失败时不得伪造“已经关闭”。
+
+    g_test_state.valve_write_fail = false;
+    g_test_state.all_valves_off_fail = false;
+    A_GasControl_Task(&context);
+    assert(!context.system.cylinder[0].exhaust_cmd);
+    assert(context.system.cylinder[0].exhaust_deadline_ms == 0U);
+    assert(!context.emergency_close_pending);
+
+    Test_Prepare(&context);
+    open_attempt_count = g_test_state.valve_open_attempt_count;
+    Test_PushHmiFrame(&context, exhaust_one_frame, sizeof(exhaust_one_frame));
+    Test_PushHmiFrame(&context, exhaust_three_frame, sizeof(exhaust_three_frame));
+    g_test_state.valve_write_fail = true;
+    A_GasControl_Task(&context);
+    assert(g_test_state.valve_open_attempt_count == (open_attempt_count + 1U));
+    assert(!context.system.platform_ready &&
+           (context.hmi.function.button_queue_count == 1U));
+    A_GasControl_Task(&context);
+    assert(g_test_state.valve_open_attempt_count == (open_attempt_count + 1U));
+    assert(context.hmi.function.button_queue_count == 0U);
+    // 第一条开阀发生GPIO故障后当前批次立即停止；下一周期也因platform_ready锁定而拒绝第二条开阀。
+
+    Test_Prepare(&context);
+    Test_PushHmiFrame(&context, exhaust_one_frame, sizeof(exhaust_one_frame));
+    context.hmi.hardware.uart_error = true;
+    A_GasControl_Task(&context);
+    assert(!context.system.cylinder[0].exhaust_cmd &&
+           (context.hmi.function.button_queue_count == 0U) &&
+           (context.hmi.hardware.rx_tail == context.hmi.hardware.rx_head) &&
+           ((context.system.alarm_bits & GAS_ALARM_HMI_COMM) != 0U));
+    // SCI9接收错误批次必须丢弃残帧和已解析事件，不能形成伪开阀命令。
+
+    Test_Prepare(&context);
+    context.system.total_test_cmd = true;
+    context.platform.total_test_state = true;
+    g_test_state.valve_write_fail = true;
+    A_GasControl_Task(&context);
+    assert(!context.system.platform_ready &&
+           !context.system.total_test_cmd &&
+           !context.platform.total_test_state &&
+           !context.emergency_close_pending);
+    // 总测试阀关闭失败后，即使随后的全关成功清除底层IO锁存，平台仍必须保持未就绪。
+}
+
+/*
  * 函数名：Test_Hmi。
- * 说明：验证按钮业务映射、中文状态、双色阀位图标、状态高亮、总压力和RTC时间。
+ * 说明：验证按钮FIFO、文本边界、业务映射、中文状态、阀位图标、总压力、RTC和SCI9故障上报。
  * 输入：无。
  * 输出：无。
  */
@@ -1656,6 +1891,7 @@ static void Test_Hmi(void)
     const uint8_t qualification_off_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,51U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
     const uint8_t event_log_frame[] = {0xEEU,0xB1U,0x11U,0U,2U,0U,61U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
     const uint8_t regular_log_frame[] = {0xEEU,0xB1U,0x11U,0U,3U,0U,65U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
+    const uint8_t malformed_button_frame[] = {0xEEU,0xB1U,0x11U,0U,0U,0U,7U,0x10U,1U,1U,0x55U,0xFFU,0xFCU,0xFFU,0xFFU}; // 多出一个字节的按钮残帧，不得按末尾相对位置解析为合法命令。
     const uint8_t filter_time_on_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,131U,0x10U,1U,0U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
     const uint8_t filter_cylinder_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,132U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存气瓶对象或编号数组。
     const uint8_t filter_state_trigger_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,134U,0x10U,1U,1U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存业务状态数组。
@@ -1674,7 +1910,9 @@ static void Test_Hmi(void)
                                               '2','0','2','6','0','8','3','0',0U,
                                               0xFFU,0xFCU,0xFFU,0xFFU};
     const uint8_t filter_event_query_frame[] = {0xEEU,0xB1U,0x11U,0U,6U,0U,136U,0x10U,
-                                                1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+                                                 1U,1U,0xFFU,0xFCU,0xFFU,0xFFU};
+    const uint8_t unknown_text_frame[] = {0xEEU,0xB1U,0x11U,0U,9U,1U,35U,0x11U,
+                                          'X',0U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前工程未定义的文本控件事件。
     const uint8_t rtc_frame[] = {0xEEU,0xF7U,0x26U,0x08U,0x02U,0x18U,0x14U,0x35U,0x42U,0xFFU,0xFCU,0xFFU,0xFFU}; // 当前作用域变量，用于保存通信帧缓冲区或长度。
     const uint8_t low_warning_text[] = {0xB5U,0xCDU,0xD1U,0xB9U,0xBEU,0xAFU,0xB8U,0xE6U}; // 当前作用域变量，用于保存显示文本缓冲区或长度。
     const uint8_t wait_test_text[] = {0xB4U,0xFDU,0xB2U,0xE2U,0xCAU,0xD4U}; // 当前作用域变量，用于保存显示文本缓冲区或长度。
@@ -1686,6 +1924,9 @@ static void Test_Hmi(void)
     uint16_t id; // 当前作用域变量，用于保存当前处理数据。
     uint8_t value; // 当前作用域变量，用于保存当前处理值。
     size_t index; // 当前作用域变量，用于保存遍历索引。
+    uint8_t event_index; // 按钮FIFO容量和丢弃计数测试的事件序号。
+    uint32_t text_drop_count; // 注入未知文本前的累计丢弃数。
+    uint32_t tx_count; // 非法超长发送前的HMI累计发送帧数。
 
     Test_Prepare(&gas);
     Test_PushHmiFrame(&gas, filter_time_on_frame, sizeof(filter_time_on_frame));
@@ -1731,6 +1972,16 @@ static void Test_Hmi(void)
            (gas.hmi_log.active_filter.end_month == 8U) &&
            (gas.hmi_log.active_filter.end_day == 30U));
     // 开始、结束日期与查询按钮连续到达时必须完整入队，查询范围不能退回旧日期而包含8月28日记录。
+
+    text_drop_count = gas.hmi.function.text_event_drop_count;
+    Test_PushHmiFrame(&gas, unknown_text_frame, sizeof(unknown_text_frame));
+    Test_PushHmiFrame(&gas, filter_date_frame, sizeof(filter_date_frame));
+    A_GasControl_Task(&gas);
+    assert(gas.hmi.function.text_event_drop_count == (text_drop_count + 1U));
+    assert((gas.hmi_log.edit_filter.start_year == 2026U) &&
+           (gas.hmi_log.edit_filter.start_month == 8U) &&
+           (gas.hmi_log.edit_filter.start_day == 22U));
+    // 未知文本事件只增加诊断计数，不能永久占住FIFO队首并阻塞后续合法日期。
     // Screen6的开关、下拉菜单选择和YYYYMMDD文本由MCU条件结构统一保存。
     Test_PushHmiFrame(&gas, exhaust_frame, sizeof(exhaust_frame));
     A_GasControl_Task(&gas);
@@ -1740,11 +1991,11 @@ static void Test_Hmi(void)
     gas.system.cylinder[0].qualification_passed = false;
     Test_SeedPressure(&gas, 0U, 5.0F);
     Test_PushHmiFrame(&gas, qualification_on_frame, sizeof(qualification_on_frame));
-    A_GasControl_Task(&gas);
-    assert(gas.system.cylinder[0].qualification_passed);
     Test_PushHmiFrame(&gas, qualification_off_frame, sizeof(qualification_off_frame));
     A_GasControl_Task(&gas);
     assert(!gas.system.cylinder[0].qualification_passed);
+    assert(gas.hmi.function.button_queue_count == 0U);
+    // 同一5 ms周期到达的两个按钮必须按顺序全部处理，最终状态由第二个事件决定。
 
     Test_PushHmiFrame(&gas, event_log_frame, sizeof(event_log_frame));
     A_GasControl_Task(&gas);
@@ -1755,9 +2006,40 @@ static void Test_Hmi(void)
 
     assert(F_Hmi_Init(&hmi, &hmi_hardware));
     for (index = 0U; index < sizeof(test_frame); ++index) hmi_hardware.rx_buffer[hmi_hardware.rx_head++] = test_frame[index];
+    for (index = 0U; index < sizeof(exhaust_frame); ++index) hmi_hardware.rx_buffer[hmi_hardware.rx_head++] = exhaust_frame[index];
     F_Hmi_Task(&hmi, &hmi_hardware);
     assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
     assert((id == 7U) && (value == 1U));
+    assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
+    assert((id == 1U) && (value == 1U));
+    assert(!F_Hmi_TakeButtonEvent(&hmi, &id, &value));
+    assert(F_Hmi_Init(&hmi, &hmi_hardware));
+    for (event_index = 0U; event_index < (F_HMI_BUTTON_EVENT_QUEUE_SIZE + 1U); ++event_index)
+    {
+        for (index = 0U; index < sizeof(test_frame); ++index)
+        {
+            hmi_hardware.rx_buffer[hmi_hardware.rx_head] = test_frame[index];
+            hmi_hardware.rx_head = (uint16_t) ((hmi_hardware.rx_head + 1U) %
+                                               H_HMI_RX_BUFFER_SIZE);
+        }
+    }
+    F_Hmi_Task(&hmi, &hmi_hardware);
+    assert((hmi.button_queue_count == F_HMI_BUTTON_EVENT_QUEUE_SIZE) &&
+           (hmi.button_event_drop_count == 1U));
+    for (event_index = 0U; event_index < F_HMI_BUTTON_EVENT_QUEUE_SIZE; ++event_index)
+    {
+        assert(F_Hmi_TakeButtonEvent(&hmi, &id, &value));
+        assert((id == 7U) && (value == 1U));
+    }
+    // FIFO满时保留已经到达的8条事件、丢弃第9条，并以饱和计数保留诊断证据。
+    assert(F_Hmi_Init(&hmi, &hmi_hardware));
+    for (index = 0U; index < sizeof(malformed_button_frame); ++index)
+    {
+        hmi_hardware.rx_buffer[hmi_hardware.rx_head++] = malformed_button_frame[index];
+    }
+    F_Hmi_Task(&hmi, &hmi_hardware);
+    assert(!F_Hmi_TakeButtonEvent(&hmi, &id, &value));
+    // B1 11按钮必须严格为14字节，丢失帧尾后与下一批数据拼接的超长残帧不得生成事件。
     assert(F_Hmi_SendText(&hmi, &hmi_hardware, 0U, 19U, "1.500", 5U));
     assert((g_test_state.hmi_tx_length == 16U) && (g_test_state.hmi_tx[2] == 0x10U));
     assert(F_Hmi_SendIconFrame(&hmi, &hmi_hardware, 1U, 72U, 2U));
@@ -1784,6 +2066,21 @@ static void Test_Hmi(void)
                                sizeof(sample_record) - 1U));
     assert((g_test_state.hmi_tx_length == (sizeof(sample_record) + 10U)) &&
            (g_test_state.hmi_tx[2] == 0x52U));
+    tx_count = g_test_state.hmi_tx_count;
+    assert(!F_Hmi_SendText(&hmi,
+                           &hmi_hardware,
+                           0U,
+                           19U,
+                           "X",
+                           (size_t) -1));
+    assert(!F_Hmi_SendRecordAdd(&hmi,
+                                &hmi_hardware,
+                                A_HMI_EVENT_LOG_PAGE_ID,
+                                A_HMI_EVENT_LOG_RECORD_CONTROL_ID,
+                                sample_record,
+                                (size_t) -1));
+    assert(g_test_state.hmi_tx_count == tx_count);
+    // 超长长度在做帧长加法和内存复制前被拒绝，size_t回绕不能绕过发送缓存边界。
 
     gas.system.total_pressure.pressure_mpa = 4.321F;
     gas.system.total_pressure.pressure_quality = GAS_PRESSURE_VALID;
@@ -1807,6 +2104,18 @@ static void Test_Hmi(void)
     assert((gas.system.date_time.hour == 14U) &&
            (gas.system.date_time.minute == 35U) &&
            (gas.system.date_time.second == 42U));
+
+    gas.system.date_time.year = 2025U;
+    gas.system.date_time.valid = true;
+    Test_PushHmiFrame(&gas, rtc_frame, sizeof(rtc_frame));
+    gas.hmi.hardware.uart_error = true;
+    A_GasControl_Task(&gas);
+    assert(((gas.system.alarm_bits & GAS_ALARM_HMI_COMM) != 0U) &&
+           !gas.system.date_time.valid &&
+           (gas.system.date_time.year == 2025U) &&
+           (gas.hmi.hardware.rx_tail == gas.hmi.hardware.rx_head) &&
+           !gas.hmi.function.rtc_time_pending);
+    // 已锁存SCI9错误时不得先解析缓冲区中的RTC；故障批次清空并立即停用该时间源。
 
     F_ValveControl_AllOff(&gas.platform, &gas.system);
     display.next_refresh_ms = 0U;
@@ -2789,6 +3098,7 @@ int main(void)
     Test_ConfigV3Migration();
     Test_TestValveTimeRange();
     Test_TotalPressurePoll();
+    Test_InternalModbusReceivePrearm();
     Test_DefaultCanProtocol();
     Test_CanDirectWriteAndControl();
     Test_ExternalModbusConfig();
@@ -2798,10 +3108,11 @@ int main(void)
     Test_ManualAndDisabled();
     Test_PlatformReadyValveGate();
     Test_EmergencyAllOffRetry();
+    Test_ValveIoFailSafe();
     Test_Hmi();
     Test_HmiLogMenuSelect();
     Test_HmiConfig();
     Test_HmiLogQuery();
-    puts("V1.13平台就绪开阀保护、紧急全关失败重试、日志查询和通讯回归测试通过。");
+    puts("V1.14阀门失效安全、内部Modbus预接收、HMI事件队列、日志查询和通讯回归测试通过。");
     return 0;
 }

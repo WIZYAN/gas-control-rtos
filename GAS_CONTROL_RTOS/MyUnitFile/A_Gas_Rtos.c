@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现FreeRTOS气源控制任务的静态创建和调度入口。
@@ -65,9 +65,7 @@ bool A_GasRtos_Start(A_Gas_Rtos_Context *context,
         return false;
     }
 
-    context->scheduler_started = true;
     vTaskStartScheduler();
-    context->scheduler_started = false;
     return false;
 }
 

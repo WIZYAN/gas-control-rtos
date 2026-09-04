@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明三阀控制功能层上下文和阀门操作接口。
@@ -26,9 +26,9 @@ bool F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system);
  * 函数名：F_ValveControl_Task。
  * 说明：周期推进 12 V 吸合计时，并在本次开阀指定时间到达后切换到约 5 V 保持状态。
  * 输入：platform 为硬件上下文；system 为系统状态；now_ms 为当前毫秒计数。
- * 输出：无；硬件切换失败时通过 system 设置平台异常报警。
+ * 输出：周期硬件操作成功且没有锁存阀门GPIO错误时返回true，否则报警并返回false。
  */
-void F_ValveControl_Task(H_Gas_Platform_Context *platform,
+bool F_ValveControl_Task(H_Gas_Platform_Context *platform,
                        Gas_System *system,
                        uint32_t now_ms);
 

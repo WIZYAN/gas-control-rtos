@@ -1,8 +1,8 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
- * Description: 声明AT24C256功能层上下文及非阻塞读写接口。
+ * Description: 声明AT24C256功能层上下文及同步读写接口。
  */
 
 #ifndef F_AT24C256_H
@@ -19,16 +19,17 @@
 #define AT24C256_DEFAULT_ADDRESS_7BIT (0x50U)   // A0～A2 接地时的七位 IIC 器件地址。
 #define AT24C256_IIC_HALF_PERIOD_US   (5U)      // 软件 IIC 半周期，5 μs 对应约 100 kHz。
 
-// AT24C256 驱动结果，用于区分参数、总线、应答、越界和校验错误。
+// AT24C256 驱动结果，用于区分参数、总线、应答、超时、越界和校验错误。
 typedef enum
 {
     AT24C256_RESULT_OK = 0,       // 操作成功。
     AT24C256_RESULT_PARAMETER,    // 输入参数无效。
     AT24C256_RESULT_NOT_READY,    // 驱动尚未初始化或器件未就绪。
-    AT24C256_RESULT_BUS,          // 软件 IIC 总线操作失败。
-    AT24C256_RESULT_NACK,         // EEPROM 未返回应答。
+    AT24C256_RESULT_BUS,          // GPIO、时钟或起停时序操作失败。
+    AT24C256_RESULT_NACK,         // 总线时序完整，但 EEPROM 未返回应答。
     AT24C256_RESULT_RANGE,        // 访问地址或长度超出 32 KB 范围。
-    AT24C256_RESULT_VERIFY        // 自检写入后的读回数据不一致。
+    AT24C256_RESULT_VERIFY,       // 自检写入后的读回数据不一致。
+    AT24C256_RESULT_TIMEOUT       // 页写完成应答轮询在限定时间内未获得 ACK。
 } F_At24c256_Result;
 
 // AT24C256 硬件驱动上下文，保存软件 IIC、器件地址、写保护引脚和最近结果。
@@ -38,6 +39,7 @@ typedef struct
     uint32_t write_protect_pin;    // WP 对应的 FSP GPIO 编码，高电平禁止写入。
     uint8_t device_address_7bit;   // A2～A0 形成的七位 IIC 器件地址。
     F_At24c256_Result last_result;    // 最近一次读写或自检操作结果。
+    bool write_protect_fault; // WP配置或电平写入故障锁存；使用范围：AT24C256驱动诊断；false表示本次初始化后未失败，true表示至少一次写保护操作失败。
     bool initialized; // 器件是否已经完成总线初始化和应答探测；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未初始化，true表示已经初始化。
 } F_At24c256_Context;
 

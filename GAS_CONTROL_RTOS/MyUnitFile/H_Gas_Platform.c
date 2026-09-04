@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现压力串口、十九路阀门和毫秒时基的平台硬件操作。
@@ -184,9 +184,14 @@ static bool H_GasPlatform_SetValveBoost(H_Gas_Platform_Context *context, uint8_t
 {
     bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
-    if ((context == NULL) || !H_GasPlatform_BoostValvePin(index, &pin) ||
-        (R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(on)) != FSP_SUCCESS))
+    if ((context == NULL) || !H_GasPlatform_BoostValvePin(index, &pin))
     {
+        return false;
+    }
+
+    if (R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(on)) != FSP_SUCCESS)
+    {
+        context->valve_io_error = true;
         return false;
     }
 
@@ -244,6 +249,7 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
         result = R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(true));
         if (result != FSP_SUCCESS)
         {
+            context->valve_io_error = true;
             (void) H_GasPlatform_SetValveBoost(context, index, false);
             return false;
         }
@@ -256,6 +262,7 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
     result = R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(false));
     if (result != FSP_SUCCESS)
     {
+        context->valve_io_error = true;
         return false;
     }
 
@@ -397,16 +404,22 @@ bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t 
     fsp_err_t err; // 当前作用域变量，用于保存当前处理数据。
 
     if ((context == NULL) || !context->sensor_uart_open || (data == NULL) ||
-        (length == 0U) || (length > UINT32_MAX) || !H_GasPlatform_SensorDirectionTransmit())
+        (length == 0U) || (length > UINT32_MAX))
     {
         return false;
     }
 
     context->sensor_tx_done = false;
-    context->sensor_uart_error = false;
+    if (!H_GasPlatform_SensorDirectionTransmit())
+    {
+        context->sensor_uart_error = true;
+        return false;
+    }
+
     err = R_SCI_UART_Write(&rs485_sensor_ctrl, data, (uint32_t) length);
     if (err != FSP_SUCCESS)
     {
+        context->sensor_uart_error = true;
         (void) H_GasPlatform_SensorDirectionReceive();
         return false;
     }
@@ -421,6 +434,8 @@ bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t 
  */
 bool H_GasPlatform_SensorRxStart(H_Gas_Platform_Context *context, uint8_t *data, size_t length)
 {
+    fsp_err_t err; // SCI1定长接收启动结果。
+
     if ((context == NULL) || !context->sensor_uart_open || (data == NULL) ||
         (length == 0U) || (length > UINT32_MAX))
     {
@@ -429,30 +444,43 @@ bool H_GasPlatform_SensorRxStart(H_Gas_Platform_Context *context, uint8_t *data,
 
     context->sensor_rx_done = false;
     context->sensor_uart_error = false;
-    return (R_SCI_UART_Read(&rs485_sensor_ctrl, data, (uint32_t) length) == FSP_SUCCESS);
+    err = R_SCI_UART_Read(&rs485_sensor_ctrl, data, (uint32_t) length);
+    if (err != FSP_SUCCESS)
+    {
+        context->sensor_uart_error = true;
+        return false;
+    }
+    return true;
 }
 
 /*
  * 函数名：H_GasPlatform_SensorAbort。
  * 说明：中止指定实例的 SCI1 收发事务、清除完成标志，并恢复 RS485 接收方向。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
- * 输出：无；通过 context 清除当前通信事务状态。
+ * 输出：中止和方向恢复均成功时返回 true；任一步失败时返回 false 并保持错误标志。
  */
-void H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context)
+bool H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context)
 {
+    bool abort_ok; // SCI1收发中止结果；false表示串口未打开或FSP中止失败。
+    bool direction_ok; // RS485恢复接收方向结果；false表示PRE_EN写入失败。
+
     if (context == NULL)
     {
-        return;
+        return false;
     }
 
-    if (context->sensor_uart_open)
-    {
-        (void) R_SCI_UART_Abort(&rs485_sensor_ctrl, UART_DIR_RX_TX);
-    }
     context->sensor_tx_done = false;
     context->sensor_rx_done = false;
     context->sensor_uart_error = false;
-    (void) H_GasPlatform_SensorDirectionReceive();
+    abort_ok = context->sensor_uart_open &&
+               (R_SCI_UART_Abort(&rs485_sensor_ctrl, UART_DIR_RX_TX) == FSP_SUCCESS);
+    direction_ok = H_GasPlatform_SensorDirectionReceive();
+    if (!abort_ok || !direction_ok)
+    {
+        context->sensor_uart_error = true;
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -475,6 +503,17 @@ bool H_GasPlatform_SensorTxDone(const H_Gas_Platform_Context *context)
 bool H_GasPlatform_SensorRxDone(const H_Gas_Platform_Context *context)
 {
     return ((context != NULL) && context->sensor_rx_done && !context->sensor_uart_error);
+}
+
+/*
+ * 函数名：H_GasPlatform_SensorHasError。
+ * 说明：查询指定实例当前传感器串口事务的错误标志。
+ * 输入：context 为只读硬件逻辑层上下文指针。
+ * 输出：错误标志已置位或参数无效时返回 true，否则返回 false。
+ */
+bool H_GasPlatform_SensorHasError(const H_Gas_Platform_Context *context)
+{
+    return ((context == NULL) || context->sensor_uart_error);
 }
 
 /*
@@ -645,8 +684,19 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 }
 
 /*
+ * 函数名：H_GasPlatform_ValveHasIoError。
+ * 说明：查询自上次成功全关后是否发生过真实阀门GPIO写入失败。
+ * 输入：context 为只读硬件逻辑层上下文指针。
+ * 输出：错误标志已置位或参数无效时返回true，否则返回false。
+ */
+bool H_GasPlatform_ValveHasIoError(const H_Gas_Platform_Context *context)
+{
+    return ((context == NULL) || context->valve_io_error);
+}
+
+/*
  * 函数名：H_GasPlatform_AllValvesOff。
- * 说明：把板上全部已知阀门GPIO写为关闭电平，仅在全部写入成功后清除阀门状态。
+ * 说明：把板上全部已知阀门GPIO写为关闭电平，仅在全部写入成功后清除阀门状态和IO错误锁存。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
  * 输出：所有阀门GPIO均写入成功时返回true，参数无效或任一写入失败时返回false并保留软件镜像。
  */
@@ -673,6 +723,7 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
                               H_GasPlatform_ValveLevel(false)) != FSP_SUCCESS)
         {
             success = false;
+            context->valve_io_error = true;
         }
     }
     // 即使某一路失败也继续尝试其余阀门，最大化紧急关断覆盖范围。
@@ -685,6 +736,7 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
         context->total_test_state = false;
         (void) memset(context->boost_state, 0, sizeof(context->boost_state));
         (void) memset(context->boost_deadline_ms, 0, sizeof(context->boost_deadline_ms));
+        context->valve_io_error = false;
         // 运行中全关不清除强吸合最短间隔，防止停止后立即重启绕过线圈保护。
     }
     return success;

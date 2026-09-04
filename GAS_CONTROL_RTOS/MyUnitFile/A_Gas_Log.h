@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明日志记录格式、存储上下文、查询和清除接口。
@@ -72,7 +72,7 @@ typedef struct
     gas_cylinder_state_t previous_state[GAS_CYLINDER_COUNT]; // 最近已记录的六瓶状态快照。
     uint8_t active_header_copy; // 当前有效管理头副本，0表示A，1表示B。
     uint8_t clear_empty_header_copy; // 本次清除写入空索引的管理头副本编号。
-    A_Gas_Log_Clear_State clear_state; // 当前非阻塞日志物理清除步骤。
+    A_Gas_Log_Clear_State clear_state; // 当前分步日志物理清除步骤；每一步EEPROM访问仍同步执行。
     A_Gas_Log_Clear_Result clear_result; // 最近一次日志清除结果及忙状态。
     bool clear_empty_header_committed; // 日志清除状态机的空索引提交标志；使用范围：A_Gas_Log_Context清除流程内；取值范围：false/true，false表示空索引尚未提交或校验，true表示已经写入并读回校验。
     bool ready; // 管理头已经加载或创建且允许记录日志时为true；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。

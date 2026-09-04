@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明大彩串口屏协议层帧、事件队列和发送接口。
@@ -17,7 +17,15 @@
 #define F_HMI_FRAME_MAX_SIZE (64U)  // 单帧大彩接收指令允许的最大缓存长度。
 #define F_HMI_TX_MAX_SIZE    (192U) // 日志表格单行和普通文本共用的最大发送帧长度。
 #define F_HMI_TEXT_MAX_SIZE  (16U)  // 参数输入控件允许上传的最大ASCII文本长度，另留一字节结束符。
+#define F_HMI_BUTTON_EVENT_QUEUE_SIZE (8U) // 连续按键和下拉菜单事件的固定FIFO容量。
 #define F_HMI_TEXT_EVENT_QUEUE_SIZE (8U) // 连续失焦和查询时暂存的文本输入事件数量。
+
+// 一条由B1 11按键或B1 14下拉菜单上传的操作事件。
+typedef struct
+{
+    uint16_t button_id; // 按键或下拉菜单控件ID。
+    uint8_t value;      // 按键状态或下拉菜单选中项索引。
+} F_Hmi_Button_Event;
 
 // 一条由B1 11文本控件上传的完整输入事件。
 typedef struct
@@ -46,12 +54,14 @@ typedef struct
     uint8_t rx_frame[F_HMI_FRAME_MAX_SIZE]; // 当前正在组装的接收帧。
     uint16_t rx_length;                     // 当前接收帧已有字节数。
     bool receiving; // 是否已经收到 0xEE 帧头；使用范围：当前声明作用域内使用；取值范围：false/true，false表示当前未接收协议帧，true表示当前正在接收协议帧。
-    bool button_pending; // 是否存在尚未取走的按钮或下拉菜单选择事件；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
-    uint16_t button_id;                     // 最近一次按钮或下拉菜单控件 ID。
-    uint8_t button_value;                   // 按钮上传状态值；下拉菜单时为选中项索引。
+    F_Hmi_Button_Event button_queue[F_HMI_BUTTON_EVENT_QUEUE_SIZE]; // 按到达顺序保存按键和下拉菜单事件的FIFO。
+    uint8_t button_queue_head;              // 按钮FIFO当前待取事件位置。
+    uint8_t button_queue_count;             // 按钮FIFO内尚未被应用层取走的事件数量。
+    uint32_t button_event_drop_count;       // 按钮FIFO已满时丢弃的按键或菜单事件累计数，达到UINT32_MAX后保持饱和。
     F_Hmi_Text_Event text_queue[F_HMI_TEXT_EVENT_QUEUE_SIZE]; // 文本输入FIFO，保持串口到达顺序。
     uint8_t text_queue_head;                // FIFO当前待读事件位置。
     uint8_t text_queue_count;               // FIFO内尚未被应用层取走的事件数量。
+    uint32_t text_event_drop_count;         // 文本FIFO已满或上层主动丢弃的事件累计数，达到UINT32_MAX后保持饱和。
     F_Hmi_Rtc_Time rtc_time;                // 最近一次通过校验的串口屏 RTC 时间。
     bool rtc_time_pending; // 是否存在尚未被应用层取走的 RTC 时间；使用范围：当前声明作用域内使用；取值范围：false/true，false表示无待处理事项，true表示存在待处理事项。
     uint8_t tx_frame[F_HMI_TX_MAX_SIZE];    // 异步发送期间保持不变的发送缓冲区。
@@ -102,6 +112,22 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
 bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
                          uint16_t *page_id,
                          uint16_t *control_id);
+
+/*
+ * 函数名：F_Hmi_DiscardTextEvent。
+ * 说明：丢弃文本输入FIFO队首的一条无法识别事件，避免阻塞后续有效输入。
+ * 输入：context为HMI协议上下文。
+ * 输出：成功丢弃一条队首事件时返回true，队列为空或参数无效时返回false。
+ */
+bool F_Hmi_DiscardTextEvent(F_Hmi_Context *context);
+
+/*
+ * 函数名：F_Hmi_DiscardPendingInput。
+ * 说明：串口接收故障后清除残帧和所有尚未执行的输入事件。
+ * 输入：context为HMI协议上下文。
+ * 输出：无；保留并更新事件丢弃累计计数。
+ */
+void F_Hmi_DiscardPendingInput(F_Hmi_Context *context);
 
 /*
  * 函数名：F_Hmi_SendReadRtc。

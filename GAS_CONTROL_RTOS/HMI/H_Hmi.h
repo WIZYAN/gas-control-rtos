@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明SCI9串口屏硬件层上下文和异步收发接口。
@@ -21,7 +21,7 @@ typedef struct
     volatile uint16_t rx_head;                        // 回调下一次写入位置。
     volatile uint16_t rx_tail;                        // 任务下一次读取位置，同时供串口中断判断缓冲区是否已满。
     volatile bool tx_busy;                            // HMI发送状态标志；使用范围：SCI9中断与HMI任务之间；取值范围：false/true，false表示发送空闲，true表示正在异步发送。
-    volatile bool uart_error;                         // HMI串口错误标志；使用范围：SCI9中断与HMI任务之间；取值范围：false/true，false表示通信正常，true表示最近一次通信发生错误。
+    volatile bool uart_error;                         // HMI串口错误锁存；使用范围：SCI9中断与HMI任务之间；false表示通信正常，true表示发生错误且控制输入保持禁用至重新初始化。
     bool ready; // SCI9 是否已经成功打开并绑定上下文；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未就绪，true表示已就绪。
 } H_Hmi_Context;
 
@@ -56,5 +56,21 @@ bool H_Hmi_Write(H_Hmi_Context *context, const uint8_t *data, size_t length);
  * 输出：正在发送时返回 true，否则返回 false。
  */
 bool H_Hmi_IsTxBusy(const H_Hmi_Context *context);
+
+/*
+ * 函数名：H_Hmi_HasFault。
+ * 说明：查询SCI9串口屏硬件层是否未就绪或已锁存通信错误。
+ * 输入：context为只读串口屏硬件层上下文。
+ * 输出：上下文无效、SCI9未就绪或发生通信错误时返回true，否则返回false。
+ */
+bool H_Hmi_HasFault(const H_Hmi_Context *context);
+
+/*
+ * 函数名：H_Hmi_DiscardReceivedData。
+ * 说明：串口接收故障后丢弃SCI9环形缓冲区中尚未解析的字节。
+ * 输入：context为串口屏硬件层上下文。
+ * 输出：无。
+ */
+void H_Hmi_DiscardReceivedData(H_Hmi_Context *context);
 
 #endif

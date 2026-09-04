@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明串口屏日志查询条件、状态机上下文和分页接口。
@@ -124,7 +124,7 @@ typedef struct
     F_Hmi_Context *transport;                                 // 已初始化的串口屏协议和发送实例。
     H_Hmi_Context *hardware;                                  // 与transport配对的SCI9硬件实例，仅在发送时显式传入。
     A_Gas_Log_Context *log;                                   // AT24C256循环日志实例。
-    A_Hmi_Log_Query_State state;                              // 当前非阻塞查询或分页步骤。
+    A_Hmi_Log_Query_State state;                              // 当前分步查询或分页步骤；单次EEPROM访问仍同步执行。
     A_Hmi_Log_Query_Type query_type;                          // RAM索引及当前页面对应的日志类型。
     A_Hmi_Log_Query_Type pending_type;                        // 最近一次刷新请求指定的日志类型。
     A_Hmi_Log_Filter edit_filter;                             // 查询页当前正在编辑的条件。
@@ -212,7 +212,7 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context);
 
 /*
  * 函数名：A_HmiLog_Task。
- * 说明：非阻塞执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多读一条或发一行。
+ * 说明：分步执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多同步读一条或异步发送一行。
  * 输入：context为日志查询上下文；rtc_valid表示当前系统时间是否有效。
  * 输出：无；索引和分页进度保存在context中。
  */

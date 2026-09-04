@@ -1,5 +1,5 @@
 # /*
-#  * Version: v1.13
+#  * Version: v1.14
 #  * Author: YXZ
 #  * Created: 2026-08-24
 #  * Description: 根据Markdown源稿和当前大彩工程画面生成用户操作手册PDF。
@@ -43,9 +43,9 @@ from reportlab.platypus import (
 # 工程根目录，用于解析默认输入、输出和大彩工程资源路径。
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # 用户手册的默认Markdown源稿。
-DEFAULT_SOURCE = PROJECT_ROOT / "docs" / "用户操作手册_V1.12.md"
+DEFAULT_SOURCE = PROJECT_ROOT / "docs" / "用户操作手册_V1.14.md"
 # 正式用户手册的默认PDF输出路径。
-DEFAULT_OUTPUT = PROJECT_ROOT / "docs" / "用户操作手册_V1.12.pdf"
+DEFAULT_OUTPUT = PROJECT_ROOT / "docs" / "用户操作手册_V1.14.pdf"
 # 当前正式大彩工程目录。
 HMI_PROJECT_DIR = PROJECT_ROOT / "hmi-screen" / "GasControl_HMI_V1.12"
 # A4正文左右边距。
@@ -57,7 +57,7 @@ SCREEN_WIDTH = CONTENT_WIDTH
 # 文档页眉和页脚使用的系统名称。
 SYSTEM_NAME = "气源控制系统"
 # 文档版本号。
-DOCUMENT_VERSION = "V1.12"
+DOCUMENT_VERSION = "V1.14"
 
 # 手册示例值覆盖表，仅改变手册预览，不修改大彩工程源文件。
 SCREEN_TEXT_OVERRIDES: dict[int, dict[int, str]] = {
@@ -725,7 +725,7 @@ def generate_manual(source_path: Path, output_path: Path) -> int:
             bottomMargin=16 * mm,
             title="用户操作手册",
             author="气源控制系统项目",
-            subject="气源控制系统V1.12用户操作与维护说明",
+            subject="气源控制系统V1.14用户操作与维护说明",
             pageCompression=1,
         )
         # 页眉页脚回调读取的已注册字体名。
@@ -744,7 +744,7 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
     """解析命令行参数。"""
 
     # 用户手册生成器的命令行参数解析器。
-    parser = argparse.ArgumentParser(description="生成气源控制系统V1.12用户操作手册PDF")
+    parser = argparse.ArgumentParser(description="生成气源控制系统V1.14用户操作手册PDF")
     parser.add_argument(
         "--source",
         type=Path,

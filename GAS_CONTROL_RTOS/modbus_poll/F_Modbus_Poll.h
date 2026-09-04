@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明内部Modbus主站状态、结果和非阻塞轮询接口。
@@ -26,7 +26,7 @@ typedef enum
     MODBUS_POLL_RESULT_TIMEOUT,    // 响应超过配置的截止时间。
     MODBUS_POLL_RESULT_CRC,        // 响应 CRC 校验失败。
     MODBUS_POLL_RESULT_PROTOCOL,   // 响应地址、功能码或字节数不符合请求。
-    MODBUS_POLL_RESULT_IO          // 底层 SCI1 收发操作启动失败。
+    MODBUS_POLL_RESULT_IO          // 底层 SCI1 收发、方向恢复或中止操作失败。
 } F_Modbus_Poll_Result;
 
 // 内部 Modbus 主站功能层状态。
@@ -64,7 +64,7 @@ bool F_ModbusPoll_Init(F_Modbus_Poll_Context *context,
 
 /*
  * 函数名：F_ModbusPoll_StartRead。
- * 说明：构造功能码 03 或 04 的请求帧，并启动一次非阻塞 Modbus RTU 读取事务。
+ * 说明：构造功能码 03 或 04 的请求帧，先挂接定长接收缓冲区，再启动非阻塞 Modbus RTU 发送。
  * 输入：context 为功能上下文；slave_address 为从站地址；function_code 为功能码；start_register 为起始寄存器；register_count 为数量；now_ms 为当前时间；timeout_ms 为超时。
  * 输出：事务成功启动时返回 true，否则返回 false。
  */

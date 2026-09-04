@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现SCI9串口屏硬件初始化、异步收发和回调处理。
@@ -109,6 +109,31 @@ bool H_Hmi_IsTxBusy(const H_Hmi_Context *context)
 }
 
 /*
+ * 函数名：H_Hmi_HasFault。
+ * 说明：查询SCI9串口屏硬件层是否未就绪或已锁存通信错误。
+ * 输入：context为只读串口屏硬件层上下文。
+ * 输出：上下文无效、SCI9未就绪或发生通信错误时返回true，否则返回false。
+ */
+bool H_Hmi_HasFault(const H_Hmi_Context *context)
+{
+    return ((context == NULL) || !context->ready || context->uart_error);
+}
+
+/*
+ * 函数名：H_Hmi_DiscardReceivedData。
+ * 说明：串口接收故障后丢弃SCI9环形缓冲区中尚未解析的字节。
+ * 输入：context为串口屏硬件层上下文。
+ * 输出：无；任务侧读取位置追到当前中断写入位置。
+ */
+void H_Hmi_DiscardReceivedData(H_Hmi_Context *context)
+{
+    if (context != NULL)
+    {
+        context->rx_tail = context->rx_head;
+    }
+}
+
+/*
  * 函数名：dis_uart_callback。
  * 说明：接收 SCI9 单字节事件并维护串口屏异步发送和错误状态。
  * 输入：p_args 为 FSP 串口回调参数，p_context 指向 H_Hmi_Context。
@@ -142,10 +167,10 @@ void dis_uart_callback(uart_callback_args_t *p_args)
     {
         context->tx_busy = false;
     }
-    else if ((p_args->event == UART_EVENT_ERR_PARITY) ||
-             (p_args->event == UART_EVENT_ERR_FRAMING) ||
-             (p_args->event == UART_EVENT_ERR_OVERFLOW) ||
-             (p_args->event == UART_EVENT_BREAK_DETECT))
+    else if ((p_args->event & (UART_EVENT_ERR_PARITY |
+                               UART_EVENT_ERR_FRAMING |
+                               UART_EVENT_ERR_OVERFLOW |
+                               UART_EVENT_BREAK_DETECT)) != 0U)
     {
         context->uart_error = true;
     }

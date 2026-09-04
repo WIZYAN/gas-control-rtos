@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明GPIO软件IIC硬件层上下文和基础收发接口。
@@ -43,25 +43,25 @@ bool H_SoftIic_Start(H_Soft_Iic_Context *context);
  * 函数名：H_SoftIic_Stop。
  * 说明：在当前软件 IIC 总线上产生停止条件并释放 SCL 和 SDA。
  * 输入：context 为已经初始化的软件 IIC 上下文。
- * 输出：无返回值；总线被恢复到空闲状态。
+ * 输出：停止时序的所有GPIO操作成功时返回true，否则返回false。
  */
-void H_SoftIic_Stop(H_Soft_Iic_Context *context);
+bool H_SoftIic_Stop(H_Soft_Iic_Context *context);
 
 /*
  * 函数名：H_SoftIic_WriteByte。
  * 说明：按照高位在前的顺序发送一个字节并读取从机应答位。
- * 输入：context 为软件 IIC 上下文；data 为需要发送的一个字节。
- * 输出：从机返回低电平 ACK 时返回 true，未应答或时钟线异常时返回 false。
+ * 输入：context 为软件 IIC 上下文；data 为需要发送的一个字节；acknowledged 为从机应答输出指针。
+ * 输出：GPIO 和时序完整时返回 true，并通过 acknowledged 返回 ACK(true)或 NACK(false)；总线操作失败时返回 false。
  */
-bool H_SoftIic_WriteByte(H_Soft_Iic_Context *context, uint8_t data);
+bool H_SoftIic_WriteByte(H_Soft_Iic_Context *context, uint8_t data, bool *acknowledged);
 
 /*
  * 函数名：H_SoftIic_ReadByte。
  * 说明：从软件 IIC 总线读取一个字节，并根据参数向从机返回 ACK 或 NACK。
- * 输入：context 为软件 IIC 上下文；send_ack 为 true 时回送 ACK，为 false 时回送 NACK。
- * 输出：返回从总线读取的一个字节；上下文无效时返回 0xFF。
+ * 输入：context 为软件 IIC 上下文；send_ack 为 true 时回送 ACK，为 false 时回送 NACK；data为字节输出指针。
+ * 输出：数据位和ACK/NACK时序全部成功时返回true，否则返回false。
  */
-uint8_t H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack);
+bool H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack, uint8_t *data);
 
 /*
  * 函数名：H_SoftIic_RecoverBus。

@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现气源系统状态机、自动换瓶、人工控制和安全互锁业务。
@@ -52,11 +52,19 @@ static bool A_GasControl_AnyTestValveOn(const Gas_System *system)
  */
 static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
 {
+    bool had_valve_io_error; // 进入全关前的阀门GPIO故障锁存，防止全关成功清除底层标志后丢失平台锁定。
+
     if (context == NULL)
     {
         return false;
     }
 
+    had_valve_io_error = H_GasPlatform_ValveHasIoError(&context->platform);
+    if (had_valve_io_error)
+    {
+        context->system.platform_ready = false;
+        context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+    }
     context->emergency_close_pending = true;
     if (!F_ValveControl_AllOff(&context->platform, &context->system))
     {
@@ -69,6 +77,56 @@ static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
                   0,
                   sizeof(context->test_open_not_before_ms));
     context->emergency_close_pending = false;
+    return true;
+}
+
+/*
+ * 函数名：A_GasControl_HandleValveIoFault。
+ * 说明：发现阀门GPIO错误后立即锁定全部开阀入口，并进入紧急全关流程。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：存在阀门故障或紧急全关尚未完成时返回true；当前无需处理时返回false。
+ */
+static bool A_GasControl_HandleValveIoFault(A_Gas_Control_Context *context)
+{
+    if (context == NULL)
+    {
+        return false;
+    }
+    if (context->emergency_close_pending)
+    {
+        return true;
+    }
+    if (!H_GasPlatform_ValveHasIoError(&context->platform))
+    {
+        return false;
+    }
+
+    context->system.platform_ready = false;
+    context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+    (void) A_GasControl_ForceAllValvesOff(context);
+    return true;
+}
+
+/*
+ * 函数名：A_GasControl_HandleHmiFault。
+ * 说明：发现SCI9未就绪或通信错误后停用该时间源，并丢弃本批尚未执行的串口屏输入。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：存在串口屏故障且已完成安全丢弃时返回true；当前无需处理时返回false。
+ */
+static bool A_GasControl_HandleHmiFault(A_Gas_Control_Context *context)
+{
+    Gas_System *system; // 串口屏故障直接影响的系统状态，避免通过总上下文重复深层访问。
+
+    if ((context == NULL) || !H_Hmi_HasFault(&context->hmi.hardware))
+    {
+        return false;
+    }
+
+    system = &context->system;
+    system->alarm_bits |= GAS_ALARM_HMI_COMM;
+    system->date_time.valid = false;
+    H_Hmi_DiscardReceivedData(&context->hmi.hardware);
+    F_Hmi_DiscardPendingInput(&context->hmi.function);
     return true;
 }
 
@@ -256,8 +314,15 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
                                            index,
                                            false);
     test_ok = A_GasControl_SetTestValve(context, index, false);
-    cylinder->exhaust_deadline_ms = 0U;
-    cylinder->test_deadline_ms = 0U;
+    if (exhaust_ok)
+    {
+        cylinder->exhaust_deadline_ms = 0U;
+    }
+    if (test_ok)
+    {
+        cylinder->test_deadline_ms = 0U;
+    }
+    // 关阀失败时保留相应截止时间，使后续控制周期能够继续重试而不是误认为动作已经完成。
     return (supply_ok && exhaust_ok && test_ok);
 }
 
@@ -506,16 +571,22 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
         if (cylinder->exhaust_cmd &&
             A_GasControl_TimeReached(now_ms, cylinder->exhaust_deadline_ms))
         {
-            if (!F_ValveControl_SetExhaust(&context->platform,
-                                           &context->system,
-                                           &context->config,
-                                           index,
-                                           false))
+            bool exhaust_closed; // 本次到期关闭结果；false表示硬件命令失败并需在后续周期继续重试。
+
+            exhaust_closed = F_ValveControl_SetExhaust(&context->platform,
+                                                        &context->system,
+                                                        &context->config,
+                                                        index,
+                                                        false);
+            if (!exhaust_closed)
             {
                 context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
             }
-            cylinder->exhaust_deadline_ms = 0U;
-            // 无论关阀接口是否成功都清除截止时间，失败通过报警处理，避免每周期重复操作。
+            else
+            {
+                cylinder->exhaust_deadline_ms = 0U;
+            }
+            // 只有硬件接受关阀命令后才取消截止时间；失败时保持到期状态并在下个5 ms周期重试。
         }
 
         if (cylinder->test_cmd &&
@@ -525,7 +596,7 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
             {
                 context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
             }
-            // 一分钟上限由MCU强制执行，不依赖串口屏再次发送关闭事件。
+            // 配置的最长开启时间由MCU强制执行，不依赖串口屏再次发送关闭事件。
         }
     }
 }
@@ -609,6 +680,11 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
         {
             cylinder->test_deadline_ms = 0U;
             context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
+            if (A_GasControl_HandleValveIoFault(context))
+            {
+                A_Hmi_RequestTestSync(&context->hmi, index);
+                return;
+            }
         }
         A_Hmi_RequestTestSync(&context->hmi, index);
         // 分路真正执行后再回写既有测试按钮，不增加任何新HMI控件。
@@ -655,7 +731,11 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
         case GAS_SWITCH_IDLE: // 正常监测工作瓶，仅在低压首次满足时启动确认流程。
             if (active->state == GAS_CYL_DISABLED)
             {
-                (void) A_GasControl_CloseCylinderValves(context, system->active_index);
+                if (!A_GasControl_CloseCylinderValves(context, system->active_index))
+                {
+                    (void) A_GasControl_HandleValveIoFault(context);
+                    break;
+                }
                 context->switch_old_index = system->active_index;
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
                 (void) A_GasControl_SelectInitialBottle(context, now_ms);
@@ -758,11 +838,12 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
                                           context->switch_new_index,
                                           true))
             {
-                A_GasControl_ForceAllValvesOff(context);
+                system->platform_ready = false;
+                system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+                (void) A_GasControl_ForceAllValvesOff(context);
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
                 system->mode = GAS_MODE_STOPPED;
                 system->switch_state = GAS_SWITCH_IDLE;
-                system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
                 // 新瓶无法安全打开时全关并停机，禁止继续使用不确定的阀门状态。
                 break;
             }
@@ -807,18 +888,23 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
  * 函数名：A_GasControl_ProcessHmiButton。
  * 说明：把串口屏阀门、停用、测试合格、日志查询和参数页按钮转换为对应业务操作。
  * 输入：context 为气源控制应用上下文输入输出指针。
- * 输出：无；操作失败时设置人工阀门互锁报警。
+ * 输出：取出并处理了一条按钮事件时返回true，队列为空时返回false；业务操作失败时设置报警。
  */
-static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
+static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
 {
     uint16_t button_id; // 当前作用域变量，用于保存串口屏控件标识。
     uint8_t value; // 当前作用域变量，用于保存当前处理值。
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     bool success = true; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
-    if (!A_Hmi_TakeButtonEvent(&context->hmi, &button_id, &value))
+    if ((context == NULL) || H_Hmi_HasFault(&context->hmi.hardware) ||
+        !A_Hmi_TakeButtonEvent(&context->hmi, &button_id, &value))
     {
-        return;
+        return false;
+    }
+    if (H_Hmi_HasFault(&context->hmi.hardware))
+    {
+        return true;
     }
 
     if ((button_id >= A_HMI_EXHAUST_BUTTON_BASE) &&
@@ -944,6 +1030,38 @@ static void A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
         // 按钮请求被状态或互锁拒绝时统一告警，串口屏协议层不直接判断业务安全条件。
     }
+    return true;
+}
+
+/*
+ * 函数名：A_GasControl_ProcessHmiTextInputs。
+ * 说明：按FIFO顺序把本周期收到的文本输入交给日志和参数模块，无法识别的事件会被丢弃并计数。
+ * 输入：context为气源控制应用上下文输入输出指针。
+ * 输出：无；合法输入更新对应编辑参数，未知事件不会阻塞后续有效输入。
+ */
+static void A_GasControl_ProcessHmiTextInputs(A_Gas_Control_Context *context)
+{
+    F_Hmi_Context *transport; // 串口屏协议层事件队列，避免重复深层成员访问。
+    uint8_t previous_count; // 本轮消费者执行前的文本事件数量，用于判断队首是否被识别。
+
+    if (context == NULL)
+    {
+        return;
+    }
+
+    transport = &context->hmi.function;
+    while (transport->text_queue_count > 0U)
+    {
+        previous_count = transport->text_queue_count;
+        A_HmiLog_InputTask(&context->hmi_log);
+        A_HmiConfig_InputTask(&context->hmi_config, &context->config);
+        if ((transport->text_queue_count == previous_count) &&
+            !F_Hmi_DiscardTextEvent(transport))
+        {
+            break;
+        }
+        // 两个业务模块都不接受队首时主动移除，并通过text_event_drop_count保留诊断证据。
+    }
 }
 
 /*
@@ -989,7 +1107,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
 
     if ((supply_count > 1U) || conflict)
     {
-        A_GasControl_ForceAllValvesOff(context);
+        (void) A_GasControl_ForceAllValvesOff(context);
         context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
         context->system.mode = GAS_MODE_STOPPED;
         context->system.switch_state = GAS_SWITCH_IDLE;
@@ -1669,12 +1787,15 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
  * 函数名：A_GasControl_SetExternalCommMode。
  * 说明：在六瓶全部停用且十九路阀门关闭时切换CAN或RS485外部通讯，并把成功模式保存到EEPROM。
  * 输入：context为应用上下文；mode为目标通讯模式，0表示CAN、1表示RS485/Modbus。
- * 输出：目标接口成功启用并完成持久化时返回true；运行中、初始化失败或存储失败时返回false并恢复原模式。
+ * 输出：目标接口成功启用并完成持久化时返回true；运行中、初始化失败或存储失败时返回false，并尽可能恢复原模式。
  */
 bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
                                       gas_external_comm_mode_t mode)
 {
     gas_external_comm_mode_t previous_mode; // 当前作用域变量，用于保存工作模式。
+    bool target_closed; // 目标通讯接口回滚关闭结果；false表示关闭失败，true表示已关闭。
+    bool previous_restored; // 原通讯接口恢复结果；false表示未恢复，true表示已恢复。
+    bool previous_mode_saved; // 原通讯模式记录回写结果；false表示存储失败，true表示已读回验证。
 
     if ((context == NULL) || (mode > GAS_EXTERNAL_COMM_RS485) ||
         !A_GasControl_AllCylindersDisabled(&context->system) ||
@@ -1689,12 +1810,43 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     }
 
     previous_mode = context->external_comm_mode;
-    if (!A_GasControl_DeinitExternalComm(context, previous_mode) ||
-        !A_GasControl_InitExternalComm(context, mode))
+    if (!A_GasControl_DeinitExternalComm(context, previous_mode))
     {
-        (void) A_GasControl_DeinitExternalComm(context, mode);
-        (void) A_GasControl_InitExternalComm(context, previous_mode);
-        context->external_comm_mode = previous_mode;
+        if (previous_mode == GAS_EXTERNAL_COMM_CAN)
+        {
+            context->system.alarm_bits |= GAS_ALARM_EXTERNAL_CAN;
+        }
+        else
+        {
+            context->system.alarm_bits |= GAS_ALARM_EXTERNAL_MODBUS;
+        }
+        return false;
+    }
+
+    if (!A_GasControl_InitExternalComm(context, mode))
+    {
+        target_closed = A_GasControl_DeinitExternalComm(context, mode);
+        previous_restored = false;
+        if (target_closed)
+        {
+            previous_restored = A_GasControl_InitExternalComm(context, previous_mode);
+            context->external_comm_mode = previous_mode;
+        }
+        else
+        {
+            context->external_comm_mode = mode;
+        }
+        if (!target_closed)
+        {
+            context->system.alarm_bits |= (mode == GAS_EXTERNAL_COMM_CAN) ?
+                                          GAS_ALARM_EXTERNAL_CAN : GAS_ALARM_EXTERNAL_MODBUS;
+        }
+        else if (!previous_restored)
+        {
+            context->system.alarm_bits |= (previous_mode == GAS_EXTERNAL_COMM_CAN) ?
+                                          GAS_ALARM_EXTERNAL_CAN : GAS_ALARM_EXTERNAL_MODBUS;
+        }
+        // 目标接口无法关闭时不并行启动原接口，模式字段继续指向可能仍打开的故障接口以便周期诊断。
         return false;
     }
 
@@ -1702,12 +1854,37 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     if (!context->storage_service.initialized ||
         !A_GasControl_SaveCommMode(&context->storage_service, mode))
     {
-        (void) A_GasControl_DeinitExternalComm(context, mode);
-        context->external_comm_mode = previous_mode;
-        (void) A_GasControl_SaveCommMode(&context->storage_service, previous_mode);
+        target_closed = A_GasControl_DeinitExternalComm(context, mode);
+        previous_mode_saved = context->storage_service.initialized &&
+                              A_GasControl_SaveCommMode(&context->storage_service,
+                                                       previous_mode);
         // 目标模式写入或读回失败时尽力重写原模式，避免下次上电误选尚未确认成功的接口。
-        (void) A_GasControl_InitExternalComm(context, previous_mode);
+        previous_restored = false;
+        if (target_closed)
+        {
+            context->external_comm_mode = previous_mode;
+            previous_restored = A_GasControl_InitExternalComm(context, previous_mode);
+        }
+        else
+        {
+            context->external_comm_mode = mode;
+        }
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        if (!target_closed)
+        {
+            context->system.alarm_bits |= (mode == GAS_EXTERNAL_COMM_CAN) ?
+                                          GAS_ALARM_EXTERNAL_CAN : GAS_ALARM_EXTERNAL_MODBUS;
+        }
+        else if (!previous_restored)
+        {
+            context->system.alarm_bits |= (previous_mode == GAS_EXTERNAL_COMM_CAN) ?
+                                          GAS_ALARM_EXTERNAL_CAN : GAS_ALARM_EXTERNAL_MODBUS;
+        }
+        if (!previous_mode_saved)
+        {
+            context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        }
+        // 只有目标接口确认关闭后才重启原接口；任何回滚失败都保留可观察报警和实际服务模式。
         return false;
     }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
@@ -1981,6 +2158,8 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
 {
     uint32_t now_ms; // 当前作用域变量，用于保存当前毫秒时刻。
     Gas_System *system; // 本周期直接使用的系统运行状态，避免通过总上下文重复深层访问。
+    bool valve_timing_ok; // 阀门12 V吸合转5 V保持的本周期执行结果；false表示必须锁定开阀并进入全关流程。
+    bool hmi_input_allowed; // 本周期串口屏输入执行许可；false表示SCI9故障批次已经丢弃，禁止执行配置、清日志或阀门命令。
 
     if (context == NULL)
     {
@@ -1988,37 +2167,103 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     }
 
     system = &context->system;
-    now_ms = H_GasPlatform_Millis(&context->platform);//读取当前毫秒时间，供本周期各状态机使用。
-    A_ModbusPoll_Task(&context->sensor_poll, system, &context->config, now_ms);//轮询并解析 1～7 号压力传感器，更新六瓶压力和总压力。
-    F_ValveControl_Task(&context->platform, system, now_ms);//推进 12 V 吸合转 5 V 保持的阀门时序。
-    if (context->emergency_close_pending)
+    now_ms = H_GasPlatform_Millis(&context->platform);
+
+    A_ModbusPoll_Task(&context->sensor_poll, system, &context->config, now_ms);
+    valve_timing_ok = F_ValveControl_Task(&context->platform, system, now_ms);
+    if (!valve_timing_ok)
+    {
+        system->platform_ready = false;
+        system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+        (void) A_GasControl_ForceAllValvesOff(context);
+    }
+    else if (context->emergency_close_pending)
     {
         (void) A_GasControl_ForceAllValvesOff(context);
     }
-    // 紧急全关失败后每个5 ms控制周期都先重试，成功前保留命令镜像和未就绪锁定。
-    A_Hmi_Task(&context->hmi, system, now_ms);//解析串口屏按钮帧、文本输入和 RTC 响应，并周期请求 RTC。
-    A_HmiLog_InputTask(&context->hmi_log);//处理日志查询页的日期、时间输入。
-    A_HmiConfig_InputTask(&context->hmi_config,
-                          &context->config);//`处理参数页文本输入。
-    A_GasControl_ProcessHmiButton(context);
-    // 先提交本周期收到的文本输入，再处理查询或确认按钮，保证按钮建立的快照使用最后一次输入值。把串口屏按钮转换为排气、测试、停用、合格确认、日志和参数操作。
-    A_GasControl_ProcessHmiConfig(context);//执行串口屏参数保存请求。
-    A_GasControl_ProcessHmiLogClear(context);//执行串口屏日志物理清除请求。
-    A_GasControl_ManualValveTask(context, now_ms);//按截止时间自动关闭人工排气阀、测试阀，并保证停用瓶全关。
-    A_GasControl_UpdateCylinderStates(context, now_ms);//根据压力和测试合格标志更新六瓶业务状态。
-    A_GasControl_SwitchTask(context, now_ms);//执行初始选瓶或低压自动换瓶状态机。
-    A_GasControl_TotalTestTask(context, now_ms);//推进总测试阀预开启和分路测试阀延时放行。
+    // 保持电压切换或全关失败后锁定所有开阀入口；紧急全关在之后每个5 ms周期继续重试。
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    // 全关尚未成功时立即结束本周期，禁止同步EEPROM等非关键业务延后下一次5 ms关阀重试。
+
+    hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
+    if (hmi_input_allowed)
+    {
+        A_Hmi_Task(&context->hmi, system, now_ms);
+        hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
+    }
+    if (hmi_input_allowed)
+    {
+        A_GasControl_ProcessHmiTextInputs(context);
+        hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
+        while (hmi_input_allowed && A_GasControl_ProcessHmiButton(context))
+        {
+            if (A_GasControl_HandleHmiFault(context))
+            {
+                hmi_input_allowed = false;
+                break;
+            }
+            if (A_GasControl_HandleValveIoFault(context))
+            {
+                break;
+            }
+            // 每处理一条事件就检查通信与阀门故障，禁止同一FIFO中的后续请求在已知故障后继续开阀。
+        }
+        if (hmi_input_allowed)
+        {
+            hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
+        }
+        // 文本阶段、按钮阶段以及空队列返回后均复查SCI9，故障批次不得继续生成保存或清除请求。
+    }
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    if (hmi_input_allowed)
+    {
+        A_GasControl_ProcessHmiConfig(context);
+        A_GasControl_ProcessHmiLogClear(context);
+    }
+    // 文本输入先于按钮处理，保证查询和保存操作使用同一帧批次中的最新输入值；故障批次不执行其派生请求。
+
+    A_GasControl_ManualValveTask(context, now_ms);
+    (void) A_GasControl_HandleValveIoFault(context);
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    A_GasControl_UpdateCylinderStates(context, now_ms);
+    (void) A_GasControl_HandleValveIoFault(context);
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    A_GasControl_SwitchTask(context, now_ms);
+    (void) A_GasControl_HandleValveIoFault(context);
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    A_GasControl_TotalTestTask(context, now_ms);
     A_GasControl_CheckOutputInvariant(context);
-    // 状态机处理完成后统一检查硬安全不变量，日志只记录经过安全检查后的最终状态。
+    (void) A_GasControl_HandleValveIoFault(context);
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    // 业务动作中出现新的阀门GPIO错误时，在记录日志前立即进入同一套失效安全全关流程。
+
     if (!A_GasLog_IsClearBusy(&context->log_service) &&
         A_GasLog_IsReady(&context->log_service) &&
-       !A_GasLog_Task(&context->log_service, system))
+        !A_GasLog_Task(&context->log_service, system))
     {
         system->alarm_bits |= GAS_ALARM_STORAGE;
     }
-    A_HmiConfig_Task(&context->hmi_config);//分时刷新参数页显示。
+    A_HmiConfig_Task(&context->hmi_config);
     A_HmiLog_Task(&context->hmi_log, system->date_time.valid);
-    // 参数刷新先尝试占用SCI9；无待发参数时日志和监控继续运行，避免返回事件丢失后长期暂停刷新。非阻塞执行日志索引、读页和逐行发送。
+    // 参数显示和日志发送按周期分时占用SCI9；底层EEPROM单次读写仍为同步操作。
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
         A_Can_UpdateLogInfo(&context->external_can,
@@ -2053,15 +2298,25 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
             system->alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
         }
     }
-    A_GasControl_ProcessCanControl(context);//执行 CAN 收到的人工控制请求。
-    A_GasControl_ProcessExternalConfig(context);//执行外部通讯参数保存/恢复请求。
-    A_GasControl_ProcessExternalLogRead(context);//执行外部通讯日志读取请求。
+    A_GasControl_ProcessCanControl(context);
+    if (!A_GasControl_HandleValveIoFault(context))
+    {
+        A_GasControl_ProcessExternalConfig(context);
+        A_GasControl_ProcessExternalLogRead(context);
+    }
     // 协议层先解析一帧请求，再由气源应用层执行控制、参数持久化或EEPROM日志读取。
+    // CAN控制产生阀门GPIO故障时先紧急全关，并跳过本周期可能同步阻塞的EEPROM请求。
+    (void) A_GasControl_HandleValveIoFault(context);
+    if (context->emergency_close_pending)
+    {
+        return;
+    }
+    // 外部控制位于协议解析之后；其GPIO失败也必须在离开本周期前锁定平台并全关。
+
     if (!A_HmiLog_IsBusy(&context->hmi_log))
     {
         A_Hmi_Refresh(&context->hmi, system, now_ms);
     }
-    // 查询期间暂停监控控件轮询刷新，把SCI9带宽优先让给日志清表和逐行发送。
 }
 
 /*

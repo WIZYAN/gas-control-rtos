@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现串口屏实时监控、按钮事件、RTC和状态刷新业务。
@@ -218,6 +218,11 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
     }
 
     F_Hmi_Task(&context->function, &context->hardware);
+    if (H_Hmi_HasFault(&context->hardware))
+    {
+        return;
+    }
+    // SCI9可能在协议解析期间由中断锁存错误；此时不得提交RTC，也不得继续发送下一次RTC请求。
     if (F_Hmi_TakeRtcTime(&context->function, &rtc_time))
     {
         system->date_time.year = rtc_time.year;

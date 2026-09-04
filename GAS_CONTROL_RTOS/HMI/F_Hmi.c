@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现大彩串口屏协议解析、文本FIFO和控件发送功能。
@@ -133,10 +133,39 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
 }
 
 /*
+ * 函数名：F_Hmi_QueueButtonEvent。
+ * 说明：把按键或下拉菜单事件追加到固定FIFO，队列已满时丢弃新事件并累加计数。
+ * 输入：context为HMI协议上下文；button_id为控件ID；value为按键状态或菜单索引。
+ * 输出：无；事件或丢弃计数保存在context中。
+ */
+static void F_Hmi_QueueButtonEvent(F_Hmi_Context *context,
+                                   uint16_t button_id,
+                                   uint8_t value)
+{
+    uint8_t queue_tail; // 按键FIFO当前可写入的队尾位置。
+
+    if (context->button_queue_count >= F_HMI_BUTTON_EVENT_QUEUE_SIZE)
+    {
+        if (context->button_event_drop_count < UINT32_MAX)
+        {
+            context->button_event_drop_count++;
+        }
+        return;
+    }
+
+    queue_tail = (uint8_t) ((context->button_queue_head +
+                             context->button_queue_count) %
+                            F_HMI_BUTTON_EVENT_QUEUE_SIZE);
+    context->button_queue[queue_tail].button_id = button_id;
+    context->button_queue[queue_tail].value = value;
+    context->button_queue_count++;
+}
+
+/*
  * 函数名：F_Hmi_ParseFrame。
  * 说明：区分EE B1 11按钮和文本输入、EE B1 14下拉菜单选择上传帧，或解析EE F7 RTC响应帧并锁存对应事件。
  * 输入：context 为 HMI 功能层上下文；hardware 为配对的 SCI9 硬件层实例。
- * 输出：无；格式合法且对应事件槽空闲时更新按钮或 RTC 事件字段。
+ * 输出：无；格式合法时按到达顺序写入按键或文本FIFO，RTC仍使用单事件槽。
  */
 static void F_Hmi_ParseFrame(F_Hmi_Context *context)
 {
@@ -149,37 +178,46 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
         (context->rx_frame[1] == 0xB1U) &&
         (context->rx_frame[2] == 0x11U))
     {
-        if ((context->rx_frame[7] == 0x10U) && !context->button_pending)
+        if ((context->rx_frame[7] == 0x10U) &&
+            (context->rx_length == 14U))
         {
-            context->button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
-                                             context->rx_frame[6]);
-            context->button_value = context->rx_frame[context->rx_length - 5U];
-            context->button_pending = true;
-            // 0x10是按钮控件类型；单事件槽在应用层取走前不覆盖尚未处理的操作。
+            uint16_t button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
+                                             context->rx_frame[6]); // 当前按键上传帧中的控件ID。
+
+            F_Hmi_QueueButtonEvent(context,
+                                   button_id,
+                                   context->rx_frame[context->rx_length - 5U]);
+            // 0x10是按键控件类型；FIFO保留同一周期内连续到达的操作。
         }
-        else if ((context->rx_frame[7] == 0x11U) &&
-                 (context->text_queue_count < F_HMI_TEXT_EVENT_QUEUE_SIZE))
+        else if (context->rx_frame[7] == 0x11U)
         {
             text_end = (uint16_t) (context->rx_length - 5U);
             text_length = (uint16_t) (text_end - 8U);
             if ((context->rx_frame[text_end] == 0U) &&
                 (text_length <= F_HMI_TEXT_MAX_SIZE))
             {
-                text_queue_tail = (uint8_t) ((context->text_queue_head +
-                                              context->text_queue_count) %
-                                             F_HMI_TEXT_EVENT_QUEUE_SIZE);
-                context->text_queue[text_queue_tail].page_id =
-                    (uint16_t) (((uint16_t) context->rx_frame[3] << 8U) |
-                                context->rx_frame[4]);
-                context->text_queue[text_queue_tail].control_id =
-                    (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
-                                context->rx_frame[6]);
-                (void) memcpy(context->text_queue[text_queue_tail].value,
-                              &context->rx_frame[8], text_length);
-                context->text_queue[text_queue_tail].value[text_length] = '\0';
-                context->text_queue[text_queue_tail].length = (uint8_t) text_length;
-                context->text_queue_count++;
-                // 0x11是文本控件类型；只接受限定长度且以NUL结束的ASCII参数文本，并按顺序入队。
+                if (context->text_queue_count < F_HMI_TEXT_EVENT_QUEUE_SIZE)
+                {
+                    text_queue_tail = (uint8_t) ((context->text_queue_head +
+                                                  context->text_queue_count) %
+                                                 F_HMI_TEXT_EVENT_QUEUE_SIZE);
+                    context->text_queue[text_queue_tail].page_id =
+                        (uint16_t) (((uint16_t) context->rx_frame[3] << 8U) |
+                                    context->rx_frame[4]);
+                    context->text_queue[text_queue_tail].control_id =
+                        (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
+                                    context->rx_frame[6]);
+                    (void) memcpy(context->text_queue[text_queue_tail].value,
+                                  &context->rx_frame[8], text_length);
+                    context->text_queue[text_queue_tail].value[text_length] = '\0';
+                    context->text_queue[text_queue_tail].length = (uint8_t) text_length;
+                    context->text_queue_count++;
+                }
+                else if (context->text_event_drop_count < UINT32_MAX)
+                {
+                    context->text_event_drop_count++;
+                }
+                // 0x11是文本控件类型；合法文本按顺序入队，队列已满时丢弃新事件并记数。
             }
         }
     }
@@ -187,13 +225,12 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
              (context->rx_frame[0] == 0xEEU) &&
              (context->rx_frame[1] == 0xB1U) &&
              (context->rx_frame[2] == 0x14U) &&
-             (context->rx_frame[7] == 0x1AU) &&
-             !context->button_pending)
+             (context->rx_frame[7] == 0x1AU))
     {
-        context->button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
-                                         context->rx_frame[6]);
-        context->button_value = context->rx_frame[8];
-        context->button_pending = true;
+        uint16_t button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
+                                         context->rx_frame[6]); // 当前下拉菜单上传帧中的控件ID。
+
+        F_Hmi_QueueButtonEvent(context, button_id, context->rx_frame[8]);
         // 0x1A是下拉菜单控件类型；frame[8]为从0开始的选中项索引，frame[9]为按下或弹起状态。
         // 按下和弹起都会上传且携带相同索引，重复锁存对单项选择幂等，因此不再区分状态值。
     }
@@ -224,7 +261,7 @@ bool F_Hmi_Init(F_Hmi_Context *context, H_Hmi_Context *hardware)
  * 函数名：F_Hmi_Task。
  * 说明：从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧。
  * 输入：context 为 HMI 功能层上下文；hardware 为配对的 SCI9 硬件层实例。
- * 输出：无；解析成功后在上下文中锁存一条按钮或下拉菜单选择事件。
+ * 输出：无；解析成功后将按钮或下拉菜单选择事件写入固定容量队列。
  */
 void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware)
 {
@@ -272,18 +309,24 @@ void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware)
  * 函数名：F_Hmi_TakeButtonEvent。
  * 说明：取出一条已经解析完成的按钮或下拉菜单选择事件。
  * 输入：context 为功能层上下文；button_id 为控件 ID 输出指针；value 为按钮状态或菜单选中项索引输出指针。
- * 输出：存在待处理事件时返回 true，否则返回 false。
+ * 输出：队列存在待处理事件时返回 true，否则返回 false。
  */
 bool F_Hmi_TakeButtonEvent(F_Hmi_Context *context, uint16_t *button_id, uint8_t *value)
 {
-    if ((context == NULL) || (button_id == NULL) || (value == NULL) || !context->button_pending)
+    const F_Hmi_Button_Event *event; // 按键FIFO队首待取事件。
+
+    if ((context == NULL) || (button_id == NULL) || (value == NULL) ||
+        (context->button_queue_count == 0U))
     {
         return false;
     }
 
-    *button_id = context->button_id;
-    *value = context->button_value;
-    context->button_pending = false;
+    event = &context->button_queue[context->button_queue_head];
+    *button_id = event->button_id;
+    *value = event->value;
+    context->button_queue_head = (uint8_t) ((context->button_queue_head + 1U) %
+                                            F_HMI_BUTTON_EVENT_QUEUE_SIZE);
+    context->button_queue_count--;
     return true;
 }
 
@@ -346,6 +389,63 @@ bool F_Hmi_PeekTextEvent(const F_Hmi_Context *context,
 }
 
 /*
+ * 函数名：F_Hmi_DiscardTextEvent。
+ * 说明：丢弃文本输入FIFO队首的一条无法识别事件，避免阻塞后续有效输入。
+ * 输入：context为HMI协议上下文。
+ * 输出：成功丢弃一条队首事件时返回true，队列为空或参数无效时返回false。
+ */
+bool F_Hmi_DiscardTextEvent(F_Hmi_Context *context)
+{
+    if ((context == NULL) || (context->text_queue_count == 0U))
+    {
+        return false;
+    }
+
+    context->text_queue_head = (uint8_t) ((context->text_queue_head + 1U) %
+                                          F_HMI_TEXT_EVENT_QUEUE_SIZE);
+    context->text_queue_count--;
+    if (context->text_event_drop_count < UINT32_MAX)
+    {
+        context->text_event_drop_count++;
+    }
+    return true;
+}
+
+/*
+ * 函数名：F_Hmi_DiscardPendingInput。
+ * 说明：串口接收故障后清除残帧和尚未执行的输入事件，禁止不完整帧继续影响控制。
+ * 输入：context为HMI协议上下文。
+ * 输出：无；保留累计丢弃计数，复位接收状态、输入FIFO和RTC待取标志。
+ */
+void F_Hmi_DiscardPendingInput(F_Hmi_Context *context)
+{
+    if (context == NULL)
+    {
+        return;
+    }
+
+    while ((context->button_queue_count > 0U) &&
+           (context->button_event_drop_count < UINT32_MAX))
+    {
+        context->button_event_drop_count++;
+        context->button_queue_count--;
+    }
+    while ((context->text_queue_count > 0U) &&
+           (context->text_event_drop_count < UINT32_MAX))
+    {
+        context->text_event_drop_count++;
+        context->text_queue_count--;
+    }
+    context->button_queue_head = 0U;
+    context->button_queue_count = 0U;
+    context->text_queue_head = 0U;
+    context->text_queue_count = 0U;
+    context->rx_length = 0U;
+    context->receiving = false;
+    context->rtc_time_pending = false;
+}
+
+/*
  * 函数名：F_Hmi_SendReadRtc。
  * 说明：按大彩协议发送读取串口屏全局 RTC 的 0x82 指令；RTC 控件 ID 不包含在此全局命令中。
  * 输入：context 为 HMI 功能层上下文输入输出指针。
@@ -395,13 +495,14 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
                     const char *text,
                     size_t length)
 {
-    size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
+    size_t frame_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (hardware == NULL) || (text == NULL) || (length == 0U) ||
-        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(hardware))
+        (length > (F_HMI_TX_MAX_SIZE - 11U)) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
+    frame_length = length + 11U;
 
     context->tx_frame[0] = 0xEEU;
     context->tx_frame[1] = 0xB1U;
@@ -534,13 +635,14 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
                          const char *record,
                          size_t length)
 {
-    size_t frame_length = length + 11U; // 当前作用域变量，用于保存有效数据长度。
+    size_t frame_length; // 当前作用域变量，用于保存有效数据长度。
 
     if ((context == NULL) || (hardware == NULL) || (record == NULL) || (length == 0U) ||
-        (frame_length > F_HMI_TX_MAX_SIZE) || H_Hmi_IsTxBusy(hardware))
+        (length > (F_HMI_TX_MAX_SIZE - 11U)) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
+    frame_length = length + 11U;
 
     context->tx_frame[0] = 0xEEU;
     context->tx_frame[1] = 0xB1U;

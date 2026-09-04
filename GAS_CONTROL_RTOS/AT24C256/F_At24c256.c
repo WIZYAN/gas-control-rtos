@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现AT24C256页写、随机读和写完成轮询功能。
@@ -28,19 +28,41 @@ static bool F_At24c256_SetResult(F_At24c256_Context *context, F_At24c256_Result 
 }
 
 /*
+ * 函数名：F_At24c256_HandleBusError。
+ * 说明：对已确认的软件 IIC 总线错误执行一次有界恢复，但不重试当前 EEPROM 操作。
+ * 输入：context 为驱动上下文。
+ * 输出：始终返回 false，并把最近结果保存为 AT24C256_RESULT_BUS。
+ */
+static bool F_At24c256_HandleBusError(F_At24c256_Context *context)
+{
+    if (context != NULL)
+    {
+        (void) H_SoftIic_RecoverBus(&context->iic);
+    }
+    return F_At24c256_SetResult(context, AT24C256_RESULT_BUS);
+}
+
+/*
  * 函数名：F_At24c256_SetWriteProtect。
  * 说明：设置 AT24C256 的 WP 引脚，高电平禁止写入，低电平允许写入。
  * 输入：context 为驱动上下文；protect 为 true 时启用写保护，否则允许写入。
  * 输出：GPIO 配置和电平写入成功时返回 true，否则返回 false。
  */
-static bool F_At24c256_SetWriteProtect(const F_At24c256_Context *context, bool protect)
+static bool F_At24c256_SetWriteProtect(F_At24c256_Context *context, bool protect)
 {
+    bool success; // WP引脚配置和电平写入结果。
+
     if (context == NULL)
     {
         return false;
     }
 
-    return H_SoftIic_WriteControlPin(context->write_protect_pin, protect);
+    success = H_SoftIic_WriteControlPin(context->write_protect_pin, protect);
+    if (!success)
+    {
+        context->write_protect_fault = true;
+    }
+    return success;
 }
 
 /*
@@ -59,22 +81,67 @@ static bool F_At24c256_AddressInRange(uint16_t address, size_t length)
 }
 
 /*
+ * 函数名：F_At24c256_WriteBusByte。
+ * 说明：发送一个字节，并把底层总线结果和从机应答转换为 AT24C256 结果码。
+ * 输入：context 为驱动上下文；data 为需要发送的字节。
+ * 输出：返回 OK、NACK、BUS 或 PARAMETER。
+ */
+static F_At24c256_Result F_At24c256_WriteBusByte(F_At24c256_Context *context, uint8_t data)
+{
+    bool acknowledged = false; // 从机应答标志；false 表示 NACK，true 表示 ACK。
+
+    if (context == NULL)
+    {
+        return AT24C256_RESULT_PARAMETER;
+    }
+    if (!H_SoftIic_WriteByte(&context->iic, data, &acknowledged))
+    {
+        return AT24C256_RESULT_BUS;
+    }
+    return acknowledged ? AT24C256_RESULT_OK : AT24C256_RESULT_NACK;
+}
+
+/*
  * 函数名：F_At24c256_SendDeviceAddress。
  * 说明：向软件 IIC 总线发送 AT24C256 器件地址和读写位。
  * 输入：context 为驱动上下文；read 为 true 时发送读地址，否则发送写地址。
- * 输出：器件返回 ACK 时返回 true，否则返回 false。
+ * 输出：返回 OK、NACK、BUS 或 PARAMETER，用于区分从机应答和总线失败。
  */
-static bool F_At24c256_SendDeviceAddress(F_At24c256_Context *context, bool read)
+static F_At24c256_Result F_At24c256_SendDeviceAddress(F_At24c256_Context *context, bool read)
 {
     uint8_t address_byte; // 当前作用域变量，用于保存存储或寄存器地址。
 
     if (context == NULL)
     {
-        return false;
+        return AT24C256_RESULT_PARAMETER;
     }
 
     address_byte = (uint8_t) ((context->device_address_7bit << 1U) | (read ? 1U : 0U));
-    return H_SoftIic_WriteByte(&context->iic, address_byte);
+    return F_At24c256_WriteBusByte(context, address_byte);
+}
+
+/*
+ * 函数名：F_At24c256_EndFailedTransfer。
+ * 说明：在字节发送失败后尝试发送停止条件，并对已知总线错误执行一次恢复。
+ * 输入：context 为驱动上下文；transfer_result 为字节发送结果。
+ * 输出：始终返回 false，并保留 NACK 或上报 BUS。
+ */
+static bool F_At24c256_EndFailedTransfer(F_At24c256_Context *context,
+                                         F_At24c256_Result transfer_result)
+{
+    bool stop_succeeded; // 停止条件执行结果；false 表示 GPIO 或时序故障。
+
+    if (context == NULL)
+    {
+        return F_At24c256_SetResult(context, AT24C256_RESULT_PARAMETER);
+    }
+
+    stop_succeeded = H_SoftIic_Stop(&context->iic);
+    if ((transfer_result == AT24C256_RESULT_BUS) || !stop_succeeded)
+    {
+        return F_At24c256_HandleBusError(context);
+    }
+    return F_At24c256_SetResult(context, transfer_result);
 }
 
 /*
@@ -85,24 +152,33 @@ static bool F_At24c256_SendDeviceAddress(F_At24c256_Context *context, bool read)
  */
 static bool F_At24c256_ProbeReady(F_At24c256_Context *context)
 {
-    bool acknowledged; // EEPROM应答标志；使用范围：当前器件就绪探测函数内；取值范围：false/true，false表示器件返回NACK或发送失败，true表示器件地址已收到ACK。
+    F_At24c256_Result address_result; // 器件地址发送结果，用于区分 ACK、NACK 和总线失败。
+    bool stop_succeeded; // 停止条件执行结果；false 表示 GPIO 或时序故障。
 
-    if ((context == NULL) || !H_SoftIic_Start(&context->iic))
+    if (context == NULL)
     {
-        return false;
+        return F_At24c256_SetResult(context, AT24C256_RESULT_PARAMETER);
+    }
+    if (!H_SoftIic_Start(&context->iic))
+    {
+        return F_At24c256_HandleBusError(context);
     }
 
-    acknowledged = F_At24c256_SendDeviceAddress(context, false);
-    H_SoftIic_Stop(&context->iic);
+    address_result = F_At24c256_SendDeviceAddress(context, false);
+    stop_succeeded = H_SoftIic_Stop(&context->iic);
+    if ((address_result == AT24C256_RESULT_BUS) || !stop_succeeded)
+    {
+        return F_At24c256_HandleBusError(context);
+    }
     // EEPROM 内部写周期期间会对器件地址返回 NACK，可用该行为判断写入是否真正结束。
-    return acknowledged;
+    return F_At24c256_SetResult(context, address_result);
 }
 
 /*
  * 函数名：F_At24c256_WaitWriteComplete。
  * 说明：通过器件地址应答轮询等待 AT24C256 内部页写周期完成。
  * 输入：context 为驱动上下文。
- * 输出：限定次数内检测到器件 ACK 时返回 true，否则返回 false。
+ * 输出：限定次数内检测到器件 ACK 时返回 true；总线失败或等待超时时返回 false。
  */
 static bool F_At24c256_WaitWriteComplete(F_At24c256_Context *context)
 {
@@ -114,11 +190,15 @@ static bool F_At24c256_WaitWriteComplete(F_At24c256_Context *context)
         {
             return true;
         }
+        if ((context == NULL) || (context->last_result == AT24C256_RESULT_BUS))
+        {
+            return false;
+        }
         H_SoftIic_DelayMicroseconds(AT24C256_WRITE_POLL_DELAY_US);
     }
     // 应答轮询避免依赖不确定的固定长延时，并限制异常器件造成的阻塞时间。
 
-    return false;
+    return F_At24c256_SetResult(context, AT24C256_RESULT_TIMEOUT);
 }
 
 /*
@@ -133,26 +213,46 @@ static bool F_At24c256_WritePageFragment(F_At24c256_Context *context,
                               size_t length)
 {
     size_t i; // 当前作用域变量，用于保存当前处理数据。
+    F_At24c256_Result transfer_result; // 当前发送字节的 ACK/NACK/总线结果。
 
-    if ((context == NULL) || (data == NULL) || (length == 0U) ||
-        !H_SoftIic_Start(&context->iic) || !F_At24c256_SendDeviceAddress(context, false) ||
-        !H_SoftIic_WriteByte(&context->iic, (uint8_t) (address >> 8U)) ||
-        !H_SoftIic_WriteByte(&context->iic, (uint8_t) address))
+    if ((context == NULL) || (data == NULL) || (length == 0U))
     {
-        H_SoftIic_Stop((context != NULL) ? &context->iic : NULL);
-        return false;
+        return F_At24c256_SetResult(context, AT24C256_RESULT_PARAMETER);
+    }
+    if (!H_SoftIic_Start(&context->iic))
+    {
+        return F_At24c256_HandleBusError(context);
+    }
+
+    transfer_result = F_At24c256_SendDeviceAddress(context, false);
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
+    }
+    transfer_result = F_At24c256_WriteBusByte(context, (uint8_t) (address >> 8U));
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
+    }
+    transfer_result = F_At24c256_WriteBusByte(context, (uint8_t) address);
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
     }
 
     for (i = 0U; i < length; ++i)
     {
-        if (!H_SoftIic_WriteByte(&context->iic, data[i]))
+        transfer_result = F_At24c256_WriteBusByte(context, data[i]);
+        if (transfer_result != AT24C256_RESULT_OK)
         {
-            H_SoftIic_Stop(&context->iic);
-            return false;
+            return F_At24c256_EndFailedTransfer(context, transfer_result);
         }
     }
 
-    H_SoftIic_Stop(&context->iic);
+    if (!H_SoftIic_Stop(&context->iic))
+    {
+        return F_At24c256_HandleBusError(context);
+    }
     return F_At24c256_WaitWriteComplete(context);
 }
 
@@ -177,15 +277,19 @@ bool F_At24c256_Init(F_At24c256_Context *context,
     context->write_protect_pin = write_protect_pin;
     context->device_address_7bit = device_address_7bit;
 
-    if (!F_At24c256_SetWriteProtect(context, true) ||
-        !H_SoftIic_Init(&context->iic, scl_pin, sda_pin, AT24C256_IIC_HALF_PERIOD_US))
+    if (!F_At24c256_SetWriteProtect(context, true))
     {
+        return F_At24c256_SetResult(context, AT24C256_RESULT_BUS);
+    }
+    if (!H_SoftIic_Init(&context->iic, scl_pin, sda_pin, AT24C256_IIC_HALF_PERIOD_US))
+    {
+        // H_SoftIic_Init 在 GPIO 配置成功后已自行执行一次有界总线恢复。
         return F_At24c256_SetResult(context, AT24C256_RESULT_BUS);
     }
 
     if (!F_At24c256_ProbeReady(context))
     {
-        return F_At24c256_SetResult(context, AT24C256_RESULT_NACK);
+        return false;
     }
 
     context->initialized = true;
@@ -204,6 +308,7 @@ bool F_At24c256_Read(F_At24c256_Context *context,
                    size_t length)
 {
     size_t i; // 当前作用域变量，用于保存当前处理数据。
+    F_At24c256_Result transfer_result; // 当前发送字节的 ACK/NACK/总线结果。
 
     if ((context == NULL) || (buffer == NULL) || (length == 0U))
     {
@@ -218,22 +323,54 @@ bool F_At24c256_Read(F_At24c256_Context *context,
         return F_At24c256_SetResult(context, AT24C256_RESULT_RANGE);
     }
 
-    if (!H_SoftIic_Start(&context->iic) || !F_At24c256_SendDeviceAddress(context, false) ||
-        !H_SoftIic_WriteByte(&context->iic, (uint8_t) (address >> 8U)) ||
-        !H_SoftIic_WriteByte(&context->iic, (uint8_t) address) ||
-        !H_SoftIic_Start(&context->iic) || !F_At24c256_SendDeviceAddress(context, true))
+    if (!H_SoftIic_Start(&context->iic))
     {
-        H_SoftIic_Stop(&context->iic);
-        return F_At24c256_SetResult(context, AT24C256_RESULT_NACK);
+        return F_At24c256_HandleBusError(context);
+    }
+
+    transfer_result = F_At24c256_SendDeviceAddress(context, false);
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
+    }
+    transfer_result = F_At24c256_WriteBusByte(context, (uint8_t) (address >> 8U));
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
+    }
+    transfer_result = F_At24c256_WriteBusByte(context, (uint8_t) address);
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
+    }
+    if (!H_SoftIic_Start(&context->iic))
+    {
+        (void) H_SoftIic_Stop(&context->iic);
+        return F_At24c256_HandleBusError(context);
+    }
+
+    transfer_result = F_At24c256_SendDeviceAddress(context, true);
+    if (transfer_result != AT24C256_RESULT_OK)
+    {
+        return F_At24c256_EndFailedTransfer(context, transfer_result);
     }
     // 先用写方向设置 16 位字地址，再发送重复起始切到读方向，期间不能插入停止条件。
 
     for (i = 0U; i < length; ++i)
     {
-        buffer[i] = H_SoftIic_ReadByte(&context->iic, (i + 1U) < length);
+        if (!H_SoftIic_ReadByte(&context->iic,
+                                (i + 1U) < length,
+                                &buffer[i]))
+        {
+            (void) H_SoftIic_Stop(&context->iic);
+            return F_At24c256_HandleBusError(context);
+        }
     }
     // 连续读取时对中间字节回 ACK，最后一个字节回 NACK，通知 EEPROM 结束顺序读。
-    H_SoftIic_Stop(&context->iic);
+    if (!H_SoftIic_Stop(&context->iic))
+    {
+        return F_At24c256_HandleBusError(context);
+    }
 
     return F_At24c256_SetResult(context, AT24C256_RESULT_OK);
 }
@@ -251,6 +388,7 @@ bool F_At24c256_Write(F_At24c256_Context *context,
 {
     size_t remaining = length; // 当前作用域变量，用于保存当前处理数据。
     size_t offset = 0U; // 当前作用域变量，用于保存数据偏移量。
+    F_At24c256_Result write_result; // 页写失败码，用于恢复写保护后保留原始错误。
 
     if ((context == NULL) || (data == NULL) || (length == 0U))
     {
@@ -266,6 +404,8 @@ bool F_At24c256_Write(F_At24c256_Context *context,
     }
     if (!F_At24c256_SetWriteProtect(context, false))
     {
+        (void) F_At24c256_SetWriteProtect(context, true);
+        // 解除写保护失败时立即尽力恢复高电平，避免WP停留在可写状态。
         return F_At24c256_SetResult(context, AT24C256_RESULT_BUS);
     }
     // 仅在实际写入期间拉低 WP；成功、失败路径都会尽快恢复写保护。
@@ -281,8 +421,12 @@ bool F_At24c256_Write(F_At24c256_Context *context,
         }
         if (!F_At24c256_WritePageFragment(context, address, &data[offset], fragment))
         {
-            (void) F_At24c256_SetWriteProtect(context, true);
-            return F_At24c256_SetResult(context, AT24C256_RESULT_NACK);
+            write_result = context->last_result;
+            if (!F_At24c256_SetWriteProtect(context, true))
+            {
+                return F_At24c256_SetResult(context, write_result);
+            }
+            return F_At24c256_SetResult(context, write_result);
         }
 
         address = (uint16_t) (address + fragment);
@@ -338,25 +482,51 @@ bool F_At24c256_EraseRange(F_At24c256_Context *context, uint16_t address, size_t
  */
 bool F_At24c256_SelfTest(F_At24c256_Context *context, uint16_t test_address)
 {
-    const uint8_t pattern[2] = {0x4FU, 0x4BU}; // 当前作用域变量，用于保存当前处理数据数组。
+    uint8_t pattern[2]; // 根据原数据生成且每字节必然变化的测试图样，避免固定图样碰撞造成误判。
     uint8_t original[2]; // 当前作用域变量，用于保存当前处理数据数组。
     uint8_t verified[2]; // 当前作用域变量，用于保存当前处理数据数组。
-    bool result; // EEPROM自检图样校验标志；使用范围：当前自检函数内；取值范围：false/true，false表示读回图样不一致，true表示读回图样一致。
+    uint8_t restored[2]; // 恢复原数据后的读回值，用于确认自检没有破坏保留地址。
+    F_At24c256_Result test_result; // 测试写和读回阶段的结果，恢复原数据后重新写回上下文。
 
-    if ((context == NULL) || !F_At24c256_AddressInRange(test_address, sizeof(pattern)) ||
-        !F_At24c256_Read(context, test_address, original, sizeof(original)) ||
-        !F_At24c256_Write(context, test_address, pattern, sizeof(pattern)) ||
-        !F_At24c256_Read(context, test_address, verified, sizeof(verified)))
+    if ((context == NULL) || !F_At24c256_AddressInRange(test_address, sizeof(pattern)))
+    {
+        return F_At24c256_SetResult(context, AT24C256_RESULT_PARAMETER);
+    }
+    if (!F_At24c256_Read(context, test_address, original, sizeof(original)))
     {
         return false;
     }
+    pattern[0] = (uint8_t) (original[0] ^ 0xFFU);
+    pattern[1] = (uint8_t) (original[1] ^ 0xA5U);
 
-    result = (memcmp(pattern, verified, sizeof(pattern)) == 0);
+    if (!F_At24c256_Write(context, test_address, pattern, sizeof(pattern)))
+    {
+        test_result = context->last_result;
+    }
+    else if (!F_At24c256_Read(context, test_address, verified, sizeof(verified)))
+    {
+        test_result = context->last_result;
+    }
+    else
+    {
+        test_result = (memcmp(pattern, verified, sizeof(pattern)) == 0) ?
+                      AT24C256_RESULT_OK : AT24C256_RESULT_VERIFY;
+    }
+
+    // 只要已进入测试写阶段，即使写入或读回失败也必须尝试恢复原数据。
     if (!F_At24c256_Write(context, test_address, original, sizeof(original)))
     {
         return false;
     }
-    // 自检先保存原数据并在校验后恢复，测试地址仍应在存储规划中明确保留。
+    if (!F_At24c256_Read(context, test_address, restored, sizeof(restored)))
+    {
+        return false;
+    }
+    if (memcmp(original, restored, sizeof(original)) != 0)
+    {
+        return F_At24c256_SetResult(context, AT24C256_RESULT_VERIFY);
+    }
+    // 自检先保存原数据并在校验后恢复、读回确认，测试地址仍应在存储规划中明确保留。
 
-    return F_At24c256_SetResult(context, result ? AT24C256_RESULT_OK : AT24C256_RESULT_VERIFY);
+    return F_At24c256_SetResult(context, test_result);
 }

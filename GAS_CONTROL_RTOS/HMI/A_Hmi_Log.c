@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现串口屏日志条件筛选、索引建立、分页和格式化显示。
@@ -1561,7 +1561,7 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
 
 /*
  * 函数名：A_HmiLog_Task。
- * 说明：非阻塞执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多读一条或发一行。
+ * 说明：分步执行索引建立、当前页读取、记录格式转换和串口发送，每次调用最多同步读一条或异步发送一行。
  * 输入：context为日志查询上下文输入输出指针。
  * 输出：无；查询进度保存在context中。
  */

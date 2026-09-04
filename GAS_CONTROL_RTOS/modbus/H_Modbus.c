@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现SCI0外部RS485方向控制、匹配电阻和异步收发。
@@ -17,22 +17,22 @@
  * 函数名：H_Modbus_SetReceiveMode。
  * 说明：将外部 RS485 收发器切换到接收状态。
  * 输入：无。
- * 输出：无。
+ * 输出：方向 GPIO 成功切换到接收电平时返回 true，否则返回 false。
  */
-static void H_Modbus_SetReceiveMode(void)
+static bool H_Modbus_SetReceiveMode(void)
 {
-    (void) R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_LOW);
+    return (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_LOW) == FSP_SUCCESS);
 }
 
 /*
  * 函数名：H_Modbus_SetTransmitMode。
  * 说明：将外部 RS485 收发器切换到发送状态。
  * 输入：无。
- * 输出：无。
+ * 输出：方向 GPIO 成功切换到发送电平时返回 true，否则返回 false。
  */
-static void H_Modbus_SetTransmitMode(void)
+static bool H_Modbus_SetTransmitMode(void)
 {
-    (void) R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_HIGH);
+    return (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_HIGH) == FSP_SUCCESS);
 }
 
 /*
@@ -104,8 +104,17 @@ bool H_Modbus_Init(H_Modbus_Context *context)
     }
 
     memset(context, 0, sizeof(*context));
-    H_Modbus_SetReceiveMode();
-    (void) R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_485RES, BSP_IO_LEVEL_HIGH); // 高电平使能外部总线匹配电阻。
+    if (!H_Modbus_SetReceiveMode())
+    {
+        context->uart_error = true;
+        return false;
+    }
+    if (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_485RES, BSP_IO_LEVEL_HIGH) != FSP_SUCCESS)
+    {
+        context->uart_error = true;
+        return false;
+    }
+    // 高电平使能外部总线匹配电阻，引脚写入失败时不允许继续打开串口。
 
     result = R_SCI_UART_Open(&rs485_out_ctrl, &rs485_out_cfg);
     if (result == FSP_ERR_ALREADY_OPEN)
@@ -114,16 +123,23 @@ bool H_Modbus_Init(H_Modbus_Context *context)
     }
     if (result != FSP_SUCCESS)
     {
+        context->uart_error = true;
         return false;
     }
+    context->uart_open = true;
 
     result = R_SCI_UART_CallbackSet(&rs485_out_ctrl, rs485_out_callback, context, NULL);
     if (result != FSP_SUCCESS)
     {
+        context->uart_error = true;
+        result = R_SCI_UART_Close(&rs485_out_ctrl);
+        if ((result == FSP_SUCCESS) || (result == FSP_ERR_NOT_OPEN))
+        {
+            context->uart_open = false;
+        }
         return false;
     }
 
-    context->uart_open = true;
     H_Modbus_ResetReceiveState(context);
     return true;
 }
@@ -137,15 +153,20 @@ bool H_Modbus_Init(H_Modbus_Context *context)
 bool H_Modbus_Deinit(H_Modbus_Context *context)
 {
     fsp_err_t result; // 当前作用域变量，用于保存操作结果。
+    bool receive_mode_set; // RS485接收方向恢复标志；使用范围：当前反初始化函数内；false表示方向GPIO写入失败，true表示已切回接收。
 
     if (context == NULL)
     {
         return false;
     }
-    H_Modbus_SetReceiveMode();
+    receive_mode_set = H_Modbus_SetReceiveMode();
+    if (!receive_mode_set)
+    {
+        context->uart_error = true;
+    }
     if (!context->uart_open)
     {
-        return true;
+        return receive_mode_set;
     }
     result = R_SCI_UART_Close(&rs485_out_ctrl);
     if ((result != FSP_SUCCESS) && (result != FSP_ERR_NOT_OPEN))
@@ -153,7 +174,8 @@ bool H_Modbus_Deinit(H_Modbus_Context *context)
         return false;
     }
     (void) memset(context, 0, sizeof(*context));
-    return true;
+    context->uart_error = !receive_mode_set;
+    return receive_mode_set;
 }
 
 /*
@@ -204,13 +226,21 @@ bool H_Modbus_Send(H_Modbus_Context *context, const uint8_t *data, uint16_t leng
     }
 
     memcpy(context->transmit_buffer, data, length);
+    if (!H_Modbus_SetTransmitMode())
+    {
+        context->uart_error = true;
+        return false;
+    }
     context->transmit_busy = true;
-    H_Modbus_SetTransmitMode();
     result = R_SCI_UART_Write(&rs485_out_ctrl, context->transmit_buffer, length);
     if (result != FSP_SUCCESS)
     {
         context->transmit_busy = false;
-        H_Modbus_SetReceiveMode();
+        context->uart_error = true;
+        if (!H_Modbus_SetReceiveMode())
+        {
+            context->uart_error = true;
+        }
         return false;
     }
 
@@ -276,17 +306,25 @@ void rs485_out_callback(uart_callback_args_t *p_args)
     }
     else if (p_args->event == UART_EVENT_TX_COMPLETE)
     {
+        if (!H_Modbus_SetReceiveMode())
+        {
+            context->uart_error = true;
+        }
         context->transmit_busy = false;
-        H_Modbus_SetReceiveMode(); // 最后一个停止位发送完成后再切回接收，避免响应尾字节被截断。
+        // 最后一个停止位发送完成后再切回接收，避免响应尾字节被截断。
     }
-    else if ((p_args->event == UART_EVENT_ERR_PARITY) ||
-             (p_args->event == UART_EVENT_ERR_FRAMING) ||
-             (p_args->event == UART_EVENT_ERR_OVERFLOW))
+    else if ((p_args->event & (UART_EVENT_ERR_PARITY |
+                               UART_EVENT_ERR_FRAMING |
+                               UART_EVENT_ERR_OVERFLOW |
+                               UART_EVENT_BREAK_DETECT)) != 0U)
     {
         context->uart_error = true;
         H_Modbus_ResetReceiveState(context);
         context->transmit_busy = false;
-        H_Modbus_SetReceiveMode();
+        if (!H_Modbus_SetReceiveMode())
+        {
+            context->uart_error = true;
+        }
     }
     else
     {

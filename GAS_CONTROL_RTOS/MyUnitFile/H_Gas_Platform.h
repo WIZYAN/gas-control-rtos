@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 声明气源平台硬件上下文、阀门映射和底层操作接口。
@@ -28,6 +28,7 @@ typedef struct
     bool exhaust_state[GAS_CYLINDER_COUNT]; // 六路排气阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
     bool test_state[GAS_CYLINDER_COUNT]; // 六路测试阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
     bool total_test_state; // VAL_CAL总测试阀最近一次成功写入的逻辑状态；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
+    bool valve_io_error; // 阀门GPIO写入错误锁存标志；使用范围：阀门硬件层与周期控制之间；false表示自上次成功全关后未发生GPIO写入失败，true表示至少一次真实阀门GPIO写入失败。
     bool boost_state[GAS_CYLINDER_COUNT]; // 六组 VAL_Px 当前是否处于 12 V 吸合阶段；使用范围：当前声明作用域内使用；取值范围：false/true，false表示关闭或未置位，true表示开启或已置位。
     uint32_t boost_deadline_ms[GAS_CYLINDER_COUNT]; // 六组 12 V 吸合阶段的结束时间。
     bool boost_interval_active[GAS_CYLINDER_COUNT]; // 六组强吸合最短间隔计时是否正在生效；使用范围：当前声明作用域内使用；取值范围：false/true，false表示未激活，true表示已激活。
@@ -70,9 +71,17 @@ bool H_GasPlatform_SensorRxStart(H_Gas_Platform_Context *context, uint8_t *data,
  * 函数名：H_GasPlatform_SensorAbort。
  * 说明：中止当前传感器收发事务并恢复 RS485 接收方向。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
- * 输出：无。
+ * 输出：中止收发并恢复接收方向均成功时返回 true，否则返回 false 并保留错误状态。
  */
-void H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context);
+bool H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context);
+
+/*
+ * 函数名：H_GasPlatform_SensorHasError。
+ * 说明：查询当前传感器串口事务是否发生底层错误。
+ * 输入：context 为只读硬件逻辑层上下文指针。
+ * 输出：存在串口错误或参数无效时返回 true，否则返回 false。
+ */
+bool H_GasPlatform_SensorHasError(const H_Gas_Platform_Context *context);
 
 /*
  * 函数名：H_GasPlatform_SensorTxDone。
@@ -142,8 +151,16 @@ bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
 bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms);
 
 /*
+ * 函数名：H_GasPlatform_ValveHasIoError。
+ * 说明：查询自上次成功全关后是否发生过真实阀门 GPIO 写入失败。
+ * 输入：context 为只读硬件逻辑层上下文指针。
+ * 输出：存在阀门 GPIO 写入错误或参数无效时返回 true，否则返回 false。
+ */
+bool H_GasPlatform_ValveHasIoError(const H_Gas_Platform_Context *context);
+
+/*
  * 函数名：H_GasPlatform_AllValvesOff。
- * 说明：尝试关闭板上全部已知阀门，仅在所有GPIO均写入成功后清零输出状态。
+ * 说明：尝试关闭板上全部已知阀门，仅在所有GPIO均写入成功后清零输出状态和阀门IO错误锁存。
  * 输入：context 为硬件逻辑层上下文输入输出指针。
  * 输出：全部阀门GPIO均成功写入关闭电平时返回true，参数无效或任一写入失败时返回false。
  */

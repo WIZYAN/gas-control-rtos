@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现串口屏运行参数编辑、确认保存和日志清除业务。
@@ -780,8 +780,14 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
             context->confirm_pending = true;
             context->save_pending = false;
             context->pending_field = A_HMI_CONFIG_ALL_FIELDS;
-            (void) strcpy(context->pending_old_text, current_text);
-            (void) strcpy(context->pending_new_text, default_text);
+            A_HmiConfig_CopyInputText(context->pending_old_text,
+                                      sizeof(context->pending_old_text),
+                                      current_text,
+                                      strlen(current_text));
+            A_HmiConfig_CopyInputText(context->pending_new_text,
+                                      sizeof(context->pending_new_text),
+                                      default_text,
+                                      strlen(default_text));
             A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_DEFAULT_LOADED);
             A_HmiConfig_RequestDialogRefresh(context);
             // 恢复默认仅建立完整候选参数，Lua同步打开子画面，确认后才持久化和生效。
@@ -929,6 +935,7 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
                               const Gas_Config *current_config)
 {
     A_Hmi_Config_Status status; // 当前作用域变量，用于保存当前处理数据。
+    uint16_t field_refresh_mask; // 保存本次保存失败后需要恢复的单字段或全部参数刷新位图。
 
     if ((context == NULL) || (current_config == NULL))
     {
@@ -962,9 +969,15 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
     }
     if (result != A_HMI_CONFIG_RESULT_SUCCESS)
     {
-        context->refresh_mask |= (context->pending_field < A_HMI_CONFIG_TEXT_COUNT) ?
-                                 (uint16_t) (1U << context->pending_field) :
-                                 A_HMI_CONFIG_FIELD_MASK; // 当前作用域变量，用于保存当前处理数据。
+        if (context->pending_field < A_HMI_CONFIG_TEXT_COUNT)
+        {
+            field_refresh_mask = (uint16_t) (1U << context->pending_field);
+        }
+        else
+        {
+            field_refresh_mask = (uint16_t) A_HMI_CONFIG_FIELD_MASK;
+        }
+        context->refresh_mask = (uint16_t) (context->refresh_mask | field_refresh_mask);
     }
     A_HmiConfig_SetStatus(context, status);
 }

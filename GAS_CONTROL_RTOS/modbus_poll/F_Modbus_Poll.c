@@ -1,5 +1,5 @@
 /*
- * Version: v1.13
+ * Version: v1.14
  * Author: YXZ
  * Created: 2026-08-24
  * Description: 实现内部Modbus主站请求、响应校验、超时和重试状态机。
@@ -29,14 +29,23 @@ static bool F_ModbusPoll_TimeReached(uint32_t now_ms, uint32_t deadline_ms)
 static void F_ModbusPoll_FinishTransaction(F_Modbus_Poll_Context *context,
                               F_Modbus_Poll_Result result)
 {
+    bool sensor_error; // 事务结束前锁存的SCI1错误状态。
+    bool abort_ok; // SCI1收发中止及RS485方向恢复结果。
+
     if (context == NULL)
     {
         return;
     }
 
+    sensor_error = H_GasPlatform_SensorHasError(context->platform);
+    abort_ok = false;
     if (context->platform != NULL)
     {
-        H_GasPlatform_SensorAbort(context->platform);
+        abort_ok = H_GasPlatform_SensorAbort(context->platform);
+    }
+    if (sensor_error || !abort_ok)
+    {
+        result = MODBUS_POLL_RESULT_IO;
     }
     context->state = MODBUS_POLL_STATE_IDLE;
     context->result = result;
@@ -96,7 +105,7 @@ bool F_ModbusPoll_Init(F_Modbus_Poll_Context *context,
 
 /*
  * 函数名：F_ModbusPoll_StartRead。
- * 说明：构造功能码 03 或 04 的请求帧，并启动一次非阻塞 Modbus RTU 读取事务。
+ * 说明：构造功能码 03 或 04 的请求帧，先挂接定长接收缓冲区，再启动一次非阻塞发送。
  * 输入：context 为功能上下文；slave_address 为从站地址；function_code 为功能码；start_register 为起始寄存器；register_count 为数量；now_ms 为当前时间；timeout_ms 为超时。
  * 输出：事务成功启动时返回 true，否则返回 false。
  */
@@ -147,6 +156,14 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
     context->result = MODBUS_POLL_RESULT_NONE;
     // 同一个截止时间覆盖发送和接收全过程，任一阶段停滞都能退出本次事务。
 
+    if (!H_GasPlatform_SensorRxStart(context->platform,
+                                     context->response,
+                                     context->expected_response_length))
+    {
+        F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
+        return false;
+    }
+
     if (!H_GasPlatform_SensorTxStart(context->platform,
                                      context->request,
                                      sizeof(context->request)))
@@ -176,6 +193,12 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
         return;
     }
 
+    if (H_GasPlatform_SensorHasError(context->platform))
+    {
+        F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
+        return;
+    }
+
     if (F_ModbusPoll_TimeReached(now_ms, context->deadline_ms))
     {
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_TIMEOUT);
@@ -186,17 +209,8 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
     {
         if (H_GasPlatform_SensorTxDone(context->platform))
         {
-            // RS485 必须等最后一个发送字节完成并切回接收方向后，才允许启动响应接收。
-            if (H_GasPlatform_SensorRxStart(context->platform,
-                                            context->response,
-                                            context->expected_response_length))
-            {
-                context->state = MODBUS_POLL_STATE_RX;
-            }
-            else
-            {
-                F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
-            }
+            context->state = MODBUS_POLL_STATE_RX;
+            // 接收缓冲区已在发帧前挂接；发送完成回调切回RS485接收方向后可直接等待定长响应。
         }
         return;
     }
