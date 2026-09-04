@@ -50,6 +50,7 @@ bool A_ModbusPoll_DecodePressure(const uint8_t *data,
 #error "当前内部 Modbus 轮询仅启用传感器 float AB CD 数据格式"
 #endif
 
+    //复制内存数据
     (void) memcpy(pressure_mpa, &raw_value, sizeof(raw_value));
     if (((raw_value & 0x80000000UL) != 0UL) ||
         ((raw_value & 0x7F800000UL) == 0x7F800000UL) ||
@@ -144,6 +145,7 @@ bool A_ModbusPoll_Init(A_Modbus_Poll_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->sensor_addresses[0] = GAS_SENSOR_ADDRESS_1;
     context->sensor_addresses[1] = GAS_SENSOR_ADDRESS_2;
@@ -165,6 +167,7 @@ bool A_ModbusPoll_Init(A_Modbus_Poll_Context *context,
     system->total_pressure.pressure_quality = GAS_PRESSURE_INVALID;
     system->total_pressure.comm_fail_count = 0U;
 
+    //初始化内部 Modbus 主站功能上下文并绑定 SCI1 硬件平台
     context->ready = F_ModbusPoll_Init(&context->master, platform);
     return context->ready;
 }
@@ -196,8 +199,10 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
         return;
     }
 
+    //推进内部 Modbus 主站发送、接收、协议校验和超时状态机
     F_ModbusPoll_Task(&context->master, now_ms);
 
+    //取走最近一次事务结果
     if (F_ModbusPoll_TakeResult(&context->master, &result, &payload, &payload_length))
     {
         // 协议和浮点格式正确时保留样本；超出配置上限的压力以独立质量保存，供红色诊断显示。
@@ -229,6 +234,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
         }
         else
         {
+            //记录一次气瓶压力或总压力传感器通信失败
             A_ModbusPoll_RecordFailure(system, context->pending_index);
         }
 
@@ -241,6 +247,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
     {
         Gas_Cylinder *cylinder = &system->cylinder[i]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
+        //使用无符号毫秒差判断当前时间是否已经到达截止时间
         if (((cylinder->pressure_quality == GAS_PRESSURE_VALID) ||
              (cylinder->pressure_quality == GAS_PRESSURE_OUT_OF_RANGE)) &&
             A_ModbusPoll_TimeReached(now_ms,
@@ -251,6 +258,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
         }
     }
 
+    //使用无符号毫秒差判断当前时间是否已经到达截止时间
     if (((system->total_pressure.pressure_quality == GAS_PRESSURE_VALID) ||
          (system->total_pressure.pressure_quality == GAS_PRESSURE_OUT_OF_RANGE)) &&
         A_ModbusPoll_TimeReached(now_ms,
@@ -259,6 +267,7 @@ void A_ModbusPoll_Task(A_Modbus_Poll_Context *context,
         system->total_pressure.pressure_quality = GAS_PRESSURE_STALE;
     }
 
+    //使用无符号毫秒差判断当前时间是否已经到达截止时间
     if ((context->master.state == MODBUS_POLL_STATE_IDLE) &&
         !context->master.result_pending && A_ModbusPoll_TimeReached(now_ms, context->next_poll_ms))
     {

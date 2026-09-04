@@ -21,6 +21,7 @@
  */
 static bool H_Modbus_SetReceiveMode(void)
 {
+    //写入GPIO引脚电平
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_LOW) == FSP_SUCCESS);
 }
 
@@ -32,6 +33,7 @@ static bool H_Modbus_SetReceiveMode(void)
  */
 static bool H_Modbus_SetTransmitMode(void)
 {
+    //写入GPIO引脚电平
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_EN, BSP_IO_LEVEL_HIGH) == FSP_SUCCESS);
 }
 
@@ -79,6 +81,7 @@ static void H_Modbus_UpdateExpectedLength(H_Modbus_Context *context)
         else
         {
             context->uart_error = true;
+            //清空当前外部 Modbus 接收进度并准备接收下一帧
             H_Modbus_ResetReceiveState(context);
         }
     }
@@ -103,12 +106,15 @@ bool H_Modbus_Init(H_Modbus_Context *context)
         return false;
     }
 
+    //初始化或清空内存数据
     memset(context, 0, sizeof(*context));
+    //将外部 RS485 收发器切换到接收状态
     if (!H_Modbus_SetReceiveMode())
     {
         context->uart_error = true;
         return false;
     }
+    //写入GPIO引脚电平
     if (R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_485RES, BSP_IO_LEVEL_HIGH) != FSP_SUCCESS)
     {
         context->uart_error = true;
@@ -128,10 +134,12 @@ bool H_Modbus_Init(H_Modbus_Context *context)
     }
     context->uart_open = true;
 
+    //注册SCI串口回调
     result = R_SCI_UART_CallbackSet(&rs485_out_ctrl, rs485_out_callback, context, NULL);
     if (result != FSP_SUCCESS)
     {
         context->uart_error = true;
+        //关闭SCI串口
         result = R_SCI_UART_Close(&rs485_out_ctrl);
         if ((result == FSP_SUCCESS) || (result == FSP_ERR_NOT_OPEN))
         {
@@ -140,6 +148,7 @@ bool H_Modbus_Init(H_Modbus_Context *context)
         return false;
     }
 
+    //清空当前外部 Modbus 接收进度并准备接收下一帧
     H_Modbus_ResetReceiveState(context);
     return true;
 }
@@ -159,6 +168,7 @@ bool H_Modbus_Deinit(H_Modbus_Context *context)
     {
         return false;
     }
+    //将外部 RS485 收发器切换到接收状态
     receive_mode_set = H_Modbus_SetReceiveMode();
     if (!receive_mode_set)
     {
@@ -168,11 +178,13 @@ bool H_Modbus_Deinit(H_Modbus_Context *context)
     {
         return receive_mode_set;
     }
+    //关闭SCI串口
     result = R_SCI_UART_Close(&rs485_out_ctrl);
     if ((result != FSP_SUCCESS) && (result != FSP_ERR_NOT_OPEN))
     {
         return false;
     }
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->uart_error = !receive_mode_set;
     return receive_mode_set;
@@ -199,10 +211,12 @@ bool H_Modbus_TakeFrame(H_Modbus_Context *context,
     frame_length = context->receive_length;
     if ((frame_length == 0U) || (frame_length > capacity))
     {
+        //清空当前外部 Modbus 接收进度并准备接收下一帧
         H_Modbus_ResetReceiveState(context);
         return false;
     }
 
+    //复制内存数据
     memcpy(buffer, context->receive_buffer, frame_length);
     *length = frame_length;
     H_Modbus_ResetReceiveState(context); // 完整帧复制完成后才允许接收下一帧。
@@ -225,18 +239,22 @@ bool H_Modbus_Send(H_Modbus_Context *context, const uint8_t *data, uint16_t leng
         return false;
     }
 
+    //复制内存数据
     memcpy(context->transmit_buffer, data, length);
+    //将外部 RS485 收发器切换到发送状态
     if (!H_Modbus_SetTransmitMode())
     {
         context->uart_error = true;
         return false;
     }
     context->transmit_busy = true;
+    //启动SCI异步发送
     result = R_SCI_UART_Write(&rs485_out_ctrl, context->transmit_buffer, length);
     if (result != FSP_SUCCESS)
     {
         context->transmit_busy = false;
         context->uart_error = true;
+        //将外部 RS485 收发器切换到接收状态
         if (!H_Modbus_SetReceiveMode())
         {
             context->uart_error = true;
@@ -291,6 +309,7 @@ void rs485_out_callback(uart_callback_args_t *p_args)
         {
             context->receive_buffer[context->receive_length] = (uint8_t) p_args->data;
             context->receive_length++;
+            //根据已经接收的功能码和字节计数字段推导 Modbus RTU 请求的完整长度
             H_Modbus_UpdateExpectedLength(context);
             if ((context->expected_length != 0U) &&
                 (context->receive_length >= context->expected_length))
@@ -301,11 +320,13 @@ void rs485_out_callback(uart_callback_args_t *p_args)
         else if (!context->frame_ready)
         {
             context->uart_error = true;
+            //清空当前外部 Modbus 接收进度并准备接收下一帧
             H_Modbus_ResetReceiveState(context);
         }
     }
     else if (p_args->event == UART_EVENT_TX_COMPLETE)
     {
+        //将外部 RS485 收发器切换到接收状态
         if (!H_Modbus_SetReceiveMode())
         {
             context->uart_error = true;
@@ -319,8 +340,10 @@ void rs485_out_callback(uart_callback_args_t *p_args)
                                UART_EVENT_BREAK_DETECT)) != 0U)
     {
         context->uart_error = true;
+        //清空当前外部 Modbus 接收进度并准备接收下一帧
         H_Modbus_ResetReceiveState(context);
         context->transmit_busy = false;
+        //将外部 RS485 收发器切换到接收状态
         if (!H_Modbus_SetReceiveMode())
         {
             context->uart_error = true;

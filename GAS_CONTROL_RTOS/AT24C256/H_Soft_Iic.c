@@ -21,6 +21,7 @@ static void H_SoftIic_DelayHalfPeriod(const H_Soft_Iic_Context *context)
 {
     if ((context != NULL) && (context->half_period_us > 0U))
     {
+        //执行短时硬件延时
         R_BSP_SoftwareDelay(context->half_period_us, BSP_DELAY_UNITS_MICROSECONDS);
     }
 }
@@ -38,6 +39,7 @@ static bool H_SoftIic_ConfigureOpenDrainPin(uint32_t pin)
                              IOPORT_CFG_NMOS_ENABLE |
                              IOPORT_CFG_PIM_TTL;
 
+    //配置GPIO引脚模式
     return (R_IOPORT_PinCfg(&g_ioport_ctrl, (bsp_io_port_pin_t) pin, configuration) == FSP_SUCCESS);
 }
 
@@ -51,6 +53,7 @@ static bool H_SoftIic_WriteLine(uint32_t pin, bool high)
 {
     bsp_io_level_t level = high ? BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW; // 当前作用域变量，用于保存GPIO电平。
 
+    //写入GPIO引脚电平
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, (bsp_io_port_pin_t) pin, level) == FSP_SUCCESS);
 }
 
@@ -64,6 +67,7 @@ static bool H_SoftIic_ReadLine(uint32_t pin, bool *high)
 {
     bsp_io_level_t level; // 当前作用域变量，用于保存GPIO电平。
 
+    //读取GPIO引脚电平
     if ((high == NULL) ||
         (R_IOPORT_PinRead(&g_ioport_ctrl, (bsp_io_port_pin_t) pin, &level) != FSP_SUCCESS))
     {
@@ -85,6 +89,7 @@ static bool H_SoftIic_RaiseClock(H_Soft_Iic_Context *context)
     uint32_t retry; // 当前作用域变量，用于保存当前处理数据。
     bool high = false; // SCL采样电平标志；使用范围：当前升高时钟函数内；取值范围：false/true，false表示SCL仍为低电平，true表示SCL已经变为高电平。
 
+    //控制开漏 GPIO
     if ((context == NULL) || !H_SoftIic_WriteLine(context->scl_pin, true))
     {
         return false;
@@ -92,11 +97,14 @@ static bool H_SoftIic_RaiseClock(H_Soft_Iic_Context *context)
 
     for (retry = 0U; retry < 100U; ++retry)
     {
+        //读取指定软件 IIC GPIO 的实际总线电平
         if (H_SoftIic_ReadLine(context->scl_pin, &high) && high)
         {
+            //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
             H_SoftIic_DelayHalfPeriod(context);
             return true;
         }
+        //执行短时硬件延时
         R_BSP_SoftwareDelay(1U, BSP_DELAY_UNITS_MICROSECONDS);
     }
     // SCL 持续为低电平表示总线短路或从机时钟延展超时。
@@ -125,12 +133,14 @@ bool H_SoftIic_Init(H_Soft_Iic_Context *context,
     context->half_period_us = half_period_us;
     context->initialized = false;
 
+    //将指定 GPIO 配置为初始释放的 NMOS 开漏输出
     if (!H_SoftIic_ConfigureOpenDrainPin(scl_pin) || !H_SoftIic_ConfigureOpenDrainPin(sda_pin))
     {
         return false;
     }
 
     context->initialized = true;
+    //在 SDA 被从机占用时产生最多九个 SCL 恢复脉冲
     return H_SoftIic_RecoverBus(context);
 }
 
@@ -144,6 +154,7 @@ bool H_SoftIic_Start(H_Soft_Iic_Context *context)
 {
     bool sda_high = false; // SDA起始前采样电平标志；使用范围：当前起始条件函数内；取值范围：false/true，false表示SDA被拉低且总线忙，true表示SDA已经释放为高电平。
 
+    //控制开漏 GPIO；释放 SCL 并等待实际时钟线变高；读取指定软件 IIC GPIO 的实际总线电平
     if ((context == NULL) || !context->initialized ||
         !H_SoftIic_WriteLine(context->sda_pin, true) || !H_SoftIic_RaiseClock(context) ||
         !H_SoftIic_ReadLine(context->sda_pin, &sda_high) || !sda_high)
@@ -151,16 +162,20 @@ bool H_SoftIic_Start(H_Soft_Iic_Context *context)
         return false;
     }
 
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, false))
     {
         return false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
 
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->scl_pin, false))
     {
         return false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
     // SCL 为高时将 SDA 从高拉低形成起始条件。
 
@@ -184,28 +199,36 @@ bool H_SoftIic_Stop(H_Soft_Iic_Context *context)
         return false;
     }
 
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->scl_pin, false))
     {
         success = false;
     }
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, false))
     {
         success = false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
+    //释放 SCL 并等待实际时钟线变高
     if (!H_SoftIic_RaiseClock(context))
     {
         success = false;
     }
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, true))
     {
         success = false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
+    //读取指定软件 IIC GPIO 的实际总线电平
     if (!H_SoftIic_ReadLine(context->scl_pin, &scl_high))
     {
         success = false;
     }
+    //读取指定软件 IIC GPIO 的实际总线电平
     if (!H_SoftIic_ReadLine(context->sda_pin, &sda_high))
     {
         success = false;
@@ -241,36 +264,46 @@ bool H_SoftIic_WriteByte(H_Soft_Iic_Context *context, uint8_t data, bool *acknow
 
     for (bit = 0U; bit < 8U; ++bit)
     {
+        //控制开漏 GPIO
         if (!H_SoftIic_WriteLine(context->sda_pin, (data & 0x80U) != 0U))
         {
             return false;
         }
+        //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
         H_SoftIic_DelayHalfPeriod(context);
+        //释放 SCL 并等待实际时钟线变高
         if (!H_SoftIic_RaiseClock(context))
         {
             return false;
         }
+        //控制开漏 GPIO
         if (!H_SoftIic_WriteLine(context->scl_pin, false))
         {
             return false;
         }
+        //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
         H_SoftIic_DelayHalfPeriod(context);
         data <<= 1U;
     }
 
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, true))
     {
         return false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
+    //释放 SCL 并等待实际时钟线变高；读取指定软件 IIC GPIO 的实际总线电平
     if (!H_SoftIic_RaiseClock(context) || !H_SoftIic_ReadLine(context->sda_pin, &sda_high))
     {
         return false;
     }
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->scl_pin, false))
     {
         return false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
     // 第九个时钟周期由从机拉低 SDA 表示 ACK。
 
@@ -291,6 +324,7 @@ bool H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack, uint8_t *dat
     bool sda_high = false; // SDA数据位采样标志；使用范围：当前读字节函数内；取值范围：false/true，false表示当前总线位为0，true表示当前总线位为1。
     bool acknowledge_ok = true; // 第九个时钟及总线释放结果；false表示至少一次GPIO操作失败，true表示完整执行。
 
+    //控制开漏 GPIO
     if ((context == NULL) || (data == NULL) || !context->initialized ||
         !H_SoftIic_WriteLine(context->sda_pin, true))
     {
@@ -300,6 +334,7 @@ bool H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack, uint8_t *dat
     for (bit = 0U; bit < 8U; ++bit)
     {
         value <<= 1U;
+        //释放 SCL 并等待实际时钟线变高；读取指定软件 IIC GPIO 的实际总线电平
         if (!H_SoftIic_RaiseClock(context) || !H_SoftIic_ReadLine(context->sda_pin, &sda_high))
         {
             return false;
@@ -308,30 +343,38 @@ bool H_SoftIic_ReadByte(H_Soft_Iic_Context *context, bool send_ack, uint8_t *dat
         {
             value |= 0x01U;
         }
+        //控制开漏 GPIO
         if (!H_SoftIic_WriteLine(context->scl_pin, false))
         {
             return false;
         }
+        //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
         H_SoftIic_DelayHalfPeriod(context);
     }
 
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, !send_ack))
     {
         return false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
+    //释放 SCL 并等待实际时钟线变高
     if (!H_SoftIic_RaiseClock(context))
     {
         acknowledge_ok = false;
     }
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->scl_pin, false))
     {
         acknowledge_ok = false;
     }
+    //控制开漏 GPIO
     if (!H_SoftIic_WriteLine(context->sda_pin, true))
     {
         acknowledge_ok = false;
     }
+    //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
     H_SoftIic_DelayHalfPeriod(context);
     // 主机在第九个时钟输出 ACK 或 NACK，随后重新释放 SDA。
 
@@ -361,7 +404,9 @@ bool H_SoftIic_RecoverBus(H_Soft_Iic_Context *context)
     {
         return false;
     }
+    //控制开漏 GPIO
     scl_released = H_SoftIic_WriteLine(context->scl_pin, true);
+    //控制开漏 GPIO
     sda_released = H_SoftIic_WriteLine(context->sda_pin, true);
     if (!scl_released || !sda_released)
     {
@@ -370,15 +415,19 @@ bool H_SoftIic_RecoverBus(H_Soft_Iic_Context *context)
 
     for (pulse = 0U; pulse < 9U; ++pulse)
     {
+        //读取指定软件 IIC GPIO 的实际总线电平
         if (H_SoftIic_ReadLine(context->sda_pin, &sda_high) && sda_high)
         {
             break;
         }
+        //控制开漏 GPIO
         if (!H_SoftIic_WriteLine(context->scl_pin, false))
         {
             return false;
         }
+        //按照当前上下文配置的软件 IIC 半周期执行微秒级延时
         H_SoftIic_DelayHalfPeriod(context);
+        //释放 SCL 并等待实际时钟线变高
         if (!H_SoftIic_RaiseClock(context))
         {
             return false;
@@ -406,6 +455,7 @@ bool H_SoftIic_WriteControlPin(uint32_t pin, bool high)
     bool configure_ok; // 控制引脚配置结果；失败时仍继续尝试写入目标安全电平。
     bool write_ok; // 控制引脚电平写入结果。
 
+    //配置GPIO引脚模式
     configure_ok = (R_IOPORT_PinCfg(&g_ioport_ctrl,
                                     (bsp_io_port_pin_t) pin,
                                     configuration) == FSP_SUCCESS);
@@ -430,6 +480,7 @@ void H_SoftIic_DelayMicroseconds(uint32_t microseconds)
 {
     if (microseconds > 0U)
     {
+        //执行短时硬件延时
         R_BSP_SoftwareDelay(microseconds, BSP_DELAY_UNITS_MICROSECONDS);
     }
 }

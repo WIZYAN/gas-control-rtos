@@ -110,6 +110,7 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
         return;
     }
 
+    //把一个压缩 BCD 字节转换为二进制数值
     if (!F_Hmi_BcdToBinary(context->rx_frame[2], 0U, 99U, &year) ||
         !F_Hmi_BcdToBinary(context->rx_frame[3], 1U, 12U, &rtc_time.month) ||
         !F_Hmi_BcdToBinary(context->rx_frame[4], 0U, 6U, &rtc_time.week) ||
@@ -122,6 +123,7 @@ static void F_Hmi_ParseRtcFrame(F_Hmi_Context *context)
     }
 
     rtc_time.year = (uint16_t) (2000U + year);
+    //计算 2000～2099 年指定月份的实际天数
     if (rtc_time.day > F_Hmi_DaysInMonth(rtc_time.year, rtc_time.month))
     {
         // BCD 范围合法并不代表日期合法，还需按月份和闰年检查实际天数。
@@ -184,6 +186,7 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
             uint16_t button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
                                              context->rx_frame[6]); // 当前按键上传帧中的控件ID。
 
+            //把按键或下拉菜单事件追加到固定FIFO
             F_Hmi_QueueButtonEvent(context,
                                    button_id,
                                    context->rx_frame[context->rx_length - 5U]);
@@ -207,6 +210,7 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
                     context->text_queue[text_queue_tail].control_id =
                         (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
                                     context->rx_frame[6]);
+                    //复制内存数据
                     (void) memcpy(context->text_queue[text_queue_tail].value,
                                   &context->rx_frame[8], text_length);
                     context->text_queue[text_queue_tail].value[text_length] = '\0';
@@ -230,12 +234,14 @@ static void F_Hmi_ParseFrame(F_Hmi_Context *context)
         uint16_t button_id = (uint16_t) (((uint16_t) context->rx_frame[5] << 8U) |
                                          context->rx_frame[6]); // 当前下拉菜单上传帧中的控件ID。
 
+        //把按键或下拉菜单事件追加到固定FIFO
         F_Hmi_QueueButtonEvent(context, button_id, context->rx_frame[8]);
         // 0x1A是下拉菜单控件类型；frame[8]为从0开始的选中项索引，frame[9]为按下或弹起状态。
         // 按下和弹起都会上传且携带相同索引，重复锁存对单项选择幂等，因此不再区分状态值。
     }
     else
     {
+        //解析 EE F7 年月周日时分秒 RTC 响应
         F_Hmi_ParseRtcFrame(context);
     }
 }
@@ -253,7 +259,9 @@ bool F_Hmi_Init(F_Hmi_Context *context, H_Hmi_Context *hardware)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //按照电源、使能和通信顺序启动串口屏
     return H_Hmi_Init(hardware);
 }
 
@@ -272,11 +280,12 @@ void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware)
         return;
     }
 
+    //从 SCI9 接收环形缓冲区取出一个字节
     while (H_Hmi_ReadByte(hardware, &value))
     {
         if (!context->receiving)
         {
-            if (value == 0xEEU)
+            if (value == 0xEEU)//大彩官方帧头0xEE，XX:指令，XXX..XXX:指令参数，FF FC FF FF帧尾
             {
                 context->receiving = true;
                 context->rx_length = 1U;
@@ -295,9 +304,10 @@ void F_Hmi_Task(F_Hmi_Context *context, H_Hmi_Context *hardware)
         }
 
         context->rx_frame[context->rx_length++] = value;
+        //检查当前接收缓存是否以大彩固定帧尾 FF FC FF FF 结束
         if (F_Hmi_FrameComplete(context))
         {
-            F_Hmi_ParseFrame(context);
+            F_Hmi_ParseFrame(context);//检测到完整帧后，区别事件，按钮事件B1 11 10....;文本输入B1 11 11...;下拉菜单：B1 14 1A;
             context->receiving = false;
             context->rx_length = 0U;
             // 连续结束符确认完整帧后再解析，避免半帧数据触发按钮或更新时间。
@@ -360,6 +370,7 @@ size_t F_Hmi_TakeTextEvent(F_Hmi_Context *context,
 
     *page_id = event->page_id;
     *control_id = event->control_id;
+    //复制内存数据
     (void) memcpy(text, event->value, length + 1U);
     context->text_queue_head = (uint8_t) ((context->text_queue_head + 1U) %
                                           F_HMI_TEXT_EVENT_QUEUE_SIZE);
@@ -455,12 +466,15 @@ bool F_Hmi_SendReadRtc(F_Hmi_Context *context, H_Hmi_Context *hardware)
 {
     const uint8_t command[6] = {0xEEU, 0x82U, 0xFFU, 0xFCU, 0xFFU, 0xFFU}; // 当前作用域变量，用于保存操作命令数组。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
     }
 
+    //复制内存数据
     (void) memcpy(context->tx_frame, command, sizeof(command));
+    //通过 SCI9 异步发送一帧大彩串口屏数据
     return H_Hmi_Write(hardware, context->tx_frame, sizeof(command));
 }
 
@@ -497,6 +511,7 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
 {
     size_t frame_length; // 当前作用域变量，用于保存有效数据长度。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || (text == NULL) || (length == 0U) ||
         (length > (F_HMI_TX_MAX_SIZE - 11U)) || H_Hmi_IsTxBusy(hardware))
     {
@@ -511,6 +526,7 @@ bool F_Hmi_SendText(F_Hmi_Context *context,
     context->tx_frame[4] = (uint8_t) page_id;
     context->tx_frame[5] = (uint8_t) (control_id >> 8U);
     context->tx_frame[6] = (uint8_t) control_id;
+    //复制内存数据
     (void) memcpy(&context->tx_frame[7], text, length);
     context->tx_frame[7U + length] = 0xFFU;
     context->tx_frame[8U + length] = 0xFCU;
@@ -534,6 +550,7 @@ bool F_Hmi_SendButtonState(F_Hmi_Context *context,
 {
     const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
@@ -569,6 +586,7 @@ bool F_Hmi_SendIconFrame(F_Hmi_Context *context,
 {
     const size_t frame_length = 12U; // 当前作用域变量，用于保存有效数据长度。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
@@ -603,6 +621,7 @@ bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
 {
     const size_t frame_length = 11U; // 当前作用域变量，用于保存有效数据长度。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || H_Hmi_IsTxBusy(hardware))
     {
         return false;
@@ -619,6 +638,7 @@ bool F_Hmi_SendRecordClear(F_Hmi_Context *context,
     context->tx_frame[8] = 0xFCU;
     context->tx_frame[9] = 0xFFU;
     context->tx_frame[10] = 0xFFU;
+    //通过 SCI9 异步发送一帧大彩串口屏数据
     return H_Hmi_Write(hardware, context->tx_frame, frame_length);
 }
 
@@ -637,6 +657,7 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
 {
     size_t frame_length; // 当前作用域变量，用于保存有效数据长度。
 
+    //查询 SCI9 是否仍在异步发送上一帧数据
     if ((context == NULL) || (hardware == NULL) || (record == NULL) || (length == 0U) ||
         (length > (F_HMI_TX_MAX_SIZE - 11U)) || H_Hmi_IsTxBusy(hardware))
     {
@@ -651,6 +672,7 @@ bool F_Hmi_SendRecordAdd(F_Hmi_Context *context,
     context->tx_frame[4] = (uint8_t) page_id;
     context->tx_frame[5] = (uint8_t) (control_id >> 8U);
     context->tx_frame[6] = (uint8_t) control_id;
+    //复制内存数据
     (void) memcpy(&context->tx_frame[7], record, length);
     context->tx_frame[7U + length] = 0xFFU;
     context->tx_frame[8U + length] = 0xFCU;

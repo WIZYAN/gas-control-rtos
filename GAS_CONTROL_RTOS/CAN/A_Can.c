@@ -21,6 +21,7 @@
 static uint32_t A_Can_FloatToRaw(float value)
 {
     uint32_t raw = 0U; // 当前作用域变量，用于保存当前处理数据。
+    //复制内存数据
     (void) memcpy(&raw, &value, sizeof(raw));
     return raw;
 }
@@ -34,6 +35,7 @@ static uint32_t A_Can_FloatToRaw(float value)
 static float A_Can_RawToFloat(uint32_t raw)
 {
     float value = 0.0F; // 当前作用域变量，用于保存当前处理值。
+    //复制内存数据
     (void) memcpy(&value, &raw, sizeof(value));
     return value;
 }
@@ -108,6 +110,7 @@ static bool A_Can_SetImmediateWriteResult(A_Can_Context *context,
     uint32_t packed = A_Can_PackWriteResult(result, detail); // 当前作用域变量，用于保存当前处理数据。
 
     context->last_write_result = packed;
+    //将写操作结果响应加入非阻塞发送队列
     if (!F_CanProtocol_QueueWriteResponse(&context->function,
                                           request->source_type,
                                           request->source_address,
@@ -154,6 +157,7 @@ static bool A_Can_CompleteDeferredWrite(A_Can_Context *context,
     {
         return false;
     }
+    //把基础结果码和详细原因码组合为功能码6使用的32位小端结果
     context->deferred_write_result = A_Can_PackWriteResult(result, detail);
     context->last_write_result = context->deferred_write_result;
     context->deferred_write_pending = false;
@@ -173,6 +177,7 @@ static bool A_Can_QueueDeferredWriteResponse(A_Can_Context *context)
     {
         return true;
     }
+    //将写操作结果响应加入非阻塞发送队列
     if (!F_CanProtocol_QueueWriteResponse(&context->function,
                                           context->deferred_write_target_type,
                                           context->deferred_write_target_address,
@@ -232,11 +237,13 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
     }
     if (address < (A_CAN_ADDRESS_PRESSURE_BASE + GAS_CYLINDER_COUNT))
     {
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         *value = A_Can_FloatToRaw(system->cylinder[address - A_CAN_ADDRESS_PRESSURE_BASE].pressure_mpa);
         return true;
     }
     if (address == A_CAN_ADDRESS_TOTAL_PRESSURE)
     {
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         *value = A_Can_FloatToRaw(system->total_pressure.pressure_mpa);
         return true;
     }
@@ -261,17 +268,25 @@ static bool A_Can_ReadValue(const A_Can_Context *context,
             *value = (system->active_index < GAS_CYLINDER_COUNT) ? (uint32_t) (system->active_index + 1U) : 0U;
             return true;
         case A_CAN_ADDRESS_SWITCH_STATE: *value = (uint32_t) system->switch_state; return true;
+        //按指定类别汇总六瓶布尔状态为bit0～bit5位图
         case A_CAN_ADDRESS_EXHAUST_MASK: *value = A_Can_GetCylinderMask(system, 1U); return true;
         case A_CAN_ADDRESS_ALARM_BITS: *value = system->alarm_bits; return true;
         case A_CAN_ADDRESS_PLATFORM_READY: *value = system->platform_ready ? 1U : 0U; return true;
         case A_CAN_ADDRESS_SOFTWARE_VERSION: *value = A_CAN_SOFTWARE_VERSION; return true;
+        //按指定类别汇总六瓶布尔状态为bit0～bit5位图
         case A_CAN_ADDRESS_QUALIFIED_MASK: *value = A_Can_GetCylinderMask(system, 3U); return true;
+        //按指定类别汇总六瓶布尔状态为bit0～bit5位图
         case A_CAN_ADDRESS_SUPPLY_MASK: *value = A_Can_GetCylinderMask(system, 0U); return true;
+        //按指定类别汇总六瓶布尔状态为bit0～bit5位图
         case A_CAN_ADDRESS_TEST_MASK: *value = A_Can_GetCylinderMask(system, 2U); return true;
         case A_CAN_ADDRESS_COMM_MODE: *value = (uint32_t) comm_mode; return true;
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         case A_CAN_ADDRESS_SWITCH_PRESSURE: *value = A_Can_FloatToRaw(config->switch_pressure_mpa); return true;
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         case A_CAN_ADDRESS_SWITCH_RELEASE: *value = A_Can_FloatToRaw(config->switch_release_mpa); return true;
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         case A_CAN_ADDRESS_READY_MIN_PRESSURE: *value = A_Can_FloatToRaw(config->ready_min_pressure_mpa); return true;
+        //无别名访问地取得IEEE-754 float32的32位原始位模式
         case A_CAN_ADDRESS_PRESSURE_MAX: *value = A_Can_FloatToRaw(config->pressure_max_mpa); return true;
         case A_CAN_ADDRESS_VALVE_PULL_IN_TIME: *value = config->valve_pull_in_time_ms; return true;
         case A_CAN_ADDRESS_LOW_CONFIRM_TIME: *value = config->low_confirm_time_ms; return true;
@@ -353,11 +368,13 @@ static bool A_Can_AssignParameterCandidate(Gas_Config *candidate,
     if ((address >= A_CAN_ADDRESS_SWITCH_PRESSURE) &&
         (address <= A_CAN_ADDRESS_PRESSURE_MAX))
     {
+        //通过IEEE-754指数位检查原始float32是否为有限数
         if (!A_Can_FloatRawIsFinite(raw))
         {
             *detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
             return false;
         }
+        //无别名访问地把32位原始位模式转换为IEEE-754 float32
         pressure = A_Can_RawToFloat(raw);
         if (pressure < 0.001F)
         {
@@ -440,6 +457,7 @@ static bool A_Can_StartConfigWrite(A_Can_Context *context,
             A_CAN_WRITE_DETAIL_RELATION_CONFLICT : A_CAN_WRITE_DETAIL_VALUE_FORMAT;
         return true;
     }
+    //判断自动切瓶是否已经进入实际关阀、死区、开阀或新阀验证阶段
     if (A_Can_IsMechanicalSwitching(system))
     {
         context->config_result = GAS_EXTERNAL_CONFIG_SYSTEM_BUSY;
@@ -447,6 +465,7 @@ static bool A_Can_StartConfigWrite(A_Can_Context *context,
         *detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
         return true;
     }
+    //比较两段内存数据
     if (memcmp(candidate, config, sizeof(*candidate)) == 0)
     {
         context->config_result = GAS_EXTERNAL_CONFIG_SUCCESS;
@@ -454,6 +473,7 @@ static bool A_Can_StartConfigWrite(A_Can_Context *context,
         *detail = A_CAN_WRITE_DETAIL_NONE;
         return true;
     }
+    //保存需要气源业务层执行后才能应答的写请求来源
     if (!A_Can_BeginDeferredWrite(context, request))
     {
         *result = A_CAN_WRITE_EXECUTION_ERROR;
@@ -539,6 +559,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
          (request->data_address <= A_CAN_ADDRESS_PRESSURE_FRESH)))
     {
         candidate = *config;
+        //把一个公开CAN参数写值赋给正式参数副本
         if (!A_Can_AssignParameterCandidate(&candidate,
                                             request->data_address,
                                             request->value,
@@ -548,6 +569,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
             *result = A_CAN_WRITE_VALUE_ERROR;
             return true;
         }
+        //校验单地址候选参数并建立等待EEPROM保存和业务应用的延迟写请求
         return A_Can_StartConfigWrite(context,
                                       system,
                                       config,
@@ -583,6 +605,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
             return true;
         }
         candidate = *config;
+        //把编译期默认值写入一个运行参数结构体
         A_GasConfig_LoadDefaults(&candidate);
         candidate.low_warning_pressure_mpa = config->low_warning_pressure_mpa;
         candidate.manual_exhaust_time_ms = config->manual_exhaust_time_ms;
@@ -630,6 +653,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
         return true;
     }
 
+    //把连续的四组六瓶控制地址转换为控制类型和从0开始的气瓶索引
     if (A_Can_DecodeControlAddress(request->data_address, &control))
     {
         if (request->value > 1U)
@@ -638,12 +662,14 @@ static bool A_Can_WriteValue(A_Can_Context *context,
             *detail = A_CAN_WRITE_DETAIL_VALUE_TOO_HIGH;
             return true;
         }
+        //判断自动切瓶是否已经进入实际关阀、死区、开阀或新阀验证阶段
         if (A_Can_IsMechanicalSwitching(system))
         {
             *result = A_CAN_WRITE_EXECUTION_ERROR;
             *detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
             return true;
         }
+        //保存需要气源业务层执行后才能应答的写请求来源
         if (!A_Can_BeginDeferredWrite(context, request))
         {
             *result = A_CAN_WRITE_EXECUTION_ERROR;
@@ -658,6 +684,7 @@ static bool A_Can_WriteValue(A_Can_Context *context,
 
     {
         uint32_t read_value; // 当前作用域变量，用于保存当前处理值。
+        //将一个CAN数据地址映射为当前压力、状态、参数、命令结果或日志原始数据
         if (A_Can_ReadValue(context,
                             system,
                             config,
@@ -685,15 +712,18 @@ static bool A_Can_WriteValue(A_Can_Context *context,
  */
 bool A_Can_Init(A_Can_Context *context, const Gas_Config *config)
 {
+    //检查运行参数的单项范围和压力阈值关系
     if ((context == NULL) || (config == NULL) ||
         (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID))
     {
         return false;
     }
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->command_result = GAS_EXTERNAL_RESULT_IDLE;
     context->config_result = GAS_EXTERNAL_CONFIG_IDLE;
     context->log_result = GAS_EXTERNAL_LOG_IDLE;
+    //初始化CAN0硬件层和自定义协议功能层
     if (!F_CanProtocol_Init(&context->function,
                             &context->hardware,
                             F_CAN_LOCAL_TYPE,
@@ -715,6 +745,7 @@ bool A_Can_Deinit(A_Can_Context *context)
 {
     bool success; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
     if (context == NULL) { return false; }
+    //通过硬件层关闭CAN0并清除协议就绪状态
     success = F_CanProtocol_Deinit(&context->function, &context->hardware);
     context->ready = false;
     return success;
@@ -736,10 +767,12 @@ static void A_Can_QueueReadResponses(A_Can_Context *context,
         uint16_t address = context->read_response_address; // 当前作用域变量，用于保存存储或寄存器地址。
         uint32_t value; // 当前作用域变量，用于保存当前处理值。
 
+        //将一个CAN数据地址映射为当前压力、状态、参数、命令结果或日志原始数据
         if (!A_Can_ReadValue(context, system, config, comm_mode, address, &value))
         {
             value = 0xFFFFFFFFUL;
         }
+        //将一个32位读响应加入非阻塞发送队列
         if (!F_CanProtocol_QueueReadResponse(&context->function,
                                              context->read_response_target_type,
                                              context->read_response_target_address,
@@ -771,7 +804,9 @@ void A_Can_Task(A_Can_Context *context,
     {
         return;
     }
+    //非阻塞处理一帧接收数据及一帧待发送响应
     F_CanProtocol_Task(&context->function, &context->hardware);
+    //把已经完成的延迟写最终结果加入协议发送队列
     if (!A_Can_QueueDeferredWriteResponse(context))
     {
         return;
@@ -782,6 +817,7 @@ void A_Can_Task(A_Can_Context *context,
     {
         return;
     }
+    //取出并清除一条已经通过目标地址、长度和CRC校验的读写请求
     if (!F_CanProtocol_TakeRequest(&context->function, &request))
     {
         return;
@@ -794,6 +830,7 @@ void A_Can_Task(A_Can_Context *context,
         context->read_response_remaining = request.data_length;
         context->read_response_target_type = request.source_type;
         context->read_response_target_address = request.source_address;
+        //把连续读请求按发送队列当前空闲量分批转换为单地址响应
         A_Can_QueueReadResponses(context, system, config, comm_mode);
         // 连续读响应超过队列容量时分多个主循环周期发送，不再因队列暂满丢弃后续地址。
     }
@@ -803,7 +840,9 @@ void A_Can_Task(A_Can_Context *context,
         A_Can_Write_Detail detail; // 当前作用域变量，用于保存队列尾位置。
         bool immediate; // immediate 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示延后处理，true表示立即处理。
 
+        //记录一条已经通过协议帧格式和CRC检查的CAN写请求
         A_Can_RecordWriteAttempt(context, request.data_address, request.value);
+        //处理一条CAN写请求
         immediate = A_Can_WriteValue(context,
                                      system,
                                      config,
@@ -813,6 +852,7 @@ void A_Can_Task(A_Can_Context *context,
                                      &detail);
         if (immediate)
         {
+            //记录无需业务层异步处理的CAN写结果
             (void) A_Can_SetImmediateWriteResult(context, &request, result, detail);
         }
     }
@@ -873,6 +913,7 @@ void A_Can_SetConfigResult(A_Can_Context *context, gas_external_config_result_t 
         write_result = A_CAN_WRITE_VALUE_ERROR;
         detail = A_CAN_WRITE_DETAIL_VALUE_FORMAT;
     }
+    //完成当前延迟写请求并保存最终结果
     (void) A_Can_CompleteDeferredWrite(context, write_result, detail);
 }
 
@@ -905,6 +946,7 @@ void A_Can_CompleteControlRequest(A_Can_Context *context,
                                   A_Can_Write_Result result,
                                   A_Can_Write_Detail detail)
 {
+    //完成当前延迟写请求并保存最终结果
     (void) A_Can_CompleteDeferredWrite(context, result, detail);
 }
 
@@ -942,6 +984,7 @@ void A_Can_UpdateLogInfo(A_Can_Context *context, uint16_t valid_count, uint16_t 
 bool A_Can_SetLogRecord(A_Can_Context *context, const uint8_t record[A_CAN_LOG_RECORD_SIZE])
 {
     if ((context == NULL) || (record == NULL) || !context->ready) { return false; }
+    //复制内存数据
     (void) memcpy(context->log_record, record, A_CAN_LOG_RECORD_SIZE);
     return true;
 }
@@ -958,6 +1001,7 @@ void A_Can_SetLogReadResult(A_Can_Context *context, gas_external_log_result_t re
     context->log_result = result;
     if (result != GAS_EXTERNAL_LOG_SUCCESS)
     {
+        //初始化或清空内存数据
         (void) memset(context->log_record, 0, sizeof(context->log_record));
     }
 }
@@ -981,6 +1025,7 @@ bool A_Can_IsReady(const A_Can_Context *context)
  */
 bool A_Can_HasFault(const A_Can_Context *context)
 {
+    //逐层查询CAN0硬件是否存在影响通讯的故障
     return ((context == NULL) || !context->ready ||
             F_CanProtocol_HasFault(&context->function, &context->hardware));
 }

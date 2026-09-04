@@ -146,6 +146,7 @@ static bool A_HmiConfig_ParseUnsigned(const char *text, size_t length, uint32_t 
     uint32_t result = 0U; // 当前作用域变量，用于保存操作结果。
     size_t index; // 当前作用域变量，用于保存遍历索引。
 
+    //去除串口屏文本首尾的空格、制表符和回车换行
     if ((value == NULL) || !A_HmiConfig_TrimText(&text, &length))
     {
         return false;
@@ -183,6 +184,7 @@ static bool A_HmiConfig_ParseFixed3Raw(const char *text, size_t length, uint32_t
     bool decimal_seen = false; // decimal_seen 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示尚未读取小数点，true表示已经读取小数点。
     uint8_t fraction_digits = 0U; // 当前作用域变量，用于保存当前处理数据。
 
+    //去除串口屏文本首尾的空格、制表符和回车换行
     if ((raw == NULL) || !A_HmiConfig_TrimText(&text, &length))
     {
         return false;
@@ -285,6 +287,7 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
 
     if (field <= 3U)
     {
+        //解析整数或最多三位小数的非负文本
         if (!A_HmiConfig_ParseFixed3Raw(text, length, &value))
         {
             return A_HMI_CONFIG_INPUT_FORMAT_ERROR;
@@ -299,6 +302,7 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
         {
             case 0U:
                 context->edit_config.switch_pressure_mpa = (float) value / 1000.0F;
+                //根据切瓶压力自动生成0.100 MPa回差
                 A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
                 break;
             case 1U: context->edit_config.ready_min_pressure_mpa = (float) value / 1000.0F; break;
@@ -310,6 +314,7 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
 
     if (field == 9U)
     {
+        //解析整数或最多三位小数的非负文本
         if (!A_HmiConfig_ParseFixed3Raw(text, length, &value))
         {
             return A_HMI_CONFIG_INPUT_FORMAT_ERROR;
@@ -324,6 +329,7 @@ static A_Hmi_Config_Input_Result A_HmiConfig_UpdateField(A_Hmi_Config_Context *c
         return A_HMI_CONFIG_INPUT_VALID;
     }
 
+    //把允许首尾空白的ASCII十进制文本转换为32位无符号整数并检查溢出
     if (!A_HmiConfig_ParseUnsigned(text, length, &value))
     {
         return A_HMI_CONFIG_INPUT_FORMAT_ERROR;
@@ -380,18 +386,29 @@ static size_t A_HmiConfig_FormatField(const Gas_Config *config,
 {
     switch (field)
     {
+        //把数值格式化为固定三位小数的ASCII文本
         case 0U: return A_HmiConfig_FormatFixed3(config->switch_pressure_mpa, text, capacity);
+        //把数值格式化为固定三位小数的ASCII文本
         case 1U: return A_HmiConfig_FormatFixed3(config->ready_min_pressure_mpa, text, capacity);
+        //把数值格式化为固定三位小数的ASCII文本
         case 2U: return A_HmiConfig_FormatFixed3(config->low_warning_pressure_mpa, text, capacity);
+        //把数值格式化为固定三位小数的ASCII文本
         case 3U: return A_HmiConfig_FormatFixed3(config->pressure_max_mpa, text, capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 4U: return A_HmiConfig_FormatUnsigned(config->valve_pull_in_time_ms, text, capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 5U: return A_HmiConfig_FormatUnsigned(config->low_confirm_time_ms, text, capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 6U: return A_HmiConfig_FormatUnsigned(config->low_confirm_samples, text, capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 7U: return A_HmiConfig_FormatUnsigned(config->valve_close_wait_ms, text, capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 8U: return A_HmiConfig_FormatUnsigned(config->valve_open_wait_ms, text, capacity);
+        //把数值格式化为固定三位小数的ASCII文本
         case 9U: return A_HmiConfig_FormatFixed3((float) config->manual_exhaust_time_ms / 1000.0F,
                                                     text,
                                                     capacity);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         case 10U: return A_HmiConfig_FormatUnsigned(
                              config->test_valve_max_time_ms / GAS_MILLISECONDS_PER_MINUTE,
                              text,
@@ -419,7 +436,9 @@ static size_t A_HmiConfig_FormatLogClearCount(uint16_t count,
     {
         return 0U;
     }
+    //复制内存数据
     (void) memcpy(text, prefix, length);
+    //把无符号整数格式化为不带前导零的ASCII十进制文本
     number_length = A_HmiConfig_FormatUnsigned(count,
                                                 &text[length],
                                                 capacity - length - (sizeof(suffix) - 1U));
@@ -428,6 +447,7 @@ static size_t A_HmiConfig_FormatLogClearCount(uint16_t count,
         return 0U;
     }
     length += number_length;
+    //复制内存数据
     (void) memcpy(&text[length], suffix, sizeof(suffix) - 1U);
     return length + sizeof(suffix) - 1U;
 }
@@ -473,7 +493,9 @@ static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
         {
             return 0U;
         }
+        //复制内存数据
         (void) memcpy(text, busy_text, length);
+        //把无符号整数格式化为不带前导零的ASCII十进制文本
         number_length = A_HmiConfig_FormatUnsigned(progress,
                                                     &text[length],
                                                     capacity - length - 1U);
@@ -489,6 +511,7 @@ static size_t A_HmiConfig_FormatLogClearStatus(A_Hmi_Log_Clear_Status status,
     {
         return 0U;
     }
+    //复制内存数据
     (void) memcpy(text, fixed_text, fixed_length);
     return fixed_length;
 }
@@ -547,6 +570,7 @@ static const char *A_HmiConfig_GetStatusText(uint8_t status, size_t *length)
             text = "\xD0\xDE\xB8\xC4\xC8\xCE\xD2\xBB\xB2\xCE\xCA\xFD\xBA\xF3\xBD\xAB\xD7\xD4\xB6\xAF\xB5\xAF\xB3\xF6\xC8\xB7\xC8\xCF\xB4\xB0\xBF\xDA";
             break;
     }
+    //获取字符串长度
     *length = strlen(text);
     return text;
 }
@@ -579,6 +603,7 @@ static const char *A_HmiConfig_GetFieldName(uint8_t field, size_t *length)
     {
         text = names[field];
     }
+    //获取字符串长度
     *length = strlen(text);
     return text;
 }
@@ -611,6 +636,7 @@ static const char *A_HmiConfig_GetDialogInfoText(uint8_t status, size_t *length)
             text = "\xC8\xB7\xC8\xCF\xBA\xF3\xC1\xA2\xBC\xB4\xB1\xA3\xB4\xE6\xB2\xA2\xC9\xFA\xD0\xA7";
             break;
     }
+    //获取字符串长度
     *length = strlen(text);
     return text;
 }
@@ -631,6 +657,7 @@ static void A_HmiConfig_CopyInputText(char *destination,
         return;
     }
     destination[0] = '\0';
+    //去除串口屏文本首尾的空格、制表符和回车换行
     if (!A_HmiConfig_TrimText(&text, &length))
     {
         return;
@@ -639,6 +666,7 @@ static void A_HmiConfig_CopyInputText(char *destination,
     {
         length = capacity - 1U;
     }
+    //复制内存数据
     (void) memcpy(destination, text, length);
     destination[length] = '\0';
 }
@@ -668,6 +696,7 @@ bool A_HmiConfig_Init(A_Hmi_Config_Context *context,
     {
         return false;
     }
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->transport = transport;
     context->hardware = hardware;
@@ -688,6 +717,7 @@ bool A_HmiConfig_Open(A_Hmi_Config_Context *context,
         return false;
     }
     context->edit_config = *config;
+    //根据切瓶压力自动生成0.100 MPa回差
     A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
     context->active = true;
     context->confirm_pending = false;
@@ -719,6 +749,7 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
     }
     if (button_id == A_HMI_CONFIG_MENU_BUTTON_ID)
     {
+        //进入参数页时复制完整运行参数、应用两项本地固定规则
         return (value != 0U) ? A_HmiConfig_Open(context, current_config) : true;
     }
     if ((button_id != A_HMI_CONFIG_CONFIRM_BUTTON_ID) &&
@@ -730,6 +761,7 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
     }
     if (!context->active)
     {
+        //进入参数页时复制完整运行参数、应用两项本地固定规则
         (void) A_HmiConfig_Open(context, current_config);
         // 即使导航按钮未上传，参数页上的第一个业务按钮也能建立安全的当前参数编辑副本。
     }
@@ -741,6 +773,7 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
             {
                 context->confirm_pending = false;
                 context->save_pending = true;
+                //更新参数页提示状态并把提示槽加入待刷新位图
                 A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_SAVING);
             }
             // 非法输入没有可保存候选值，确认按钮只关闭子画面，不得生成保存请求。
@@ -752,6 +785,7 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
         if (value != 0U)
         {
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             context->confirm_pending = false;
             context->save_pending = false;
@@ -763,6 +797,7 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
             {
                 context->refresh_mask |= A_HMI_CONFIG_FIELD_MASK;
             }
+            //更新参数页提示状态并把提示槽加入待刷新位图
             A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_CANCELLED);
             // 返回修改始终恢复当前已生效参数，避免被取消的候选值留在主页面。
         }
@@ -775,20 +810,26 @@ bool A_HmiConfig_HandleButton(A_Hmi_Config_Context *context,
             const char *current_text = "\xB5\xB1\xC7\xB0\xB2\xCE\xCA\xFD"; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
             const char *default_text = "\xC4\xAC\xC8\xCF\xB2\xCE\xCA\xFD"; // 当前作用域变量，用于保存显示文本缓冲区或长度指针。
 
+            //把编译期默认值写入一个运行参数结构体
             A_GasConfig_LoadDefaults(&context->edit_config);
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             context->confirm_pending = true;
             context->save_pending = false;
             context->pending_field = A_HMI_CONFIG_ALL_FIELDS;
+            //复制去除首尾空白后的用户输入；获取字符串长度
             A_HmiConfig_CopyInputText(context->pending_old_text,
                                       sizeof(context->pending_old_text),
                                       current_text,
                                       strlen(current_text));
+            //复制去除首尾空白后的用户输入；获取字符串长度
             A_HmiConfig_CopyInputText(context->pending_new_text,
                                       sizeof(context->pending_new_text),
                                       default_text,
                                       strlen(default_text));
+            //更新参数页提示状态并把提示槽加入待刷新位图
             A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_DEFAULT_LOADED);
+            //把确认子画面的名称、当前值、候选值和说明四个文本加入优先刷新队列
             A_HmiConfig_RequestDialogRefresh(context);
             // 恢复默认仅建立完整候选参数，Lua同步打开子画面，确认后才持久化和生效。
         }
@@ -826,6 +867,7 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     {
         return;
     }
+    //查看文本输入FIFO队首事件的画面和控件ID
     if (!F_Hmi_PeekTextEvent(context->transport, &page_id, &control_id) ||
         (page_id != A_HMI_CONFIG_PAGE_ID) ||
         (control_id < A_HMI_CONFIG_TEXT_BASE) ||
@@ -833,6 +875,7 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     {
         return;
     }
+    //取出一条由大彩文本输入控件通过B1 11上传的ASCII文本事件
     length = F_Hmi_TakeTextEvent(context->transport,
                                  &page_id,
                                  &control_id,
@@ -844,48 +887,59 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     }
     if (!context->active)
     {
+        //进入参数页时复制完整运行参数、应用两项本地固定规则
         (void) A_HmiConfig_Open(context, current_config);
         // 文本控件页面ID可作为兜底的入页证据，先复制当前参数再应用本字段，避免其他字段使用静态初值。
     }
 
     field = (uint8_t) (control_id - A_HMI_CONFIG_TEXT_BASE);
     context->edit_config = *current_config;
+    //根据切瓶压力自动生成0.100 MPa回差
     A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
     context->pending_field = field;
     context->confirm_pending = false;
     context->save_pending = false;
 
+    //按参数页单位把指定编辑参数格式化为ASCII显示文本
     formatted_length = A_HmiConfig_FormatField(current_config,
                                                 field,
                                                 context->pending_old_text,
                                                 sizeof(context->pending_old_text) - 1U);
     context->pending_old_text[formatted_length] = '\0';
+    //复制去除首尾空白后的用户输入
     A_HmiConfig_CopyInputText(context->pending_new_text,
                               sizeof(context->pending_new_text),
                               text,
                               length);
 
+    //将一个文本输入按控件序号转换并写入对应编辑参数
     input_result = A_HmiConfig_UpdateField(context, field, text, length);
     if (input_result == A_HMI_CONFIG_INPUT_VALID)
     {
+        //根据切瓶压力自动生成0.100 MPa回差
         A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
+        //检查运行参数的单项范围和压力阈值关系
         validation = A_GasConfig_Validate(&context->edit_config);
         if (validation == A_GAS_CONFIG_VALID)
         {
+            //按参数页单位把指定编辑参数格式化为ASCII显示文本
             formatted_length = A_HmiConfig_FormatField(&context->edit_config,
                                                         field,
                                                         context->pending_new_text,
                                                         sizeof(context->pending_new_text) - 1U);
             context->pending_new_text[formatted_length] = '\0';
             context->confirm_pending = true;
+            //更新参数页提示状态并把提示槽加入待刷新位图
             A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_CONFIRM);
             // 每次只提交一个字段候选值，确认成功后下一次编辑重新以当前运行参数为基准。
         }
         else
         {
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             context->refresh_mask |= (uint16_t) (1U << field);
+            //更新参数页提示状态并把提示槽加入待刷新位图
             A_HmiConfig_SetStatus(context,
                 (validation == A_GAS_CONFIG_INVALID_RELATION) ?
                 A_HMI_CONFIG_STATUS_RELATION_ERROR : A_HMI_CONFIG_STATUS_RANGE_ERROR);
@@ -894,13 +948,16 @@ void A_HmiConfig_InputTask(A_Hmi_Config_Context *context,
     else
     {
         context->edit_config = *current_config;
+        //根据切瓶压力自动生成0.100 MPa回差
         A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
         context->refresh_mask |= (uint16_t) (1U << field);
+        //更新参数页提示状态并把提示槽加入待刷新位图
         A_HmiConfig_SetStatus(context,
             (input_result == A_HMI_CONFIG_INPUT_FORMAT_ERROR) ?
             A_HMI_CONFIG_STATUS_INPUT_FORMAT_ERROR : A_HMI_CONFIG_STATUS_RANGE_ERROR);
         // 非法文本不生成保存请求，主页面恢复原值，子画面显示具体格式或范围原因。
     }
+    //把确认子画面的名称、当前值、候选值和说明四个文本加入优先刷新队列
     A_HmiConfig_RequestDialogRefresh(context);
 }
 
@@ -917,6 +974,7 @@ bool A_HmiConfig_TakeSaveRequest(A_Hmi_Config_Context *context, Gas_Config *conf
         return false;
     }
     *config = context->edit_config;
+    //根据切瓶压力自动生成0.100 MPa回差
     A_HmiConfig_ApplyHiddenParameters(config);
     context->edit_config = *config;
     context->confirm_pending = false;
@@ -947,22 +1005,26 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
     {
         case A_HMI_CONFIG_RESULT_SUCCESS:
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             context->refresh_mask |= A_HMI_CONFIG_FIELD_MASK;
             status = A_HMI_CONFIG_STATUS_SUCCESS;
             break;
         case A_HMI_CONFIG_RESULT_INVALID_RELATION:
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             status = A_HMI_CONFIG_STATUS_RELATION_ERROR;
             break;
         case A_HMI_CONFIG_RESULT_STORAGE_FAILED:
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             status = A_HMI_CONFIG_STATUS_STORAGE_ERROR;
             break;
         default:
             context->edit_config = *current_config;
+            //根据切瓶压力自动生成0.100 MPa回差
             A_HmiConfig_ApplyHiddenParameters(&context->edit_config);
             status = A_HMI_CONFIG_STATUS_RANGE_ERROR;
             break;
@@ -979,6 +1041,7 @@ void A_HmiConfig_ReportResult(A_Hmi_Config_Context *context,
         }
         context->refresh_mask = (uint16_t) (context->refresh_mask | field_refresh_mask);
     }
+    //更新参数页提示状态并把提示槽加入待刷新位图
     A_HmiConfig_SetStatus(context, status);
 }
 
@@ -1030,6 +1093,7 @@ bool A_HmiConfig_HandleLogClearButton(A_Hmi_Config_Context *context,
             context->log_clear_status = A_HMI_LOG_CLEAR_BUSY;
             context->log_clear_progress = 0U;
             context->log_clear_refresh_mask |= A_HMI_LOG_CLEAR_STATUS_REFRESH;
+            //更新参数页提示状态并把提示槽加入待刷新位图
             A_HmiConfig_SetStatus(context, A_HMI_CONFIG_STATUS_LOG_CLEARING);
         }
         return true;
@@ -1111,6 +1175,7 @@ void A_HmiConfig_ReportLogClear(A_Hmi_Config_Context *context,
     }
     if (context->status != (uint8_t) page_status)
     {
+        //更新参数页提示状态并把提示槽加入待刷新位图
         A_HmiConfig_SetStatus(context, page_status);
     }
 }
@@ -1149,6 +1214,7 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
         if ((context->log_clear_refresh_mask & A_HMI_LOG_CLEAR_COUNT_REFRESH) != 0U)
         {
             control_id = A_HMI_LOG_CLEAR_COUNT_TEXT_ID;
+            //把日志数量格式化为Screen7使用的“当前日志：N条”GBK文本
             length = A_HmiConfig_FormatLogClearCount(context->log_clear_count,
                                                       text,
                                                       sizeof(text));
@@ -1157,12 +1223,14 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
         else
         {
             control_id = A_HMI_LOG_CLEAR_STATUS_TEXT_ID;
+            //把日志清除等待、百分比进度和最终结果格式化为GBK文本
             length = A_HmiConfig_FormatLogClearStatus(context->log_clear_status,
                                                        context->log_clear_progress,
                                                        text,
                                                        sizeof(text));
             slot = 1U;
         }
+        //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本
         if ((length != 0U) && F_Hmi_SendText(context->transport,
                                              context->hardware,
                                              A_HMI_LOG_CLEAR_PAGE_ID,
@@ -1202,6 +1270,7 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
     if (slot < A_HMI_CONFIG_TEXT_COUNT)
     {
         control_id = (uint16_t) (A_HMI_CONFIG_TEXT_BASE + slot);
+        //按参数页单位把指定编辑参数格式化为ASCII显示文本
         length = A_HmiConfig_FormatField(&context->edit_config, slot, text, sizeof(text));
         fixed_text = text; // 当前作用域变量，用于保存当前处理数据。
     }
@@ -1222,11 +1291,13 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
             case A_HMI_CONFIG_DIALOG_OLD_SLOT:
                 control_id = A_HMI_CONFIG_DIALOG_OLD_TEXT_ID;
                 fixed_text = context->pending_old_text; // 当前作用域变量，用于保存当前处理数据。
+                //获取字符串长度
                 length = strlen(fixed_text);
                 break;
             case A_HMI_CONFIG_DIALOG_NEW_SLOT:
                 control_id = A_HMI_CONFIG_DIALOG_NEW_TEXT_ID;
                 fixed_text = context->pending_new_text; // 当前作用域变量，用于保存当前处理数据。
+                //获取字符串长度
                 length = strlen(fixed_text);
                 break;
             default:
@@ -1241,6 +1312,7 @@ void A_HmiConfig_Task(A_Hmi_Config_Context *context)
         }
     }
 
+    //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本
     if ((length != 0U) && F_Hmi_SendText(context->transport,
                                           context->hardware,
                                           page_id,

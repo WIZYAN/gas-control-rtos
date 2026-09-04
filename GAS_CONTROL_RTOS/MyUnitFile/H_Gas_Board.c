@@ -26,8 +26,11 @@ void R_BSP_WarmStart(bsp_warm_start_event_t event)
 
     if (BSP_WARM_START_POST_C == event)
     {
+        //初始化GPIO驱动
         (void) R_IOPORT_Open(&g_ioport_ctrl, g_ioport.p_cfg);
+        //写入GPIO引脚电平
         (void) R_IOPORT_PinWrite(&g_ioport_ctrl, SCI0_485RES, BSP_IO_LEVEL_HIGH);
+        //写入GPIO引脚电平
         (void) R_IOPORT_PinWrite(&g_ioport_ctrl, PRE_RES, BSP_IO_LEVEL_HIGH);
         // 内外两路 RS485 均使用高电平使能 120 Ω 匹配电阻，方向控制由各自的 EN 信号独立完成。
     }

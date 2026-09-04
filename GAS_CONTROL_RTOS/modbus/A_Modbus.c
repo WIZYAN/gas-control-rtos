@@ -25,6 +25,7 @@ static void A_Modbus_FloatToRegisters(float value,
 {
     uint32_t raw_value; // 当前作用域变量，用于保存当前处理值。
 
+    //复制内存数据
     memcpy(&raw_value, &value, sizeof(raw_value));
     *high_register = (uint16_t) (raw_value >> 16U);
     *low_register = (uint16_t) raw_value;
@@ -79,6 +80,7 @@ static bool A_Modbus_ReadConfigRegisters(const A_Modbus_Context *context,
 
     for (index = 0U; index < A_GAS_CONFIG_REGISTER_COUNT; ++index)
     {
+        //读取一个保持寄存器的当前数值
         if (!F_Modbus_GetHoldingRegister(&context->function,
                                          (uint16_t) (A_MODBUS_HOLDING_CONFIG_BASE + index),
                                          &value[index]))
@@ -117,24 +119,32 @@ bool A_Modbus_Init(A_Modbus_Context *context, const Gas_Config *config)
         return false;
     }
 
+    //初始化或清空内存数据
     memset(context, 0, sizeof(*context));
+    //初始化外部 Modbus 硬件层、从站功能层及输入、保持寄存器表
     if (!F_Modbus_Init(&context->function, &context->hardware, A_MODBUS_SLAVE_ADDRESS))
     {
         return false;
     }
 
     context->ready = true;
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_RESULT,
                                        A_MODBUS_RESULT_IDLE);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_RESULT,
                                        A_MODBUS_CONFIG_RESULT_IDLE);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_VERSION,
                                        A_MODBUS_CONFIG_VERSION_VALUE);
+    //刷新外部保持寄存器中的有效日志数量、容量和单条记录长度
     A_Modbus_UpdateLogInfo(context, 0U, 0U);
+    //更新日志读取结果
     A_Modbus_SetLogReadResult(context, A_MODBUS_LOG_RESULT_IDLE);
+    //把当前有效运行参数刷新到外部 Modbus 参数保持寄存器
     if (!A_Modbus_UpdateConfigRegisters(context, config))
     {
         context->ready = false;
@@ -158,6 +168,7 @@ bool A_Modbus_Deinit(A_Modbus_Context *context)
     {
         return false;
     }
+    //通过硬件层关闭SCI0外部Modbus接口并清除功能层状态
     success = F_Modbus_Deinit(&context->function, &context->hardware);
     context->ready = false;
     return success;
@@ -190,12 +201,17 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
         uint16_t pressure_low; // 当前作用域变量，用于保存压力值。
         uint16_t pressure_offset = (uint16_t) (A_MODBUS_INPUT_PRESSURE_BASE + (index * 2U)); // 当前作用域变量，用于保存数据偏移量。
 
+        //将 IEEE-754 float32 转换为 Modbus 的 AB CD 两个连续寄存器
         A_Modbus_FloatToRegisters(system->cylinder[index].pressure_mpa, &pressure_high, &pressure_low);
+        //更新一个供功能码 04 读取的输入寄存器
         (void) F_Modbus_SetInputRegister(&context->function, pressure_offset, pressure_high);
+        //更新一个供功能码 04 读取的输入寄存器
         (void) F_Modbus_SetInputRegister(&context->function, (uint16_t) (pressure_offset + 1U), pressure_low);
+        //更新一个供功能码 04 读取的输入寄存器
         (void) F_Modbus_SetInputRegister(&context->function,
                                        (uint16_t) (A_MODBUS_INPUT_STATE_BASE + index),
                                        (uint16_t) system->cylinder[index].state);
+        //更新一个供功能码 04 读取的输入寄存器
         (void) F_Modbus_SetInputRegister(&context->function,
                                        (uint16_t) (A_MODBUS_INPUT_QUALITY_BASE + index),
                                        (uint16_t) system->cylinder[index].pressure_quality);
@@ -219,46 +235,60 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
     // 六路离散状态压缩成位图，减少上位机一次状态刷新所需的寄存器数量。
 
     (void) F_Modbus_SetInputRegister(&context->function, A_MODBUS_INPUT_MODE, (uint16_t) system->mode);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_ACTIVE_BOTTLE,
                                    (system->active_index < GAS_CYLINDER_COUNT) ?
                                    (uint16_t) (system->active_index + 1U) : 0U);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_SWITCH_STATE,
                                    (uint16_t) system->switch_state);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_EXHAUST_STATE,
                                    exhaust_mask);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_ALARM_HIGH,
                                    (uint16_t) (system->alarm_bits >> 16U));
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_ALARM_LOW,
                                    (uint16_t) system->alarm_bits);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_PLATFORM_READY,
                                    system->platform_ready ? 1U : 0U);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                    A_MODBUS_INPUT_VERSION,
                                    A_MODBUS_SOFTWARE_VERSION);
+    //将 IEEE-754 float32 转换为 Modbus 的 AB CD 两个连续寄存器
     A_Modbus_FloatToRegisters(system->total_pressure.pressure_mpa,
                               &total_pressure_high,
                               &total_pressure_low);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      A_MODBUS_INPUT_TOTAL_PRESSURE_BASE,
                                      total_pressure_high);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      (uint16_t) (A_MODBUS_INPUT_TOTAL_PRESSURE_BASE + 1U),
                                      total_pressure_low);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      A_MODBUS_INPUT_TOTAL_QUALITY,
                                      (uint16_t) system->total_pressure.pressure_quality);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      A_MODBUS_INPUT_QUALIFIED_MASK,
                                      qualified_mask);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      A_MODBUS_INPUT_SUPPLY_MASK,
                                      supply_mask);
+    //更新一个供功能码 04 读取的输入寄存器
     (void) F_Modbus_SetInputRegister(&context->function,
                                      A_MODBUS_INPUT_TEST_MASK,
                                      test_mask);
@@ -273,9 +303,11 @@ void A_Modbus_Refresh(A_Modbus_Context *context, const Gas_System *system)
 static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
 {
     uint16_t command_value; // 当前作用域变量，用于保存操作命令。
+    //读取一个保持寄存器的当前数值
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_COMMAND,
                                        &command_value);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_COMMAND,
                                        A_MODBUS_COMMAND_NONE); // 废弃地址写入后立即清零，避免旧值残留。
@@ -284,6 +316,7 @@ static void A_Modbus_ProcessCommandWrite(A_Modbus_Context *context)
     {
         return;
     }
+    //将气源应用层的命令执行结果写入外部 Modbus 结果寄存器
     A_Modbus_SetCommandResult(context, A_MODBUS_RESULT_INVALID_COMMAND);
     // V1.08固定自动控制，旧版启动和停止操作码均不再进入业务层。
 }
@@ -301,9 +334,11 @@ static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context,
     Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
     A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
+    //读取一个保持寄存器的当前数值
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_COMMIT,
                                        &key);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_COMMIT,
                                        0U);
@@ -313,35 +348,43 @@ static void A_Modbus_ProcessConfigCommit(A_Modbus_Context *context,
     }
     if (key != A_MODBUS_CONFIG_COMMIT_KEY)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_KEY);
         return;
     }
     if (context->config_pending)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY);
         return;
     }
+    //按照 0x0106～0x010F 的定义把参数保持寄存器解码为运行参数结构体
     if (!A_Modbus_ReadConfigRegisters(context, config, &candidate))
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_RANGE);
         return;
     }
 
+    //检查运行参数的单项范围和压力阈值关系
     validation = A_GasConfig_Validate(&candidate);
     if (validation == A_GAS_CONFIG_INVALID_RANGE)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_RANGE);
         return;
     }
     // 参数先解码后做单项范围及阈值关系校验，通过后仍需业务层检查停机和全关条件。
     if (validation == A_GAS_CONFIG_INVALID_RELATION)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_RELATION);
         return;
     }
 
     context->pending_config = candidate;
     context->config_pending = true;
+    //更新外部 Modbus 参数处理结果寄存器
     A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_PENDING);
     // 候选参数与气源总控的生效config分离，EEPROM保存成功前不影响控制逻辑。
 }
@@ -360,9 +403,11 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context,
     uint32_t manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
     uint32_t test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
 
+    //读取一个保持寄存器的当前数值
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_DEFAULT,
                                        &key);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_DEFAULT,
                                        0U);
@@ -372,11 +417,13 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context,
     }
     if (key != A_MODBUS_CONFIG_DEFAULT_KEY)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_INVALID_KEY);
         return;
     }
     if (context->config_pending)
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_SYSTEM_BUSY);
         return;
     }
@@ -384,12 +431,14 @@ static void A_Modbus_ProcessConfigDefault(A_Modbus_Context *context,
     low_warning_pressure_mpa = config->low_warning_pressure_mpa;
     manual_exhaust_time_ms = config->manual_exhaust_time_ms; // 当前作用域变量，用于保存毫秒时间值。
     test_valve_max_time_ms = config->test_valve_max_time_ms; // 当前作用域变量，用于保存毫秒时间值。
+    //把编译期默认值写入一个运行参数结构体
     A_GasConfig_LoadDefaults(&context->pending_config);
     context->pending_config.low_warning_pressure_mpa = low_warning_pressure_mpa;
     context->pending_config.manual_exhaust_time_ms = manual_exhaust_time_ms;
     context->pending_config.test_valve_max_time_ms = test_valve_max_time_ms;
     // 外部“恢复默认”只恢复公开的10项，三项HMI安全参数保持当前值。
     context->config_pending = true;
+    //更新外部 Modbus 参数处理结果寄存器
     A_Modbus_SetConfigResult(context, A_MODBUS_CONFIG_RESULT_PENDING);
 }
 
@@ -404,12 +453,15 @@ static void A_Modbus_ProcessLogCommandWrite(A_Modbus_Context *context)
     uint16_t command_value; // 当前作用域变量，用于保存操作命令。
     uint16_t logical_index; // 当前作用域变量，用于保存日志逻辑索引。
 
+    //读取一个保持寄存器的当前数值
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_COMMAND,
                                        &command_value);
+    //读取一个保持寄存器的当前数值
     (void) F_Modbus_GetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_INDEX,
                                        &logical_index);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_COMMAND,
                                        A_MODBUS_LOG_COMMAND_NONE); // 命令锁存后清零，防止同一请求被重复执行。
@@ -420,17 +472,20 @@ static void A_Modbus_ProcessLogCommandWrite(A_Modbus_Context *context)
     }
     if (command_value != A_MODBUS_LOG_COMMAND_READ)
     {
+        //更新日志读取结果
         A_Modbus_SetLogReadResult(context, A_MODBUS_LOG_RESULT_INVALID_COMMAND);
         return;
     }
     if (context->log_read_pending)
     {
+        //更新日志读取结果
         A_Modbus_SetLogReadResult(context, A_MODBUS_LOG_RESULT_BUSY);
         return;
     }
 
     context->pending_log_index = logical_index;
     context->log_read_pending = true;
+    //更新日志读取结果
     A_Modbus_SetLogReadResult(context, A_MODBUS_LOG_RESULT_PENDING);
     // 逻辑序号的范围由日志模块依据实时有效数量判断，Modbus层不接触EEPROM物理地址。
 }
@@ -451,34 +506,44 @@ void A_Modbus_Task(A_Modbus_Context *context, const Gas_Config *config)
         return;
     }
 
+    //处理一帧外部 Modbus RTU 请求
     F_Modbus_Task(&context->function, &context->hardware);
+    //取出并清除最近一次由外部主站产生的保持寄存器写入事件
     if (!F_Modbus_TakeWriteEvent(&context->function, &write_start, &write_count))
     {
         return;
     }
 
+    //判断一次保持寄存器写入范围是否包含指定寄存器偏移
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
                                             A_MODBUS_HOLDING_COMMAND))
     {
+        //清除已经废弃的整机启停寄存器
         A_Modbus_ProcessCommandWrite(context);
     }
+    //判断一次保持寄存器写入范围是否包含指定寄存器偏移
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
                                             A_MODBUS_HOLDING_CONFIG_COMMIT))
     {
+        //处理参数提交键值
         A_Modbus_ProcessConfigCommit(context, config);
     }
+    //判断一次保持寄存器写入范围是否包含指定寄存器偏移
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
                                             A_MODBUS_HOLDING_CONFIG_DEFAULT))
     {
+        //处理恢复默认键值并生成一份待业务层保存和应用的默认参数
         A_Modbus_ProcessConfigDefault(context, config);
     }
+    //判断一次保持寄存器写入范围是否包含指定寄存器偏移
     if (A_Modbus_WriteEventContainsRegister(write_start,
                                             write_count,
                                             A_MODBUS_HOLDING_LOG_COMMAND))
     {
+        //解析日志命令和逻辑序号寄存器
         A_Modbus_ProcessLogCommandWrite(context);
     }
     // 功能码10可能一次覆盖多个触发寄存器，因此按写入范围分别检查所有业务入口。
@@ -501,6 +566,7 @@ void A_Modbus_SetCommandResult(A_Modbus_Context *context, a_modbus_result_t resu
         return;
     }
 
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                      A_MODBUS_HOLDING_RESULT,
                                      (uint16_t) result);
@@ -517,16 +583,21 @@ bool A_Modbus_UpdateConfigRegisters(A_Modbus_Context *context, const Gas_Config 
     uint16_t value[A_GAS_CONFIG_REGISTER_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
     uint16_t index; // 当前作用域变量，用于保存遍历索引。
 
+    //检查运行参数的单项范围和压力阈值关系
     if ((context == NULL) || (config == NULL) || !context->ready ||
         (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID))
     {
         return false;
     }
 
+    //把 MPa 压力转换为外部 Modbus 使用的乘以 1000 定点数
     value[A_MODBUS_CONFIG_SWITCH_PRESSURE] = A_Modbus_PressureToRegister(config->switch_pressure_mpa);
+    //把 MPa 压力转换为外部 Modbus 使用的乘以 1000 定点数
     value[A_MODBUS_CONFIG_SWITCH_RELEASE] = A_Modbus_PressureToRegister(config->switch_release_mpa);
     value[A_MODBUS_CONFIG_VALVE_PULL_IN_TIME] = (uint16_t) config->valve_pull_in_time_ms;
+    //把 MPa 压力转换为外部 Modbus 使用的乘以 1000 定点数
     value[A_MODBUS_CONFIG_READY_MIN_PRESSURE] = A_Modbus_PressureToRegister(config->ready_min_pressure_mpa);
+    //把 MPa 压力转换为外部 Modbus 使用的乘以 1000 定点数
     value[A_MODBUS_CONFIG_PRESSURE_MAX] = A_Modbus_PressureToRegister(config->pressure_max_mpa);
     value[A_MODBUS_CONFIG_LOW_CONFIRM_TIME] = (uint16_t) config->low_confirm_time_ms;
     value[A_MODBUS_CONFIG_LOW_CONFIRM_SAMPLES] = config->low_confirm_samples;
@@ -536,6 +607,7 @@ bool A_Modbus_UpdateConfigRegisters(A_Modbus_Context *context, const Gas_Config 
 
     for (index = 0U; index < A_GAS_CONFIG_REGISTER_COUNT; ++index)
     {
+        //由本机应用层更新一个保持寄存器的当前数值
         if (!F_Modbus_SetHoldingRegister(&context->function,
                                          (uint16_t) (A_MODBUS_HOLDING_CONFIG_BASE + index),
                                          value[index]))
@@ -577,6 +649,7 @@ void A_Modbus_SetConfigResult(A_Modbus_Context *context, a_modbus_config_result_
         return;
     }
 
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_CONFIG_RESULT,
                                        (uint16_t) result);
@@ -616,12 +689,15 @@ void A_Modbus_UpdateLogInfo(A_Modbus_Context *context,
         return;
     }
 
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_COUNT,
                                        valid_count);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_CAPACITY,
                                        capacity);
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_RECORD_SIZE,
                                        A_MODBUS_LOG_RECORD_SIZE);
@@ -648,6 +724,7 @@ bool A_Modbus_SetLogRecord(A_Modbus_Context *context,
         uint16_t value = (uint16_t) (((uint16_t) record[index * 2U] << 8U) |
                                      record[(index * 2U) + 1U]);
 
+        //由本机应用层更新一个保持寄存器的当前数值
         if (!F_Modbus_SetHoldingRegister(&context->function,
                                          (uint16_t) (A_MODBUS_HOLDING_LOG_DATA_BASE + index),
                                          value))
@@ -678,12 +755,14 @@ void A_Modbus_SetLogReadResult(A_Modbus_Context *context, A_Modbus_Log_Result re
     {
         for (index = 0U; index < A_MODBUS_LOG_REGISTER_COUNT; ++index)
         {
+            //由本机应用层更新一个保持寄存器的当前数值
             (void) F_Modbus_SetHoldingRegister(&context->function,
                                                (uint16_t) (A_MODBUS_HOLDING_LOG_DATA_BASE + index),
                                                0U);
         }
         // 任何非成功状态都清空旧数据，主站必须同时检查结果码才能使用窗口内容。
     }
+    //由本机应用层更新一个保持寄存器的当前数值
     (void) F_Modbus_SetHoldingRegister(&context->function,
                                        A_MODBUS_HOLDING_LOG_RESULT,
                                        (uint16_t) result);
@@ -708,6 +787,7 @@ bool A_Modbus_IsReady(const A_Modbus_Context *context)
  */
 bool A_Modbus_HasFault(const A_Modbus_Context *context)
 {
+    //逐层查询SCI0外部Modbus是否存在硬件通讯故障
     return ((context == NULL) || !context->ready ||
             F_Modbus_HasFault(&context->function, &context->hardware));
 }

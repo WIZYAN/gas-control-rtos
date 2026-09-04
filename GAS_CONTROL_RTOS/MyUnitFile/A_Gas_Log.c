@@ -165,8 +165,11 @@ static bool A_GasLog_DecodeHeader(const uint8_t *data,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(candidate, 0, sizeof(*candidate));
+    //按照高字节在前的固定格式解码一个无符号16位整数
     stored_crc = A_GasLog_ReadU16(&data[A_GAS_LOG_HEADER_SIZE - 2U]);
+    //使用Modbus多项式计算日志管理头和记录的CRC16校验值
     if ((data[0] != (uint8_t) A_GAS_LOG_HEADER_MAGIC_0) ||
         (data[1] != (uint8_t) A_GAS_LOG_HEADER_MAGIC_1) ||
         (data[2] != (uint8_t) A_GAS_LOG_HEADER_MAGIC_2) ||
@@ -178,10 +181,15 @@ static bool A_GasLog_DecodeHeader(const uint8_t *data,
         return false;
     }
 
+    //按照高字节在前的固定格式解码一个无符号32位整数
     candidate->generation = A_GasLog_ReadU32(&data[6]);
+    //按照高字节在前的固定格式解码一个无符号32位整数
     candidate->next_sequence = A_GasLog_ReadU32(&data[10]);
+    //按照高字节在前的固定格式解码一个无符号16位整数
     candidate->write_index = A_GasLog_ReadU16(&data[14]);
+    //按照高字节在前的固定格式解码一个无符号16位整数
     candidate->valid_count = A_GasLog_ReadU16(&data[16]);
+    //按照高字节在前的固定格式解码一个无符号32位整数
     candidate->last_regular_key = A_GasLog_ReadU32(&data[18]);
     if ((candidate->write_index >= A_GAS_LOG_PHYSICAL_SLOT_COUNT) ||
         (candidate->valid_count > A_GAS_LOG_RECORD_CAPACITY) ||
@@ -219,6 +227,7 @@ static bool A_GasLog_WriteHeader(A_Gas_Log_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(data, 0xFF, sizeof(data));
     data[0] = (uint8_t) A_GAS_LOG_HEADER_MAGIC_0;
     data[1] = (uint8_t) A_GAS_LOG_HEADER_MAGIC_1;
@@ -226,13 +235,21 @@ static bool A_GasLog_WriteHeader(A_Gas_Log_Context *context,
     data[3] = (uint8_t) A_GAS_LOG_HEADER_MAGIC_3;
     data[4] = A_GAS_LOG_HEADER_VERSION;
     data[5] = A_GAS_LOG_HEADER_SIZE;
+    //按照高字节在前的固定格式编码一个无符号32位整数
     A_GasLog_WriteU32(&data[6], generation);
+    //按照高字节在前的固定格式编码一个无符号32位整数
     A_GasLog_WriteU32(&data[10], next_sequence);
+    //按照高字节在前的固定格式编码一个无符号16位整数
     A_GasLog_WriteU16(&data[14], write_index);
+    //按照高字节在前的固定格式编码一个无符号16位整数
     A_GasLog_WriteU16(&data[16], valid_count);
+    //按照高字节在前的固定格式编码一个无符号32位整数
     A_GasLog_WriteU32(&data[18], last_regular_key);
+    //使用Modbus多项式计算日志管理头和记录的CRC16校验值
     crc = A_GasLog_Crc16(data, A_GAS_LOG_HEADER_SIZE - 2U);
+    //按照高字节在前的固定格式编码一个无符号16位整数
     A_GasLog_WriteU16(&data[A_GAS_LOG_HEADER_SIZE - 2U], crc);
+    //把管理头副本编号转换为对应的EEPROM字节地址
     address = A_GasLog_HeaderAddress(copy);
     // 管理头写后立即读回逐字节比较，只有确认落盘才允许推进内存循环索引。
 
@@ -288,10 +305,13 @@ static void A_GasLog_EncodeRecordPrefix(uint8_t *record,
                                         uint32_t sequence,
                                         const Gas_Date_Time *date_time)
 {
+    //初始化或清空内存数据
     (void) memset(record, 0, A_GAS_LOG_RECORD_SIZE);
     record[0] = (uint8_t) type;
     record[1] = A_GAS_LOG_FORMAT_VERSION;
+    //按照高字节在前的固定格式编码一个无符号32位整数
     A_GasLog_WriteU32(&record[2], sequence);
+    //把系统日期时间编码到日志记录的固定六字节时间区
     A_GasLog_CopyDateTime(record, date_time);
 }
 
@@ -310,15 +330,18 @@ static void A_GasLog_EncodeRegularRecord(const A_Gas_Log_Context *context,
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
+    //初始化记录并编码类型、版本、流水号和日期时间公共字段
     A_GasLog_EncodeRecordPrefix(record,
                                 A_GAS_LOG_TYPE_REGULAR,
                                 context->next_sequence,
                                 &system->date_time);
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        //把有效MPa压力转换为乘以1000的无符号16位定点数
         uint16_t pressure = A_GasLog_PressureToRaw(system->cylinder[index].pressure_mpa,
                                                    system->cylinder[index].pressure_quality);
 
+        //按照高字节在前的固定格式编码一个无符号16位整数
         A_GasLog_WriteU16(&record[12U + ((uint16_t) index * 2U)], pressure);
         packed_states |= ((uint32_t) system->cylinder[index].state & 0x07UL) << (index * 3U);
         if (system->cylinder[index].pressure_quality == GAS_PRESSURE_VALID)
@@ -326,6 +349,7 @@ static void A_GasLog_EncodeRegularRecord(const A_Gas_Log_Context *context,
             quality_mask = (uint8_t) (quality_mask | (uint8_t) (1U << index));
         }
     }
+    //按照高字节在前的固定格式编码一个无符号16位整数；把有效MPa压力转换为乘以1000的无符号16位定点数
     A_GasLog_WriteU16(&record[24],
                       A_GasLog_PressureToRaw(system->total_pressure.pressure_mpa,
                                              system->total_pressure.pressure_quality));
@@ -337,7 +361,9 @@ static void A_GasLog_EncodeRegularRecord(const A_Gas_Log_Context *context,
         quality_mask = (uint8_t) (quality_mask | 0x40U);
     }
     record[29] = quality_mask;
+    //使用Modbus多项式计算日志管理头和记录的CRC16校验值
     crc = A_GasLog_Crc16(record, A_GAS_LOG_RECORD_SIZE - 2U);
+    //按照高字节在前的固定格式编码一个无符号16位整数
     A_GasLog_WriteU16(&record[A_GAS_LOG_RECORD_SIZE - 2U], crc);
     // 压力无效时数值写0，必须结合第29字节有效位图区分真实零压力。
 }
@@ -402,6 +428,7 @@ static void A_GasLog_EncodeEventRecord(const A_Gas_Log_Context *context,
     const Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
     uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
+    //初始化记录并编码类型、版本、流水号和日期时间公共字段
     A_GasLog_EncodeRecordPrefix(record,
                                 A_GAS_LOG_TYPE_EVENT,
                                 context->next_sequence,
@@ -410,20 +437,28 @@ static void A_GasLog_EncodeEventRecord(const A_Gas_Log_Context *context,
     record[13] = (uint8_t) old_state;
     record[14] = (uint8_t) cylinder->state;
     record[15] = A_GAS_LOG_EVENT_STATE_CHANGED;
+    //按照高字节在前的固定格式编码一个无符号16位整数；把有效MPa压力转换为乘以1000的无符号16位定点数
     A_GasLog_WriteU16(&record[16],
                       A_GasLog_PressureToRaw(cylinder->pressure_mpa,
                                              cylinder->pressure_quality));
     record[18] = (uint8_t) cylinder->pressure_quality;
     record[19] = (uint8_t) system->mode;
+    //根据阀门种类生成六路阀门当前命令位图
     record[20] = A_GasLog_BuildValveMask(system, 0U);
+    //根据阀门种类生成六路阀门当前命令位图
     record[21] = A_GasLog_BuildValveMask(system, 1U);
+    //根据阀门种类生成六路阀门当前命令位图
     record[22] = A_GasLog_BuildValveMask(system, 2U);
+    //生成六瓶工作人员测试合格标志位图
     record[23] = A_GasLog_BuildQualifiedMask(system);
+    //按照高字节在前的固定格式编码一个无符号32位整数
     A_GasLog_WriteU32(&record[24], system->alarm_bits);
     record[28] = (system->active_index < GAS_CYLINDER_COUNT) ?
                  (uint8_t) (system->active_index + 1U) : 0U;
     record[29] = (uint8_t) system->switch_state;
+    //使用Modbus多项式计算日志管理头和记录的CRC16校验值
     crc = A_GasLog_Crc16(record, A_GAS_LOG_RECORD_SIZE - 2U);
+    //按照高字节在前的固定格式编码一个无符号16位整数
     A_GasLog_WriteU16(&record[A_GAS_LOG_RECORD_SIZE - 2U], crc);
     // 事件同时保存阀门、报警和切瓶子状态，便于上位机还原状态变化现场。
 }
@@ -469,7 +504,9 @@ static bool A_GasLog_Append(A_Gas_Log_Context *context,
         return false;
     }
 
+    //把日志物理槽位索引转换为EEPROM中的32字节记录起始地址
     address = A_GasLog_RecordAddress(context->write_index);
+    //向 EEPROM 指定地址写入一段原始数据；从 EEPROM 指定地址读取一段原始数据；比较两段内存数据
     if (!A_Storage_Write(context->storage, address, record, A_GAS_LOG_RECORD_SIZE) ||
         !A_Storage_Read(context->storage, address, verify, sizeof(verify)) ||
         (memcmp(record, verify, sizeof(verify)) != 0))
@@ -537,16 +574,23 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->storage = storage;
+    //初始化或清空内存数据
     (void) memset(&candidate_a, 0, sizeof(candidate_a));
+    //初始化或清空内存数据
     (void) memset(&candidate_b, 0, sizeof(candidate_b));
+    //从 EEPROM 指定地址读取一段原始数据
     if (A_Storage_Read(storage, A_GAS_LOG_HEADER_A_ADDRESS, data_a, sizeof(data_a)))
     {
+        //校验并解码一份32字节日志管理头
         (void) A_GasLog_DecodeHeader(data_a, &candidate_a);
     }
+    //从 EEPROM 指定地址读取一段原始数据
     if (A_Storage_Read(storage, A_GAS_LOG_HEADER_B_ADDRESS, data_b, sizeof(data_b)))
     {
+        //校验并解码一份32字节日志管理头
         (void) A_GasLog_DecodeHeader(data_b, &candidate_b);
     }
 
@@ -585,6 +629,7 @@ bool A_GasLog_Init(A_Gas_Log_Context *context,
         context->valid_count = 0U;
         context->last_regular_key = A_GAS_LOG_LAST_REGULAR_KEY_NONE;
         context->active_header_copy = 0U;
+        //把指定循环日志状态编码、写入并读回校验到一个管理头副本
         if (!A_GasLog_WriteHeader(context,
                                   0U,
                                   context->generation,
@@ -676,9 +721,11 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
     {
         case A_GAS_LOG_CLEAR_WRITE_HEADER:
             next_generation = context->generation + 1UL;
+            //把年月日时和当前半小时转换为可持久化比较的唯一时段键
             regular_key = system->date_time.valid ?
                           A_GasLog_MakeRegularKey(&system->date_time) :
                           A_GAS_LOG_LAST_REGULAR_KEY_NONE; // 当前作用域变量，用于保存当前处理数据。
+            //把指定循环日志状态编码、写入并读回校验到一个管理头副本
             if (!A_GasLog_WriteHeader(context,
                                       context->clear_empty_header_copy,
                                       next_generation,
@@ -687,6 +734,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
                                       0U,
                                       regular_key))
             {
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
                 break;
             }
@@ -698,23 +746,27 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
             context->last_regular_key = regular_key;
             context->active_header_copy = context->clear_empty_header_copy;
             context->clear_empty_header_committed = true;
+            //把管理头副本编号转换为对应的EEPROM字节地址
             context->clear_address = A_GasLog_HeaderAddress(
                 (uint8_t) (context->clear_empty_header_copy ^ 1U));
             context->clear_state = A_GAS_LOG_CLEAR_ERASE_OLD_HEADER;
             // 先提交代数更高的空管理头，后续任意时刻掉电都不会重新引用旧日志数据。
             break;
 
+        //把EEPROM指定地址范围填充为0xFF
         case A_GAS_LOG_CLEAR_ERASE_OLD_HEADER:
             if (!A_Storage_EraseRange(context->storage,
                                       context->clear_address,
                                       AT24C256_PAGE_SIZE_BYTES))
             {
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
                 break;
             }
             context->clear_state = A_GAS_LOG_CLEAR_VERIFY_OLD_HEADER;
             break;
 
+        //从 EEPROM 指定地址读取一段原始数据；检查一个AT24C256物理页是否已经全部写成0xFF
         case A_GAS_LOG_CLEAR_VERIFY_OLD_HEADER:
             if (!A_Storage_Read(context->storage,
                                 context->clear_address,
@@ -722,6 +774,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
                                 sizeof(verify)) ||
                 !A_GasLog_PageIsErased(verify))
             {
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
                 break;
             }
@@ -730,17 +783,20 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
             context->clear_state = A_GAS_LOG_CLEAR_ERASE_DATA;
             break;
 
+        //把EEPROM指定地址范围填充为0xFF
         case A_GAS_LOG_CLEAR_ERASE_DATA:
             if (!A_Storage_EraseRange(context->storage,
                                       context->clear_address,
                                       AT24C256_PAGE_SIZE_BYTES))
             {
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
                 break;
             }
             context->clear_state = A_GAS_LOG_CLEAR_VERIFY_DATA;
             break;
 
+        //从 EEPROM 指定地址读取一段原始数据；检查一个AT24C256物理页是否已经全部写成0xFF
         case A_GAS_LOG_CLEAR_VERIFY_DATA:
             if (!A_Storage_Read(context->storage,
                                 context->clear_address,
@@ -748,6 +804,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
                                 sizeof(verify)) ||
                 !A_GasLog_PageIsErased(verify))
             {
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
                 break;
             }
@@ -757,6 +814,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
             if (next_address >= AT24C256_CAPACITY_BYTES)
             {
                 context->clear_pages_completed = A_GAS_LOG_CLEAR_PAGE_COUNT;
+                //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
                 A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_SUCCESS);
             }
             else
@@ -766,6 +824,7 @@ void A_GasLog_ClearTask(A_Gas_Log_Context *context, const Gas_System *system)
             }
             break;
 
+        //结束日志清除状态机并用当前六瓶状态建立新的事件比较快照
         default:
             A_GasLog_FinishClear(context, system, A_GAS_LOG_CLEAR_RESULT_FAILED);
             break;
@@ -801,11 +860,13 @@ bool A_GasLog_Task(A_Gas_Log_Context *context, const Gas_System *system)
     {
         if (context->previous_state[index] != system->cylinder[index].state)
         {
+            //编码一次气瓶状态变化及变化时压力、阀门、模式和报警信息
             A_GasLog_EncodeEventRecord(context,
                                        system,
                                        index,
                                        context->previous_state[index],
                                        record);
+            //先写入一条记录
             if (!A_GasLog_Append(context, record, context->last_regular_key))
             {
                 return false;
@@ -815,10 +876,13 @@ bool A_GasLog_Task(A_Gas_Log_Context *context, const Gas_System *system)
         }
     }
 
+    //把年月日时和当前半小时转换为可持久化比较的唯一时段键
     regular_key = A_GasLog_MakeRegularKey(&system->date_time);
     if (regular_key != context->last_regular_key)
     {
+        //编码包含时间、六瓶压力、总压力、六瓶状态和压力有效位图的32字节常规记录
         A_GasLog_EncodeRegularRecord(context, system, record);
+        //先写入一条记录
         if (!A_GasLog_Append(context, record, regular_key))
         {
             return false;
@@ -872,7 +936,9 @@ bool A_GasLog_ReadRecord(A_Gas_Log_Context *context,
         return false;
     }
 
+    //按照高字节在前的固定格式解码一个无符号16位整数
     stored_crc = A_GasLog_ReadU16(&record[A_GAS_LOG_RECORD_SIZE - 2U]);
+    //使用Modbus多项式计算日志管理头和记录的CRC16校验值
     return ((record[1] == A_GAS_LOG_FORMAT_VERSION) &&
             ((record[0] == A_GAS_LOG_TYPE_REGULAR) ||
              (record[0] == A_GAS_LOG_TYPE_EVENT)) &&

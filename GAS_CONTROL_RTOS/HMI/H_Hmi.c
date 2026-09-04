@@ -25,19 +25,24 @@ bool H_Hmi_Init(H_Hmi_Context *context)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //写入GPIO引脚电平
     if (R_IOPORT_PinWrite(&g_ioport_ctrl, DISP_POWER, BSP_IO_LEVEL_HIGH) != FSP_SUCCESS)
     {
         return false;
     }
+    //执行短时硬件延时
     R_BSP_SoftwareDelay(100U, BSP_DELAY_UNITS_MILLISECONDS);
     // 先开启串口屏主电源并等待100ms，确保电源轨稳定后再使能屏幕。
 
     if (R_IOPORT_PinWrite(&g_ioport_ctrl, DISP_EN, BSP_IO_LEVEL_HIGH) != FSP_SUCCESS)
     {
+        //写入GPIO引脚电平
         (void) R_IOPORT_PinWrite(&g_ioport_ctrl, DISP_POWER, BSP_IO_LEVEL_LOW);
         return false;
     }
+    //执行短时硬件延时
     R_BSP_SoftwareDelay(500U, BSP_DELAY_UNITS_MILLISECONDS);
     // 屏幕使能后等待500ms完成启动，再打开SCI9并发送RTC及控件刷新命令。
 
@@ -45,8 +50,10 @@ bool H_Hmi_Init(H_Hmi_Context *context)
     {
         return false;
     }
+    //注册SCI串口回调
     if (R_SCI_UART_CallbackSet(&dis_uart_ctrl, dis_uart_callback, context, NULL) != FSP_SUCCESS)
     {
+        //关闭SCI串口
         (void) R_SCI_UART_Close(&dis_uart_ctrl);
         return false;
     }
@@ -88,6 +95,7 @@ bool H_Hmi_Write(H_Hmi_Context *context, const uint8_t *data, size_t length)
     }
 
     context->tx_busy = true;
+    //启动SCI异步发送
     if (R_SCI_UART_Write(&dis_uart_ctrl, data, (uint32_t) length) != FSP_SUCCESS)
     {
         context->tx_busy = false;

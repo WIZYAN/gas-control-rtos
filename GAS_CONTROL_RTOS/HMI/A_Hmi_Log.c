@@ -27,6 +27,7 @@ static bool A_HmiLog_AppendBytes(char *row,
         return false;
     }
 
+    //复制内存数据
     (void) memcpy(&row[*length], data, data_length);
     *length += data_length;
     return true;
@@ -43,6 +44,7 @@ static bool A_HmiLog_AppendChar(char *row,
                                 size_t capacity,
                                 char value)
 {
+    //向数据行缓冲区追加指定字节
     return A_HmiLog_AppendBytes(row, length, capacity, &value, 1U);
 }
 
@@ -83,6 +85,7 @@ static bool A_HmiLog_AppendUnsigned(char *row,
     {
         digits[output_count - count + index] = reverse[count - index - 1U];
     }
+    //向数据行缓冲区追加指定字节
     return A_HmiLog_AppendBytes(row, length, capacity, digits, output_count);
 }
 
@@ -141,6 +144,7 @@ static bool A_HmiLog_DateTimeValid(uint16_t year,
     {
         return false;
     }
+    //计算2000～2099年指定月份的实际天数
     maximum_day = A_HmiLog_DaysInMonth(year, month);
     return ((maximum_day > 0U) && (day > 0U) && (day <= maximum_day));
 }
@@ -173,6 +177,7 @@ static uint64_t A_HmiLog_DateTimeKey(uint16_t year,
  */
 static uint64_t A_HmiLog_RecordDateTimeKey(const uint8_t *record)
 {
+    //把日期时间组合成YYYYMMDDHHMMSS数值
     return A_HmiLog_DateTimeKey((uint16_t) (2000U + record[6]),
                                 record[7], record[8], record[9], record[10], record[11]);
 }
@@ -185,6 +190,7 @@ static uint64_t A_HmiLog_RecordDateTimeKey(const uint8_t *record)
  */
 static bool A_HmiLog_FilterValid(const A_Hmi_Log_Filter *filter)
 {
+    //校验日志查询日期时间的年月日和时分秒范围
     if ((filter == NULL) || (filter->cylinder_number > GAS_CYLINDER_COUNT) ||
         (filter->target_state > (uint8_t) GAS_CYL_WAIT_TEST) ||
         !A_HmiLog_DateTimeValid(filter->start_year,
@@ -202,6 +208,7 @@ static bool A_HmiLog_FilterValid(const A_Hmi_Log_Filter *filter)
     {
         return false;
     }
+    //把日期时间组合成YYYYMMDDHHMMSS数值
     return (!filter->time_enabled ||
             (A_HmiLog_DateTimeKey(filter->start_year,
                                   filter->start_month,
@@ -241,7 +248,9 @@ static bool A_HmiLog_RecordMatchesFilter(const A_Hmi_Log_Context *context,
     }
     if (context->active_filter.time_enabled)
     {
+        //从32字节日志公共时间区提取YYYYMMDDHHMMSS比较键
         record_key = A_HmiLog_RecordDateTimeKey(record);
+        //把日期时间组合成YYYYMMDDHHMMSS数值
         if ((record_key < A_HmiLog_DateTimeKey(context->active_filter.start_year,
                                                context->active_filter.start_month,
                                                context->active_filter.start_day,
@@ -285,9 +294,11 @@ static bool A_HmiLog_AppendPressure(char *row,
 {
     if (!valid)
     {
+        //向数据行缓冲区追加指定字节
         return A_HmiLog_AppendBytes(row, length, capacity, "--", 2U);
     }
 
+    //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符
     return (A_HmiLog_AppendUnsigned(row, length, capacity, raw / 1000U, 1U) &&
             A_HmiLog_AppendChar(row, length, capacity, '.') &&
             A_HmiLog_AppendUnsigned(row, length, capacity, raw % 1000U, 3U));
@@ -309,10 +320,12 @@ static bool A_HmiLog_AppendBriefPressure(char *row,
 
     if (!valid)
     {
+        //向数据行缓冲区追加指定字节
         return A_HmiLog_AppendBytes(row, length, capacity, "--", 2U);
     }
 
     rounded = (uint16_t) ((raw + 5U) / 10U);
+    //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符
     return (A_HmiLog_AppendUnsigned(row, length, capacity, rounded / 100U, 1U) &&
             A_HmiLog_AppendChar(row, length, capacity, '.') &&
             A_HmiLog_AppendUnsigned(row, length, capacity, rounded % 100U, 2U));
@@ -330,6 +343,7 @@ static bool A_HmiLog_AppendDateTime(char *row,
                                     const uint8_t *record,
                                     bool include_seconds)
 {
+    //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符
     if (!A_HmiLog_AppendUnsigned(row, length, capacity, 2000U + record[6], 4U) ||
         !A_HmiLog_AppendChar(row, length, capacity, '-') ||
         !A_HmiLog_AppendUnsigned(row, length, capacity, record[7], 2U) ||
@@ -343,6 +357,7 @@ static bool A_HmiLog_AppendDateTime(char *row,
         return false;
     }
 
+    //向数据行缓冲区追加一个ASCII字符；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
     return (!include_seconds ||
             (A_HmiLog_AppendChar(row, length, capacity, ':') &&
              A_HmiLog_AppendUnsigned(row, length, capacity, record[11], 2U)));
@@ -404,6 +419,7 @@ static bool A_HmiLog_AppendState(char *row,
             text_length = 4U;
             break;
     }
+    //向数据行缓冲区追加指定字节
     return A_HmiLog_AppendBytes(row, length, capacity, text, text_length);
 }
 
@@ -481,6 +497,7 @@ static uint16_t A_HmiLog_GetPageCount(const A_Hmi_Log_Context *context)
     {
         return 0U;
     }
+    //根据查询类型取得每页能够显示的逻辑日志数量
     page_size = A_HmiLog_GetPageSize(context->query_type);
     return (uint16_t) ((context->matched_count + page_size - 1U) / page_size);
 }
@@ -509,6 +526,7 @@ static void A_HmiLog_SetDefaultFilter(A_Hmi_Log_Filter *filter)
     {
         return;
     }
+    //初始化或清空内存数据
     (void) memset(filter, 0, sizeof(*filter));
     filter->start_year = 2000U;
     filter->start_month = 1U;
@@ -576,6 +594,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     {
         if (slot == 0U)
         {
+            //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
             return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                             context->edit_filter.start_year, 4U) &&
                     A_HmiLog_AppendUnsigned(text, &length, capacity,
@@ -585,6 +604,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
         }
         if (slot == 1U)
         {
+            //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
             return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                             context->edit_filter.start_hour, 2U) &&
                     A_HmiLog_AppendUnsigned(text, &length, capacity,
@@ -594,6 +614,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
         }
         if (slot == 2U)
         {
+            //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
             return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                             context->edit_filter.end_year, 4U) &&
                     A_HmiLog_AppendUnsigned(text, &length, capacity,
@@ -601,6 +622,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
                     A_HmiLog_AppendUnsigned(text, &length, capacity,
                                             context->edit_filter.end_day, 2U)) ? length : 0U;
         }
+        //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
         return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                         context->edit_filter.end_hour, 2U) &&
                 A_HmiLog_AppendUnsigned(text, &length, capacity,
@@ -612,10 +634,12 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     {
         if (context->edit_filter.cylinder_number == 0U)
         {
+            //向数据行缓冲区追加指定字节
             return A_HmiLog_AppendBytes(text, &length, capacity,
                                        all_cylinder_text,
                                        sizeof(all_cylinder_text) - 1U) ? length : 0U;
         }
+        //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加指定字节
         return (A_HmiLog_AppendUnsigned(text, &length, capacity,
                                        context->edit_filter.cylinder_number, 1U) &&
                 A_HmiLog_AppendBytes(text, &length, capacity,
@@ -626,10 +650,12 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
     {
         if (context->edit_filter.target_state == 0U)
         {
+            //向数据行缓冲区追加指定字节
             return A_HmiLog_AppendBytes(text, &length, capacity,
                                        all_state_text,
                                        sizeof(all_state_text) - 1U) ? length : 0U;
         }
+        //把日志中的气瓶状态编码转换为固定GBK中文状态名称
         return A_HmiLog_AppendState(text, &length, capacity,
                                    context->edit_filter.target_state) ? length : 0U;
     }
@@ -648,6 +674,7 @@ static size_t A_HmiLog_FormatFilterField(const A_Hmi_Log_Context *context,
             status_text = reset_text; // 当前作用域变量，用于保存当前处理数据。
             status_length = sizeof(reset_text) - 1U;
         }
+        //向数据行缓冲区追加指定字节
         return A_HmiLog_AppendBytes(text, &length, capacity,
                                    status_text, status_length) ? length : 0U;
     }
@@ -685,6 +712,7 @@ static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
         }
         if (slot == 4U)
         {
+            //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
             sent = F_Hmi_SendButtonState(context->transport,
                                          context->hardware,
                                          A_HMI_LOG_FILTER_PAGE_ID,
@@ -693,7 +721,9 @@ static bool A_HmiLog_FilterRefreshTask(A_Hmi_Log_Context *context)
         }
         else
         {
+            //把查询页的日期、时间、气瓶、状态或提示格式化为ASCII/GBK文本
             length = A_HmiLog_FormatFilterField(context, slot, text, sizeof(text));
+            //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本
             sent = ((length > 0U) &&
                     F_Hmi_SendText(context->transport,
                                    context->hardware,
@@ -725,6 +755,7 @@ static size_t A_HmiLog_FormatRegularPressureRow(const uint8_t *record,
     uint8_t quality_mask = record[29]; // 当前格式化函数使用的压力有效位图；bit0～bit5对应1～6号瓶，bit6对应总压力，0表示数据无效，1表示数据有效，bit7保留为0。
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
+    //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符；向数据行缓冲区追加指定字节
     if (!A_HmiLog_AppendUnsigned(row, &length, capacity, record[7], 2U) ||
         !A_HmiLog_AppendChar(row, &length, capacity, '-') ||
         !A_HmiLog_AppendUnsigned(row, &length, capacity, record[8], 2U) ||
@@ -741,6 +772,7 @@ static size_t A_HmiLog_FormatRegularPressureRow(const uint8_t *record,
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符；把乘以1000的日志压力四舍五入为两位小数MPa文本；按日志规定的高字节在前格式读取一个16位无符号整数
         if (!A_HmiLog_AppendUnsigned(row, &length, capacity, (uint32_t) index + 1U, 1U) ||
             !A_HmiLog_AppendChar(row, &length, capacity, '#') ||
             !A_HmiLog_AppendBriefPressure(row,
@@ -754,6 +786,7 @@ static size_t A_HmiLog_FormatRegularPressureRow(const uint8_t *record,
         }
     }
 
+    //向数据行缓冲区追加指定字节；向数据行缓冲区追加一个ASCII字符；把乘以1000的日志压力四舍五入为两位小数MPa文本；按日志规定的高字节在前格式读取一个16位无符号整数
     if (!A_HmiLog_AppendBytes(row, &length, capacity, total_pressure_text,
                               sizeof(total_pressure_text)) ||
         !A_HmiLog_AppendChar(row, &length, capacity, ':') ||
@@ -784,6 +817,7 @@ static size_t A_HmiLog_FormatRegularStateRow(const uint8_t *record,
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
+    //向数据行缓冲区追加一个ASCII字符；向数据行缓冲区追加指定字节
     if (!A_HmiLog_AppendChar(row, &length, capacity, ';') ||
         !A_HmiLog_AppendBytes(row, &length, capacity, state_text, sizeof(state_text)) ||
         !A_HmiLog_AppendChar(row, &length, capacity, ':'))
@@ -798,6 +832,7 @@ static size_t A_HmiLog_FormatRegularStateRow(const uint8_t *record,
     {
         uint8_t state = (uint8_t) ((packed_states >> (index * 3U)) & 0x07UL); // 当前作用域变量，用于保存业务状态。
 
+        //把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符；把日志中的气瓶状态编码转换为固定GBK中文状态名称
         if (!A_HmiLog_AppendUnsigned(row, &length, capacity, (uint32_t) index + 1U, 1U) ||
             !A_HmiLog_AppendChar(row, &length, capacity, '#') ||
             !A_HmiLog_AppendState(row, &length, capacity, state) ||
@@ -807,6 +842,7 @@ static size_t A_HmiLog_FormatRegularStateRow(const uint8_t *record,
             return 0U;
         }
     }
+    //向数据行缓冲区追加一个ASCII字符
     return A_HmiLog_AppendChar(row, &length, capacity, ';') ? length : 0U;
 }
 
@@ -823,6 +859,7 @@ static size_t A_HmiLog_FormatEventRow(const uint8_t *record,
     const char number_text[2] = {'\xBA', '\xC5'}; // 号。
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
+    //把日志时间转换为日期时间文本；向数据行缓冲区追加一个ASCII字符；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加指定字节；把日志中的气瓶状态编码转换为固定GBK中文状态名称；把乘以1000的日志压力编码转换为三位小数MPa文本；按日志规定的高字节在前格式读取一个16位无符号整数
     if (!A_HmiLog_AppendDateTime(row, &length, capacity, record, true) ||
         !A_HmiLog_AppendChar(row, &length, capacity, ';') ||
         !A_HmiLog_AppendUnsigned(row, &length, capacity, record[12], 1U) ||
@@ -861,7 +898,9 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
     context->regular_line_phase = 0U;
     context->matched_count = 0U;
     context->scanned_count = 0U;
+    //查询日志管理模块是否已经成功初始化
     context->read_failed = !A_GasLog_IsReady(context->log);
+    //校验条件字段范围
     context->filter_error = !A_HmiLog_FilterValid(&context->active_filter);
     context->snapshot_changed = false;
     context->progress_pending = false;
@@ -875,6 +914,7 @@ static void A_HmiLog_StartRequest(A_Hmi_Log_Context *context)
     context->page_start_index = 0U;
     context->page_end_index = 0U;
     context->page_cursor = 0U;
+    //查询循环日志区当前保存的有效记录数量
     context->total_count = context->filter_error ? 0U : A_GasLog_GetCount(context->log);
     context->scan_logical_index = context->total_count;
     context->snapshot_next_sequence = context->log->next_sequence;
@@ -917,12 +957,14 @@ static bool A_HmiLog_ScanOneRecord(A_Hmi_Log_Context *context)
         return false;
     }
     logical_index = (uint16_t) (context->scan_logical_index - 1U);
+    //按照从最旧到最新的逻辑顺序读取并校验一条32字节原始日志
     if (!A_GasLog_ReadRecord(context->log, logical_index, context->current_record))
     {
         return false;
     }
     context->scan_logical_index = logical_index;
     context->scanned_count++;
+    //判断已校验日志是否同时满足类型、时间、气瓶和进入状态条件
     if (A_HmiLog_RecordMatchesFilter(context, context->current_record))
     {
         if (context->matched_count >= A_HMI_LOG_INDEX_CAPACITY)
@@ -951,12 +993,14 @@ static bool A_HmiLog_FormatCurrentRow(A_Hmi_Log_Context *context)
 {
     if (context->query_type == A_HMI_LOG_QUERY_EVENT)
     {
+        //把事件记录格式化为“时间、气瓶、状态变化、压力”四列表格行
         context->row_length = A_HmiLog_FormatEventRow(context->current_record,
                                                        context->row,
                                                        sizeof(context->row));
     }
     else if (context->regular_line_phase == 0U)
     {
+        //把常规记录格式化为“时间
         context->row_length = A_HmiLog_FormatRegularPressureRow(context->current_record,
                                                                  context->row,
                                                                  sizeof(context->row));
@@ -964,6 +1008,7 @@ static bool A_HmiLog_FormatCurrentRow(A_Hmi_Log_Context *context)
     }
     else
     {
+        //把常规记录格式化为“空时间
         context->row_length = A_HmiLog_FormatRegularStateRow(context->current_record,
                                                               context->row,
                                                               sizeof(context->row));
@@ -988,12 +1033,14 @@ static bool A_HmiLog_IsRequestedPageAvailable(const A_Hmi_Log_Context *context)
     {
         return false;
     }
+    //根据查询类型取得每页能够显示的逻辑日志数量
     page_size = A_HmiLog_GetPageSize(context->query_type);
     required_count = ((uint32_t) context->requested_page + 1UL) * page_size;
     if (!context->index_complete)
     {
         return ((uint32_t) context->matched_count >= required_count);
     }
+    //根据已经建立的单类型索引数量计算当前已知的总页数
     page_count = A_HmiLog_GetPageCount(context);
     return (context->requested_page < page_count);
 }
@@ -1039,12 +1086,14 @@ static void A_HmiLog_ProcessPageRequest(A_Hmi_Log_Context *context)
     {
         return;
     }
+    //判断当前RAM索引是否已经足够显示请求页
     if (!context->index_complete && !A_HmiLog_IsRequestedPageAvailable(context))
     {
         context->state = A_HMI_LOG_QUERY_SCAN;
         return;
     }
 
+    //根据已经建立的单类型索引数量计算当前已知的总页数
     page_count = A_HmiLog_GetPageCount(context);
     if (page_count == 0U)
     {
@@ -1063,6 +1112,7 @@ static void A_HmiLog_ProcessPageRequest(A_Hmi_Log_Context *context)
         context->state = A_HMI_LOG_QUERY_PAGE_INFO;
         return;
     }
+    //根据已建立的RAM索引准备请求页的起止位置
     A_HmiLog_StartPage(context);
 }
 
@@ -1083,6 +1133,7 @@ static void A_HmiLog_FinishIndex(A_Hmi_Log_Context *context)
     }
     if (context->page_request_pending)
     {
+        //在索引数量允许时启动请求页
         A_HmiLog_ProcessPageRequest(context);
     }
     else
@@ -1103,6 +1154,7 @@ static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
     char status[A_HMI_LOG_STATUS_MAX_SIZE]; // 当前作用域变量，用于保存当前处理数据数组。
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
+    //向数据行缓冲区追加指定字节；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行；向数据行缓冲区追加一个ASCII字符
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                               scan_text, sizeof(scan_text) - 1U) ||
         !A_HmiLog_AppendUnsigned(status, &length, sizeof(status),
@@ -1114,6 +1166,7 @@ static bool A_HmiLog_SendProgress(A_Hmi_Log_Context *context)
         return false;
     }
 
+    //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本；根据查询类型选择事件或常规日志画面ID；根据查询类型选择事件或常规查询状态文本控件ID
     return F_Hmi_SendText(context->transport,
                           context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
@@ -1165,6 +1218,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context, bool rtc_valid)
 
     if (fixed_text != NULL)
     {
+        //向数据行缓冲区追加指定字节
         if (!A_HmiLog_AppendBytes(status, &length, sizeof(status), fixed_text, fixed_length))
         {
             return false;
@@ -1177,6 +1231,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context, bool rtc_valid)
         size_t type_length = (context->query_type == A_HMI_LOG_QUERY_REGULAR) ?
                              (sizeof(regular_text) - 1U) : (sizeof(event_text) - 1U);
 
+        //向数据行缓冲区追加指定字节；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
         if (!A_HmiLog_AppendBytes(status, &length, sizeof(status), type_text, type_length) ||
             !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), context->matched_count, 1U) ||
             !A_HmiLog_AppendBytes(status, &length, sizeof(status),
@@ -1186,6 +1241,7 @@ static bool A_HmiLog_SendStatus(A_Hmi_Log_Context *context, bool rtc_valid)
         }
     }
 
+    //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本；根据查询类型选择事件或常规日志画面ID；根据查询类型选择事件或常规查询状态文本控件ID
     return F_Hmi_SendText(context->transport,
                           context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
@@ -1213,6 +1269,7 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
                             0U : (uint16_t) (context->current_page + 1U);
     size_t length = 0U; // 当前作用域变量，用于保存有效数据长度。
 
+    //向数据行缓冲区追加指定字节；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                               first_text, sizeof(first_text) - 1U) ||
         !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), display_page, 1U))
@@ -1221,12 +1278,14 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
     }
     if (context->index_complete)
     {
+        //向数据行缓冲区追加一个ASCII字符；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
         if (!A_HmiLog_AppendChar(status, &length, sizeof(status), '/') ||
             !A_HmiLog_AppendUnsigned(status, &length, sizeof(status), page_count, 1U))
         {
             return false;
         }
     }
+    //向数据行缓冲区追加指定字节；向数据行缓冲区追加一个ASCII字符
     if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                               page_text, sizeof(page_text) - 1U) ||
         !A_HmiLog_AppendChar(status, &length, sizeof(status), ' '))
@@ -1235,12 +1294,14 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
     }
     if (!context->index_complete)
     {
+        //向数据行缓冲区追加指定字节
         if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                                   counting_text, sizeof(counting_text) - 1U))
         {
             return false;
         }
     }
+    //向数据行缓冲区追加指定字节；把无符号整数按指定最少位数转换为十进制ASCII并追加到数据行
     else if (!A_HmiLog_AppendBytes(status, &length, sizeof(status),
                                    total_text, sizeof(total_text) - 1U) ||
              !A_HmiLog_AppendUnsigned(status, &length, sizeof(status),
@@ -1251,6 +1312,7 @@ static bool A_HmiLog_SendPageInfo(A_Hmi_Log_Context *context)
         return false;
     }
 
+    //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本；根据查询类型选择事件或常规日志画面ID；根据查询类型选择事件或常规日志页码文本控件ID
     return F_Hmi_SendText(context->transport,
                           context->hardware,
                           A_HmiLog_GetPageId(context->query_type),
@@ -1275,12 +1337,14 @@ bool A_HmiLog_Init(A_Hmi_Log_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->transport = transport;
     context->hardware = hardware;
     context->log = log;
     context->query_type = A_HMI_LOG_QUERY_EVENT;
     context->pending_type = A_HMI_LOG_QUERY_EVENT;
+    //建立“全部时间、全部气瓶、全部进入状态”的初始查询条件
     A_HmiLog_SetDefaultFilter(&context->edit_filter);
     context->active_filter = context->edit_filter;
     context->filter_status = A_HMI_LOG_FILTER_STATUS_READY;
@@ -1307,6 +1371,7 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
     {
         if (value != 0U)
         {
+            //请求刷新指定类型日志
             (void) A_HmiLog_Request(context, A_HMI_LOG_QUERY_EVENT);
         }
         return true;
@@ -1316,6 +1381,7 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
     {
         if (value != 0U)
         {
+            //请求刷新指定类型日志
             (void) A_HmiLog_Request(context, A_HMI_LOG_QUERY_REGULAR);
         }
         return true;
@@ -1361,6 +1427,7 @@ bool A_HmiLog_HandleFilterButton(A_Hmi_Log_Context *context,
     {
         if (value != 0U)
         {
+            //建立“全部时间、全部气瓶、全部进入状态”的初始查询条件
             A_HmiLog_SetDefaultFilter(&context->edit_filter);
             context->filter_status = A_HMI_LOG_FILTER_STATUS_RESET;
             context->filter_refresh_mask |= A_HMI_LOG_FILTER_REFRESH_ALL;
@@ -1391,11 +1458,13 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
     {
         return;
     }
+    //查看文本输入FIFO队首事件的画面和控件ID
     while (F_Hmi_PeekTextEvent(context->transport, &page_id, &control_id) &&
            (page_id == A_HMI_LOG_FILTER_PAGE_ID) &&
            (control_id >= A_HMI_LOG_FILTER_START_DATE_ID) &&
            (control_id <= A_HMI_LOG_FILTER_END_TIME_ID))
     {
+        //取出一条由大彩文本输入控件通过B1 11上传的ASCII文本事件
         length = F_Hmi_TakeTextEvent(context->transport, &page_id, &control_id,
                                      text, sizeof(text));
         if (length == 0U)
@@ -1406,12 +1475,14 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
         candidate = context->edit_filter;
         slot = (uint8_t) (control_id - A_HMI_LOG_FILTER_START_DATE_ID);
         valid = false;
+        //把固定位数的ASCII数字转换为无符号整数
         if ((slot == 0U) && (length == 8U) &&
             A_HmiLog_ParseDigits(text, length, &value))
         {
             candidate.start_year = (uint16_t) (value / 10000U);
             candidate.start_month = (uint8_t) ((value / 100U) % 100U);
             candidate.start_day = (uint8_t) (value % 100U);
+            //校验日志查询日期时间的年月日和时分秒范围
             valid = A_HmiLog_DateTimeValid(candidate.start_year,
                                            candidate.start_month,
                                            candidate.start_day,
@@ -1419,12 +1490,14 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
                                            candidate.start_minute,
                                            candidate.start_second);
         }
+        //把固定位数的ASCII数字转换为无符号整数
         else if ((slot == 1U) && (length == 6U) &&
                  A_HmiLog_ParseDigits(text, length, &value))
         {
             candidate.start_hour = (uint8_t) (value / 10000U);
             candidate.start_minute = (uint8_t) ((value / 100U) % 100U);
             candidate.start_second = (uint8_t) (value % 100U);
+            //校验日志查询日期时间的年月日和时分秒范围
             valid = A_HmiLog_DateTimeValid(candidate.start_year,
                                            candidate.start_month,
                                            candidate.start_day,
@@ -1432,12 +1505,14 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
                                            candidate.start_minute,
                                            candidate.start_second);
         }
+        //把固定位数的ASCII数字转换为无符号整数
         else if ((slot == 2U) && (length == 8U) &&
                  A_HmiLog_ParseDigits(text, length, &value))
         {
             candidate.end_year = (uint16_t) (value / 10000U);
             candidate.end_month = (uint8_t) ((value / 100U) % 100U);
             candidate.end_day = (uint8_t) (value % 100U);
+            //校验日志查询日期时间的年月日和时分秒范围
             valid = A_HmiLog_DateTimeValid(candidate.end_year,
                                            candidate.end_month,
                                            candidate.end_day,
@@ -1445,12 +1520,14 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
                                            candidate.end_minute,
                                            candidate.end_second);
         }
+        //把固定位数的ASCII数字转换为无符号整数
         else if ((slot == 3U) && (length == 6U) &&
                  A_HmiLog_ParseDigits(text, length, &value))
         {
             candidate.end_hour = (uint8_t) (value / 10000U);
             candidate.end_minute = (uint8_t) ((value / 100U) % 100U);
             candidate.end_second = (uint8_t) (value % 100U);
+            //校验日志查询日期时间的年月日和时分秒范围
             valid = A_HmiLog_DateTimeValid(candidate.end_year,
                                            candidate.end_month,
                                            candidate.end_day,
@@ -1485,6 +1562,7 @@ void A_HmiLog_InputTask(A_Hmi_Log_Context *context)
 bool A_HmiLog_Request(A_Hmi_Log_Context *context,
                       A_Hmi_Log_Query_Type query_type)
 {
+    //查询日志管理模块是否已经成功初始化
     if ((context == NULL) || !context->ready ||
         !A_GasLog_IsReady(context->log) ||
         ((query_type != A_HMI_LOG_QUERY_EVENT) &&
@@ -1511,6 +1589,7 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
 {
     uint16_t base_page; // 当前作用域变量，用于保存当前处理数据。
 
+    //查询日志管理模块是否已经成功初始化
     if ((context == NULL) || !context->ready ||
         !A_GasLog_IsReady(context->log) ||
         ((query_type != A_HMI_LOG_QUERY_EVENT) &&
@@ -1524,6 +1603,7 @@ bool A_HmiLog_RequestPage(A_Hmi_Log_Context *context,
 
     if (!context->cache_valid || (context->query_type != query_type))
     {
+        //请求刷新指定类型日志
         return A_HmiLog_Request(context, query_type);
     }
     if (context->snapshot_changed ||
@@ -1576,11 +1656,13 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
     }
     if (context->request_pending)
     {
+        //保存日志流水号快照
         A_HmiLog_StartRequest(context);
     }
     if ((context->state == A_HMI_LOG_QUERY_IDLE) &&
         !context->page_request_pending && (context->filter_refresh_mask != 0U))
     {
+        //每次最多回写一个Screen6动态控件
         (void) A_HmiLog_FilterRefreshTask(context);
         return;
     }
@@ -1595,6 +1677,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
     }
     if ((context->state == A_HMI_LOG_QUERY_IDLE) && context->page_request_pending)
     {
+        //在索引数量允许时启动请求页
         A_HmiLog_ProcessPageRequest(context);
     }
     if (context->state == A_HMI_LOG_QUERY_IDLE)
@@ -1614,10 +1697,13 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
         // 索引或页面发送期间产生新日志时停止使用旧索引，保留已显示页并提示人员刷新。
     }
 
+    //根据查询类型选择事件或常规日志画面ID
     page_id = A_HmiLog_GetPageId(context->query_type);
+    //根据查询类型选择事件或常规数据记录控件ID
     record_control_id = A_HmiLog_GetRecordControlId(context->query_type);
     switch (context->state)
     {
+        //按大彩B1 53指令清空指定数据记录控件中的现有行
         case A_HMI_LOG_QUERY_CLEAR:
             if (F_Hmi_SendRecordClear(context->transport,
                                       context->hardware,
@@ -1647,6 +1733,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
         case A_HMI_LOG_QUERY_SCAN:
             if (context->progress_pending)
             {
+                //向当前日志画面发送“扫描 已处理/快照总数”进度文本
                 if (A_HmiLog_SendProgress(context))
                 {
                     context->progress_pending = false;
@@ -1655,23 +1742,30 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
             }
             if (context->scan_logical_index == 0U)
             {
+                //完成当前类型索引统计
                 A_HmiLog_FinishIndex(context);
             }
+            //从快照最新端向旧端读取一条日志
             else if (!A_HmiLog_ScanOneRecord(context))
             {
+                //标记本次查询失败并回到清表步骤
                 A_HmiLog_FailAndClear(context);
             }
+            //判断当前RAM索引是否已经足够显示请求页
             else if (context->page_request_pending &&
                      A_HmiLog_IsRequestedPageAvailable(context))
             {
+                //根据已建立的RAM索引准备请求页的起止位置
                 A_HmiLog_StartPage(context);
             }
             else if (context->scan_logical_index == 0U)
             {
+                //完成当前类型索引统计
                 A_HmiLog_FinishIndex(context);
             }
             break;
 
+        //按大彩B1 53指令清空指定数据记录控件中的现有行
         case A_HMI_LOG_QUERY_PAGE_CLEAR:
             if (F_Hmi_SendRecordClear(context->transport,
                                       context->hardware,
@@ -1691,12 +1785,14 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
                 context->state = A_HMI_LOG_QUERY_PAGE_INFO;
                 break;
             }
+            //按照从最旧到最新的逻辑顺序读取并校验一条32字节原始日志；把串口屏查询类型转换为EEPROM日志记录类型编码
             if ((context->page_cursor >= context->matched_count) ||
                 !A_GasLog_ReadRecord(context->log,
                                     context->log_index[context->page_cursor],
                                     context->current_record) ||
                 (context->current_record[0] != A_HmiLog_GetRecordType(context->query_type)))
             {
+                //标记本次查询失败并回到清表步骤
                 A_HmiLog_FailAndClear(context);
                 break;
             }
@@ -1708,14 +1804,18 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
         case A_HMI_LOG_QUERY_PAGE_ROWS:
             if (!context->current_record_ready)
             {
+                //标记本次查询失败并回到清表步骤
                 A_HmiLog_FailAndClear(context);
                 break;
             }
+            //格式化当前事件行
             if (!context->row_ready && !A_HmiLog_FormatCurrentRow(context))
             {
+                //标记本次查询失败并回到清表步骤
                 A_HmiLog_FailAndClear(context);
                 break;
             }
+            //按大彩B1 52指令向指定通用表格添加一行以分号分隔的GBK文本
             if (F_Hmi_SendRecordAdd(context->transport,
                                     context->hardware,
                                     page_id,
@@ -1740,6 +1840,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
             }
             break;
 
+        //向当前日志画面发送页码、总页数、已匹配条数或后台统计状态
         case A_HMI_LOG_QUERY_PAGE_INFO:
             if (A_HmiLog_SendPageInfo(context))
             {
@@ -1749,6 +1850,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
                 }
                 else if (context->page_request_pending)
                 {
+                    //在索引数量允许时启动请求页
                     A_HmiLog_ProcessPageRequest(context);
                 }
                 else if (!context->index_complete)
@@ -1762,6 +1864,7 @@ void A_HmiLog_Task(A_Hmi_Log_Context *context, bool rtc_valid)
             }
             break;
 
+        //向当前日志画面发送完成条数、快照变化、RTC无效或读取错误提示
         case A_HMI_LOG_QUERY_STATUS:
             if (A_HmiLog_SendStatus(context, rtc_valid))
             {

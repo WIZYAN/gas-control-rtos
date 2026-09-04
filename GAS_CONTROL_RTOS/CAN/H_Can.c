@@ -39,7 +39,9 @@ bool H_Can_Init(H_Can_Context *context)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //初始化CAN驱动
     result = R_CAN_Open(&g_can0_ctrl, &g_can0_cfg);
     if (result == FSP_SUCCESS)
     {
@@ -54,11 +56,13 @@ bool H_Can_Init(H_Can_Context *context)
         return false;
     }
 
+    //注册CAN回调
     result = R_CAN_CallbackSet(&g_can0_ctrl, can_callback, context, NULL);
     if (result != FSP_SUCCESS)
     {
         if (opened_here)
         {
+            //关闭CAN驱动
             (void) R_CAN_Close(&g_can0_ctrl);
         }
         return false;
@@ -87,12 +91,14 @@ bool H_Can_Deinit(H_Can_Context *context)
         return true;
     }
 
+    //关闭CAN驱动
     result = R_CAN_Close(&g_can0_ctrl);
     if ((result != FSP_SUCCESS) && (result != FSP_ERR_NOT_OPEN))
     {
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     return true;
 }
@@ -115,6 +121,7 @@ bool H_Can_TakeFrame(H_Can_Context *context, H_Can_Frame *frame)
 
     tail = context->receive_tail;
     *frame = context->receive_queue[tail];
+    //计算CAN接收环形队列的下一个索引位置
     context->receive_tail = H_Can_NextQueueIndex(tail);
     return true;
 }
@@ -137,14 +144,17 @@ bool H_Can_Send(H_Can_Context *context, const H_Can_Frame *frame)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(&hardware_frame, 0, sizeof(hardware_frame));
     hardware_frame.id = frame->id;
     hardware_frame.id_mode = CAN_ID_MODE_EXTENDED;
     hardware_frame.type = CAN_FRAME_TYPE_DATA;
     hardware_frame.data_length_code = H_CAN_FRAME_DATA_LENGTH;
+    //复制内存数据
     (void) memcpy(hardware_frame.data, frame->data, H_CAN_FRAME_DATA_LENGTH);
 
     context->transmit_busy = true;
+    //启动CAN帧发送
     result = R_CAN_Write(&g_can0_ctrl, H_CAN_TX_MAILBOX, &hardware_frame);
     if (result != FSP_SUCCESS)
     {
@@ -207,6 +217,7 @@ void can_callback(can_callback_args_t *p_args)
         else
         {
             context->receive_queue[head].id = p_args->frame.id;
+            //复制内存数据
             (void) memcpy(context->receive_queue[head].data,
                           p_args->frame.data,
                           H_CAN_FRAME_DATA_LENGTH);

@@ -81,6 +81,7 @@ static size_t A_Hmi_FormatPressure(float pressure_mpa,
     raw = (uint32_t) ((pressure_mpa * 1000.0F) + 0.5F);
     // 放大 1000 倍后用整数拆分，可避免在嵌入式工程中引入体积较大的浮点 printf。
     fraction = raw % 1000U;
+    //把无符号整数转换成不带前导零的 ASCII 十进制文本
     length = A_Hmi_FormatUnsigned(raw / 1000U, text, capacity);
     if ((length == 0U) || ((length + 4U) > capacity))
     {
@@ -110,6 +111,7 @@ static size_t A_Hmi_CopyGbkText(const char *source,
         return 0U;
     }
 
+    //复制内存数据
     (void) memcpy(text, source, source_length);
     // 大彩写文本帧由长度字段和帧尾确定内容边界，因此发送缓冲区不需要追加 '\0'。
     return source_length;
@@ -162,6 +164,7 @@ static size_t A_Hmi_FormatCylinderState(gas_cylinder_state_t state,
             break;
     }
 
+    //把指定长度的固定 GBK 文本复制到大彩文本控件发送缓冲区；获取字符串长度
     return A_Hmi_CopyGbkText(state_text, strlen(state_text), text, capacity);
 }
 
@@ -197,7 +200,9 @@ bool A_Hmi_Init(A_Hmi_Context *context)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //初始化大彩协议解析功能和 SCI9 硬件层
     context->ready = F_Hmi_Init(&context->function, &context->hardware);
     return context->ready;
 }
@@ -217,7 +222,9 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
         return;
     }
 
+    //从 SCI9 环形缓冲区取字节并解析大彩按钮和下拉菜单控件上传帧
     F_Hmi_Task(&context->function, &context->hardware);
+    //查询SCI9串口屏硬件层是否未就绪或已锁存通信错误
     if (H_Hmi_HasFault(&context->hardware))
     {
         return;
@@ -237,6 +244,7 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
         // 后续日志只能在 valid 为 true 时使用该日期时间，避免记录未经校验的数据。
     }
 
+    //使用有符号毫秒差判断当前时间是否已经到达截止时间
     if (system->date_time.valid &&
         A_Hmi_TimeReached(now_ms,
                           system->date_time.source_timestamp_ms + A_HMI_RTC_STALE_TIME_MS))
@@ -245,6 +253,7 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
         // 超过规定时间未收到新 RTC 响应时使时间失效，日志模块将暂停写入带时间记录。
     }
 
+    //使用有符号毫秒差判断当前时间是否已经到达截止时间；按大彩协议发送读取串口屏全局 RTC 的 0x82 指令
     if (A_Hmi_TimeReached(now_ms, context->next_rtc_read_ms) &&
         F_Hmi_SendReadRtc(&context->function, &context->hardware))
     {
@@ -260,6 +269,7 @@ void A_Hmi_Task(A_Hmi_Context *context, Gas_System *system, uint32_t now_ms)
  */
 bool A_Hmi_TakeButtonEvent(A_Hmi_Context *context, uint16_t *button_id, uint8_t *value)
 {
+    //取出一条已经解析完成的按钮或下拉菜单选择事件
     return ((context != NULL) && context->ready &&
             F_Hmi_TakeButtonEvent(&context->function, button_id, value));
 }
@@ -344,6 +354,7 @@ size_t A_Hmi_TakeTextEvent(A_Hmi_Context *context,
     {
         return 0U;
     }
+    //取出一条由大彩文本输入控件通过B1 11上传的ASCII文本事件
     return F_Hmi_TakeTextEvent(&context->function,
                                page_id,
                                control_id,
@@ -361,6 +372,7 @@ bool A_Hmi_PeekTextEvent(const A_Hmi_Context *context,
                          uint16_t *page_id,
                          uint16_t *control_id)
 {
+    //查看文本输入FIFO队首事件的画面和控件ID
     return ((context != NULL) && context->ready &&
             F_Hmi_PeekTextEvent(&context->function, page_id, control_id));
 }
@@ -377,6 +389,7 @@ bool A_Hmi_SendText(A_Hmi_Context *context,
                     const char *text,
                     size_t length)
 {
+    //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本
     return ((context != NULL) && context->ready &&
             F_Hmi_SendText(&context->function,
                            &context->hardware,
@@ -520,6 +533,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -543,6 +557,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -566,6 +581,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -589,6 +605,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -612,6 +629,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -636,6 +654,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -660,6 +679,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                 break;
             }
         }
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -695,6 +715,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
             out_of_range = (context->pressure_refresh_quality[index] == GAS_PRESSURE_OUT_OF_RANGE);
             control_id = (uint16_t) ((out_of_range ? A_HMI_PRESSURE_OVERRANGE_TEXT_BASE :
                                                    A_HMI_PRESSURE_TEXT_BASE) + index);
+            //把有效或超量程的 MPa 压力格式化为三位小数ASCII文本
             length = A_Hmi_FormatPressure(context->pressure_refresh_mpa[index],
                                           context->pressure_refresh_quality[index],
                                           text,
@@ -705,11 +726,13 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 12U);
         control_id = (uint16_t) (A_HMI_STATE_TEXT_BASE + index);
+        //把气瓶状态转换为串口屏控件使用的固定 GBK 中文文本
         length = A_Hmi_FormatCylinderState(system->cylinder[index].state, text, sizeof(text));
     }
     else if (context->refresh_slot < 24U)
     {
         index = (uint8_t) (context->refresh_slot - 18U);
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -720,6 +743,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 30U)
     {
         index = (uint8_t) (context->refresh_slot - 24U);
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -730,6 +754,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 36U)
     {
         index = (uint8_t) (context->refresh_slot - 30U);
+        //按大彩B1 23指令设置指定图标控件当前显示帧
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -757,6 +782,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
                         GAS_PRESSURE_OUT_OF_RANGE);
         control_id = out_of_range ? A_HMI_TOTAL_PRESSURE_OVERRANGE_TEXT :
                                     A_HMI_TOTAL_PRESSURE_TEXT; // 当前作用域变量，用于保存当前处理数据。
+        //把有效或超量程的 MPa 压力格式化为三位小数ASCII文本
         length = A_Hmi_FormatPressure(context->pressure_refresh_mpa[GAS_TOTAL_PRESSURE_SENSOR_INDEX],
                                       context->pressure_refresh_quality[GAS_TOTAL_PRESSURE_SENSOR_INDEX],
                                       text,
@@ -766,6 +792,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     {
         index = (uint8_t) (context->refresh_slot - 38U);
         control_id = (uint16_t) (A_HMI_HIGHLIGHT_ICON_BASE + index);
+        //按大彩B1 23指令设置指定图标控件当前显示帧；把气瓶业务状态映射为实时监控卡片的三帧高亮图标索引
         sent = F_Hmi_SendIconFrame(&context->function,
                                    &context->hardware,
                                    A_HMI_MONITOR_PAGE_ID,
@@ -776,6 +803,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 50U)
     {
         index = (uint8_t) (context->refresh_slot - 44U);
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -786,6 +814,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 56U)
     {
         index = (uint8_t) (context->refresh_slot - 50U);
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -796,6 +825,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 62U)
     {
         index = (uint8_t) (context->refresh_slot - 56U);
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -806,6 +836,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
     else if (context->refresh_slot < 68U)
     {
         index = (uint8_t) (context->refresh_slot - 62U);
+        //按大彩B1 10指令强制设置指定按钮控件的弹起或按下状态
         sent = F_Hmi_SendButtonState(&context->function,
                                      &context->hardware,
                                      A_HMI_MONITOR_PAGE_ID,
@@ -816,6 +847,7 @@ void A_Hmi_Refresh(A_Hmi_Context *context, const Gas_System *system, uint32_t no
 
     if (!sent && (length > 0U))
     {
+        //按大彩 B1 10 指令格式更新指定画面和控件的 ASCII 文本
         sent = F_Hmi_SendText(&context->function,
                               &context->hardware,
                               A_HMI_MONITOR_PAGE_ID,

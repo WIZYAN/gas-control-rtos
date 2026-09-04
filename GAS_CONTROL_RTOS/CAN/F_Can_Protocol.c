@@ -102,9 +102,11 @@ bool F_CanProtocol_Init(F_Can_Protocol_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->local_type = local_type;
     context->local_address = local_address;
+    //打开FSP CAN0实例并把回调上下文绑定到当前硬件层实例
     if (!H_Can_Init(hardware))
     {
         return false;
@@ -127,6 +129,7 @@ bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context, H_Can_Context *hardwa
     {
         return false;
     }
+    //关闭当前CAN0实例并清除异步收发状态
     success = H_Can_Deinit(hardware);
     context->ready = false;
     return success;
@@ -141,6 +144,7 @@ bool F_CanProtocol_Deinit(F_Can_Protocol_Context *context, H_Can_Context *hardwa
 bool F_CanProtocol_HasFault(const F_Can_Protocol_Context *context,
                             const H_Can_Context *hardware)
 {
+    //查询CAN0是否处于总线关闭等不可正常通讯状态
     return ((context == NULL) || (hardware == NULL) || !context->ready ||
             H_Can_HasFault(hardware));
 }
@@ -166,6 +170,7 @@ static bool F_CanProtocol_QueueResponse(F_Can_Protocol_Context *context,
     {
         return false;
     }
+    //计算协议发送环形队列的下一个索引
     next = F_CanProtocol_NextQueueIndex(context->transmit_head);
     if (next == context->transmit_tail)
     {
@@ -173,6 +178,7 @@ static bool F_CanProtocol_QueueResponse(F_Can_Protocol_Context *context,
     }
 
     frame = &context->transmit_queue[context->transmit_head];
+    //把功能码、目标节点和源节点组合为参考协议的29位扩展标识符
     frame->id = F_CanProtocol_BuildId(function,
                                       target_type,
                                       target_address,
@@ -186,6 +192,7 @@ static bool F_CanProtocol_QueueResponse(F_Can_Protocol_Context *context,
     frame->data[5] = (uint8_t) (value >> 8U);
     frame->data[6] = (uint8_t) (value >> 16U);
     frame->data[7] = (uint8_t) (value >> 24U);
+    //按参考协议对数据字节0、1、3～7及标识符功能码计算8位校验值
     frame->data[2] = F_CanProtocol_CalculateCrc(frame->id, frame->data);
     context->transmit_head = next;
     return true;
@@ -203,6 +210,7 @@ bool F_CanProtocol_QueueReadResponse(F_Can_Protocol_Context *context,
                                      uint16_t data_address,
                                      uint32_t value)
 {
+    //构造一帧读或写响应并加入发送环形队列
     return F_CanProtocol_QueueResponse(context,
                                        F_CAN_FUNCTION_READ_RESPONSE,
                                        target_type,
@@ -223,6 +231,7 @@ bool F_CanProtocol_QueueWriteResponse(F_Can_Protocol_Context *context,
                                       uint16_t data_address,
                                       uint32_t result)
 {
+    //构造一帧读或写响应并加入发送环形队列
     return F_CanProtocol_QueueResponse(context,
                                        F_CAN_FUNCTION_WRITE_RESPONSE,
                                        target_type,
@@ -246,14 +255,17 @@ void F_CanProtocol_Task(F_Can_Protocol_Context *context, H_Can_Context *hardware
         return;
     }
 
+    //查询CAN0是否仍在发送上一帧数据；通过CAN0邮箱0异步发送一帧固定8字节的29位扩展数据帧
     if ((context->transmit_tail != context->transmit_head) &&
         !H_Can_IsTransmitBusy(hardware) &&
         H_Can_Send(hardware, &context->transmit_queue[context->transmit_tail]))
     {
+        //计算协议发送环形队列的下一个索引
         context->transmit_tail = F_CanProtocol_NextQueueIndex(context->transmit_tail);
         // 只有硬件层成功接收发送请求后才移出队列，CAN忙时保留到下一个周期重试。
     }
 
+    //从接收中断环形队列取出一帧完整的29位扩展数据帧
     if (context->request_pending || !H_Can_TakeFrame(hardware, &frame))
     {
         return;
@@ -272,6 +284,7 @@ void F_CanProtocol_Task(F_Can_Protocol_Context *context, H_Can_Context *hardware
                                ((target_address == context->local_address) ||
                                 (target_address == F_CAN_BROADCAST_ADDRESS)));
 
+        //按参考协议对数据字节0、1、3～7及标识符功能码计算8位校验值
         if ((!directed && !broadcast_read) ||
             ((function != (uint8_t) F_CAN_FUNCTION_WRITE) &&
              (function != (uint8_t) F_CAN_FUNCTION_READ) &&

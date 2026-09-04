@@ -88,16 +88,21 @@ static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload
     uint16_t values[A_GAS_CONFIG_STORAGE_VALUE_COUNT]; // 当前作用域变量，用于保存当前处理值数组。
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
 
+    //把 MPa 压力转换为乘以 1000 的无符号 16 位定点数
     values[0] = A_GasConfig_PressureToRaw(config->switch_pressure_mpa);
+    //把 MPa 压力转换为乘以 1000 的无符号 16 位定点数
     values[1] = A_GasConfig_PressureToRaw(config->switch_release_mpa);
     values[2] = (uint16_t) config->valve_pull_in_time_ms;
+    //把 MPa 压力转换为乘以 1000 的无符号 16 位定点数
     values[3] = A_GasConfig_PressureToRaw(config->ready_min_pressure_mpa);
+    //把 MPa 压力转换为乘以 1000 的无符号 16 位定点数
     values[4] = A_GasConfig_PressureToRaw(config->pressure_max_mpa);
     values[5] = (uint16_t) config->low_confirm_time_ms;
     values[6] = config->low_confirm_samples;
     values[7] = (uint16_t) config->valve_close_wait_ms;
     values[8] = (uint16_t) config->valve_open_wait_ms;
     values[9] = (uint16_t) config->pressure_fresh_ms;
+    //把 MPa 压力转换为乘以 1000 的无符号 16 位定点数
     values[10] = A_GasConfig_PressureToRaw(config->low_warning_pressure_mpa);
     values[11] = (uint16_t) config->manual_exhaust_time_ms;
     values[12] = (uint16_t) (config->test_valve_max_time_ms /
@@ -106,6 +111,7 @@ static void A_GasConfig_EncodePayload(const Gas_Config *config, uint8_t *payload
 
     for (index = 0U; index < A_GAS_CONFIG_STORAGE_VALUE_COUNT; ++index)
     {
+        //按高字节在前的固定顺序把 16 位数写入参数记录
         A_GasConfig_WriteU16(&payload[index * 2U], values[index]);
     }
 }
@@ -123,6 +129,7 @@ static void A_GasConfig_DecodeCommonPayload(const uint8_t *payload, Gas_Config *
 
     for (index = 0U; index < A_GAS_CONFIG_REGISTER_COUNT; ++index)
     {
+        //按高字节在前的固定顺序从参数记录读取 16 位数
         values[index] = A_GasConfig_ReadU16(&payload[index * 2U]);
     }
 
@@ -146,10 +153,14 @@ static void A_GasConfig_DecodeCommonPayload(const uint8_t *payload, Gas_Config *
  */
 static void A_GasConfig_DecodeV4Payload(const uint8_t *payload, Gas_Config *config)
 {
+    //解析配置记录的公共字段
     A_GasConfig_DecodeCommonPayload(payload, config);
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     config->low_warning_pressure_mpa =
         (float) A_GasConfig_ReadU16(&payload[20]) / GAS_CONFIG_PRESSURE_SCALE;
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     config->manual_exhaust_time_ms = A_GasConfig_ReadU16(&payload[22]);
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     config->test_valve_max_time_ms =
         (uint32_t) A_GasConfig_ReadU16(&payload[24]) * GAS_MILLISECONDS_PER_MINUTE;
 }
@@ -165,9 +176,12 @@ static bool A_GasConfig_DecodeV3Payload(const uint8_t *payload, Gas_Config *conf
     uint16_t legacy_test_time_ms; // 当前作用域变量，用于保存毫秒时间值。
     uint32_t migrated_minutes; // 当前作用域变量，用于保存日期时间字段。
 
+    //解析配置记录的公共字段
     A_GasConfig_DecodeCommonPayload(payload, config);
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     config->low_warning_pressure_mpa =
         (float) A_GasConfig_ReadU16(&payload[20]) / GAS_CONFIG_PRESSURE_SCALE;
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     config->manual_exhaust_time_ms = A_GasConfig_ReadU16(&payload[22]);
     legacy_test_time_ms = A_GasConfig_ReadU16(&payload[24]); // 当前作用域变量，用于保存毫秒时间值。
     if ((legacy_test_time_ms < 5000U) || (legacy_test_time_ms > 60000U))
@@ -277,6 +291,7 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
     size_t record_size; // 当前作用域变量，用于保存日志或配置记录缓冲区。
     uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
 
+    //从 EEPROM 指定地址读取一段原始数据
     if ((storage == NULL) || (config == NULL) ||
         !A_Storage_Read(storage, A_GAS_CONFIG_STORAGE_ADDRESS, header, sizeof(header)))
     {
@@ -290,7 +305,9 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
         return false;
     }
 
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     version = A_GasConfig_ReadU16(&header[4]);
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     payload_size = A_GasConfig_ReadU16(&header[6]);
     if ((version == A_GAS_CONFIG_RECORD_VERSION) &&
         (payload_size == A_GAS_CONFIG_PAYLOAD_SIZE))
@@ -312,12 +329,15 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
         return false;
     }
 
+    //从 EEPROM 指定地址读取一段原始数据
     if (!A_Storage_Read(storage, A_GAS_CONFIG_STORAGE_ADDRESS, record, record_size))
     {
         return false;
     }
 
+    //按高字节在前的固定顺序从参数记录读取 16 位数
     stored_crc = A_GasConfig_ReadU16(&record[record_size - 2U]);
+    //计算 EEPROM 参数记录使用的 Modbus 多项式 CRC16
     if (stored_crc != A_GasConfig_Crc16(record, record_size - 2U))
     {
         // CRC 校验在字段解码前完成，掉电写入或存储位翻转的数据不会进入运行配置。
@@ -326,10 +346,12 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
 
     if (version == A_GAS_CONFIG_RECORD_VERSION)
     {
+        //解码V4参数
         A_GasConfig_DecodeV4Payload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config);
     }
     else if (version == A_GAS_CONFIG_V3_VERSION)
     {
+        //解码旧V3参数
         if (!A_GasConfig_DecodeV3Payload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config))
         {
             return false;
@@ -337,17 +359,21 @@ bool A_GasConfig_Load(A_Storage_Context *storage, Gas_Config *config)
     }
     else
     {
+        //把编译期默认值写入一个运行参数结构体
         A_GasConfig_LoadDefaults(config);
+        //解析配置记录的公共字段
         A_GasConfig_DecodeCommonPayload(&record[A_GAS_CONFIG_PAYLOAD_OFFSET], config);
         // V2没有新增三项，沿用V1.11默认值；校验通过后尽力原址升级。
     }
 
+    //检查运行参数的单项范围和压力阈值关系
     if (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID)
     {
         return false;
     }
     if (version != A_GAS_CONFIG_RECORD_VERSION)
     {
+        //把运行参数编码为单页记录并写入 AT24C256
         (void) A_GasConfig_Save(storage, config);
     }
     return true;
@@ -365,21 +391,28 @@ bool A_GasConfig_Save(A_Storage_Context *storage, const Gas_Config *config)
     uint8_t verify[A_GAS_CONFIG_RECORD_SIZE]; // 当前作用域变量，用于保存读回校验缓冲区。
     uint16_t crc; // 当前作用域变量，用于保存CRC校验值。
 
+    //检查运行参数的单项范围和压力阈值关系
     if ((storage == NULL) || (config == NULL) ||
         (A_GasConfig_Validate(config) != A_GAS_CONFIG_VALID))
     {
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(record, 0xFF, sizeof(record));
     record[0] = 'G';
     record[1] = 'C';
     record[2] = 'F';
     record[3] = 'G';
+    //按高字节在前的固定顺序把 16 位数写入参数记录
     A_GasConfig_WriteU16(&record[4], A_GAS_CONFIG_RECORD_VERSION);
+    //按高字节在前的固定顺序把 16 位数写入参数记录
     A_GasConfig_WriteU16(&record[6], A_GAS_CONFIG_PAYLOAD_SIZE);
+    //保留原有13项顺序
     A_GasConfig_EncodePayload(config, &record[A_GAS_CONFIG_PAYLOAD_OFFSET]);
+    //计算 EEPROM 参数记录使用的 Modbus 多项式 CRC16
     crc = A_GasConfig_Crc16(record, A_GAS_CONFIG_RECORD_SIZE - 2U);
+    //按高字节在前的固定顺序把 16 位数写入参数记录
     A_GasConfig_WriteU16(&record[A_GAS_CONFIG_RECORD_SIZE - 2U], crc);
     // 参数记录整体写入后立即读回逐字节核对，只有完整一致的记录才视为保存成功。
 
@@ -389,5 +422,6 @@ bool A_GasConfig_Save(A_Storage_Context *storage, const Gas_Config *config)
         return false;
     }
 
+    //比较两段内存数据
     return (memcmp(record, verify, sizeof(record)) == 0);
 }

@@ -74,6 +74,7 @@ static bool F_Modbus_FrameCrcIsValid(const uint8_t *frame, uint16_t length)
     }
 
     received_crc = (uint16_t) (frame[length - 2U] | ((uint16_t) frame[length - 1U] << 8U));
+    //计算 Modbus RTU 使用的 CRC16 校验值
     calculated_crc = F_Modbus_Crc16(frame, (uint16_t) (length - 2U));
     return (received_crc == calculated_crc);
 }
@@ -94,7 +95,9 @@ static void F_Modbus_SendException(F_Modbus_Context *context,
     response[0] = context->slave_address;
     response[1] = (uint8_t) (function_code | 0x80U);
     response[2] = exception_code;
+    //为已经生成的 Modbus 响应追加低字节在前的 CRC16
     F_Modbus_AppendCrc(response, 3U);
+    //通过 SCI0 和外部 RS485 接口异步发送一帧 Modbus RTU 响应
     (void) H_Modbus_Send(hardware, response, sizeof(response));
 }
 
@@ -120,6 +123,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
 
     if (quantity == 0U)
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_VALUE);
         return;
     }
@@ -136,6 +140,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
         table_count = F_MODBUS_HOLDING_REGISTER_COUNT;
         if (start_address < F_MODBUS_HOLDING_BASE_ADDRESS)
         {
+            //向外部 Modbus 主站发送标准三字节 PDU 异常响应
             F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_ADDRESS);
             return;
         }
@@ -146,6 +151,7 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
     if ((start_offset >= table_count) || (quantity > (uint16_t) (table_count - start_offset)) ||
         ((uint32_t) (5U + (quantity * 2U)) > H_MODBUS_FRAME_MAX_LENGTH))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
@@ -156,11 +162,14 @@ static void F_Modbus_HandleReadRegisters(F_Modbus_Context *context,
     response[2] = (uint8_t) (quantity * 2U);
     for (i = 0U; i < quantity; ++i)
     {
+        //将 16 位无符号数按 Modbus 高字节在前的顺序写入两个连续字节
         F_Modbus_WriteU16BigEndian(&response[3U + (i * 2U)], register_table[start_offset + i]);
     }
 
     response_length = (uint16_t) (3U + (quantity * 2U));
+    //为已经生成的 Modbus 响应追加低字节在前的 CRC16
     F_Modbus_AppendCrc(response, response_length);
+    //通过 SCI0 和外部 RS485 接口异步发送一帧 Modbus RTU 响应
     (void) H_Modbus_Send(hardware, response, (uint16_t) (response_length + 2U));
 }
 
@@ -182,6 +191,7 @@ static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context,
     if ((address < F_MODBUS_HOLDING_BASE_ADDRESS) ||
         (address >= (F_MODBUS_HOLDING_BASE_ADDRESS + F_MODBUS_HOLDING_REGISTER_COUNT)))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_SINGLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
@@ -191,6 +201,7 @@ static void F_Modbus_HandleWriteSingle(F_Modbus_Context *context,
     context->write_start_offset = offset;
     context->write_register_count = 1U;
     context->write_pending = true;
+    //复制内存数据
     memcpy(response, request, sizeof(response));
     // 功能码06要求成功响应原样回显，应用层通过write_pending异步解释该寄存器含义。
     (void) H_Modbus_Send(hardware, response, sizeof(response));
@@ -217,6 +228,7 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     if ((quantity == 0U) || (byte_count != (uint8_t) (quantity * 2U)) ||
         (request_length != (uint16_t) (9U + byte_count)))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_VALUE);
         return;
     }
@@ -224,6 +236,7 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     if ((address < F_MODBUS_HOLDING_BASE_ADDRESS) ||
         (address >= (F_MODBUS_HOLDING_BASE_ADDRESS + F_MODBUS_HOLDING_REGISTER_COUNT)))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
@@ -231,12 +244,14 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     offset = (uint16_t) (address - F_MODBUS_HOLDING_BASE_ADDRESS);
     if (quantity > (uint16_t) (F_MODBUS_HOLDING_REGISTER_COUNT - offset))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, MODBUS_FUNCTION_WRITE_MULTIPLE, MODBUS_EXCEPTION_ADDRESS);
         return;
     }
 
     for (i = 0U; i < quantity; ++i)
     {
+        //从两个连续字节按 Modbus 高字节在前的顺序读取 16 位无符号数
         context->holding_register[offset + i] = F_Modbus_ReadU16BigEndian(&request[7U + (i * 2U)]);
     }
     // 先完整校验长度和地址再批量写表，防止非法帧造成部分寄存器已经被修改。
@@ -244,8 +259,11 @@ static void F_Modbus_HandleWriteMultiple(F_Modbus_Context *context,
     context->write_start_offset = offset;
     context->write_register_count = quantity;
     context->write_pending = true;
+    //复制内存数据
     memcpy(response, request, 6U);
+    //为已经生成的 Modbus 响应追加低字节在前的 CRC16
     F_Modbus_AppendCrc(response, 6U);
+    //通过 SCI0 和外部 RS485 接口异步发送一帧 Modbus RTU 响应
     (void) H_Modbus_Send(hardware, response, sizeof(response));
 }
 
@@ -264,7 +282,9 @@ bool F_Modbus_Init(F_Modbus_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     memset(context, 0, sizeof(*context));
+    //初始化外部 Modbus 使用的 SCI0、RS485 方向控制和匹配电阻控制
     if (!H_Modbus_Init(hardware))
     {
         return false;
@@ -287,6 +307,7 @@ bool F_Modbus_Deinit(F_Modbus_Context *context, H_Modbus_Context *hardware)
     {
         return false;
     }
+    //关闭SCI0并把外部RS485收发器恢复为接收状态
     success = H_Modbus_Deinit(hardware);
     context->write_pending = false;
     return success;
@@ -301,6 +322,7 @@ bool F_Modbus_Deinit(F_Modbus_Context *context, H_Modbus_Context *hardware)
 bool F_Modbus_HasFault(const F_Modbus_Context *context,
                        const H_Modbus_Context *hardware)
 {
+    //查询SCI0外部Modbus硬件层是否存在串口故障
     return ((context == NULL) || (hardware == NULL) || H_Modbus_HasFault(hardware));
 }
 
@@ -316,6 +338,7 @@ void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware)
     uint16_t request_length; // 当前作用域变量，用于保存有效数据长度。
     uint8_t function_code; // 当前作用域变量，用于保存当前处理数据。
 
+    //查询外部 Modbus 硬件层是否仍在发送响应；从硬件层取出一帧已经完整接收的 Modbus RTU 请求
     if ((context == NULL) || (hardware == NULL) ||
         H_Modbus_IsTransmitBusy(hardware) ||
         !H_Modbus_TakeFrame(hardware, request, sizeof(request), &request_length))
@@ -323,6 +346,7 @@ void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware)
         return;
     }
 
+    //检查一帧 Modbus RTU 请求的 CRC16 是否正确
     if (!F_Modbus_FrameCrcIsValid(request, request_length) || (request[0] != context->slave_address))
     {
         return; // CRC 错误及其他从站地址的请求不应答。
@@ -334,6 +358,7 @@ void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware)
          (function_code == MODBUS_FUNCTION_READ_INPUT) ||
          (function_code == MODBUS_FUNCTION_WRITE_SINGLE)) && (request_length != 8U))
     {
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_VALUE);
         return;
     }
@@ -341,19 +366,23 @@ void F_Modbus_Task(F_Modbus_Context *context, H_Modbus_Context *hardware)
 
     switch (function_code)
     {
+        //处理功能码 03 或 04 的寄存器读取请求并生成响应
         case MODBUS_FUNCTION_READ_HOLDING:
         case MODBUS_FUNCTION_READ_INPUT:
             F_Modbus_HandleReadRegisters(context, hardware, request, function_code);
             break;
 
+        //处理功能码 06 的单个保持寄存器写入请求
         case MODBUS_FUNCTION_WRITE_SINGLE:
             F_Modbus_HandleWriteSingle(context, hardware, request);
             break;
 
+        //处理功能码 10 的多个连续保持寄存器写入请求
         case MODBUS_FUNCTION_WRITE_MULTIPLE:
             F_Modbus_HandleWriteMultiple(context, hardware, request, request_length);
             break;
 
+        //向外部 Modbus 主站发送标准三字节 PDU 异常响应
         default:
             F_Modbus_SendException(context, hardware, function_code, MODBUS_EXCEPTION_FUNCTION);
             break;

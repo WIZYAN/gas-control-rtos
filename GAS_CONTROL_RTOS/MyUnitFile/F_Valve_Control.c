@@ -62,6 +62,7 @@ bool F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system)
 {
     uint8_t i; // 当前作用域变量，用于保存当前处理数据。
 
+    //把板上全部已知阀门GPIO写为关闭电平
     if ((platform == NULL) || (system == NULL) || !H_GasPlatform_AllValvesOff(platform))
     {
         if (system != NULL)
@@ -92,6 +93,7 @@ bool F_ValveControl_AllOff(H_Gas_Platform_Context *platform, Gas_System *system)
  */
 bool F_ValveControl_Init(H_Gas_Platform_Context *platform, Gas_System *system)
 {
+    //尝试关闭全部板级阀门输出
     return F_ValveControl_AllOff(platform, system);
 }
 
@@ -112,7 +114,9 @@ bool F_ValveControl_Task(H_Gas_Platform_Context *platform,
         return false;
     }
 
+    //到达吸合截止时间后关闭对应 VAL_Px
     task_ok = H_GasPlatform_ValveTask(platform, now_ms);
+    //查询自上次成功全关后是否发生过真实阀门GPIO写入失败
     if (!task_ok || H_GasPlatform_ValveHasIoError(platform))
     {
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
@@ -155,6 +159,7 @@ bool F_ValveControl_SetSupply(H_Gas_Platform_Context *platform,
         return false;
     }
 
+    //检查除指定气瓶外是否还有其他供气阀处于软件开启状态
     if (on && (system->cylinder[index].exhaust_cmd ||
                system->cylinder[index].test_cmd ||
                F_ValveControl_OtherSupplyIsOn(system, index)))
@@ -193,6 +198,7 @@ bool F_ValveControl_SetExhaust(H_Gas_Platform_Context *platform,
         return false;
     }
 
+    //统一判断指定气瓶是否允许开启排气阀或测试阀
     if (on && !F_ValveControl_ManualOpenAllowed(system, index))
     {
         system->alarm_bits |= GAS_ALARM_VALVE_INTERLOCK;
@@ -229,6 +235,7 @@ bool F_ValveControl_SetTest(H_Gas_Platform_Context *platform,
         return false;
     }
 
+    //统一判断指定气瓶是否允许开启排气阀或测试阀
     if (on && !F_ValveControl_ManualOpenAllowed(system, index))
     {
         system->alarm_bits |= GAS_ALARM_VALVE_INTERLOCK;
@@ -273,6 +280,7 @@ bool F_ValveControl_SetTotalTest(H_Gas_Platform_Context *platform,
     {
         return true;
     }
+    //控制VAL_CAL总测试阀
     if (!H_GasPlatform_WriteTotalTestValve(platform,
                                             on,
                                             config->valve_pull_in_time_ms))

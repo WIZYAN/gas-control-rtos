@@ -59,6 +59,7 @@ static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
         return false;
     }
 
+    //查询自上次成功全关后是否发生过真实阀门GPIO写入失败
     had_valve_io_error = H_GasPlatform_ValveHasIoError(&context->platform);
     if (had_valve_io_error)
     {
@@ -66,6 +67,7 @@ static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
         context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
     }
     context->emergency_close_pending = true;
+    //尝试关闭全部板级阀门输出
     if (!F_ValveControl_AllOff(&context->platform, &context->system))
     {
         context->system.platform_ready = false;
@@ -73,6 +75,7 @@ static bool A_GasControl_ForceAllValvesOff(A_Gas_Control_Context *context)
         return false;
     }
     context->total_test_pending_open_mask = 0U;
+    //初始化或清空内存数据
     (void) memset(context->test_open_not_before_ms,
                   0,
                   sizeof(context->test_open_not_before_ms));
@@ -96,6 +99,7 @@ static bool A_GasControl_HandleValveIoFault(A_Gas_Control_Context *context)
     {
         return true;
     }
+    //查询自上次成功全关后是否发生过真实阀门GPIO写入失败
     if (!H_GasPlatform_ValveHasIoError(&context->platform))
     {
         return false;
@@ -103,6 +107,7 @@ static bool A_GasControl_HandleValveIoFault(A_Gas_Control_Context *context)
 
     context->system.platform_ready = false;
     context->system.alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+    //尝试关闭十九路阀门
     (void) A_GasControl_ForceAllValvesOff(context);
     return true;
 }
@@ -117,6 +122,7 @@ static bool A_GasControl_HandleHmiFault(A_Gas_Control_Context *context)
 {
     Gas_System *system; // 串口屏故障直接影响的系统状态，避免通过总上下文重复深层访问。
 
+    //查询SCI9串口屏硬件层是否未就绪或已锁存通信错误
     if ((context == NULL) || !H_Hmi_HasFault(&context->hmi.hardware))
     {
         return false;
@@ -125,7 +131,9 @@ static bool A_GasControl_HandleHmiFault(A_Gas_Control_Context *context)
     system = &context->system;
     system->alarm_bits |= GAS_ALARM_HMI_COMM;
     system->date_time.valid = false;
+    //串口接收故障后丢弃SCI9环形缓冲区中尚未解析的字节
     H_Hmi_DiscardReceivedData(&context->hmi.hardware);
+    //串口接收故障后清除残帧和尚未执行的输入事件
     F_Hmi_DiscardPendingInput(&context->hmi.function);
     return true;
 }
@@ -168,6 +176,7 @@ static bool A_GasControl_ReadCommModeAtAddress(A_Storage_Context *storage,
     uint16_t stored_crc; // 当前作用域变量，用于保存CRC校验值。
     uint16_t calculated_crc; // 当前作用域变量，用于保存CRC校验值。
 
+    //从 EEPROM 指定地址读取一段原始数据
     if ((storage == NULL) || (mode == NULL) ||
         !A_Storage_Read(storage,
                         address,
@@ -177,6 +186,7 @@ static bool A_GasControl_ReadCommModeAtAddress(A_Storage_Context *storage,
         return false;
     }
     stored_crc = (uint16_t) (((uint16_t) record[7] << 8U) | record[6]);
+    //计算外部通讯模式EEPROM记录前六字节的Modbus多项式CRC16
     calculated_crc = A_GasControl_CommRecordCrc16(record, 6U);
     if ((record[0] != (uint8_t) 'G') || (record[1] != (uint8_t) 'C') ||
         (record[2] != (uint8_t) 'O') || (record[3] != (uint8_t) 'M') ||
@@ -199,12 +209,14 @@ static bool A_GasControl_ReadCommModeAtAddress(A_Storage_Context *storage,
 static bool A_GasControl_LoadCommMode(A_Storage_Context *storage,
                                       gas_external_comm_mode_t *mode)
 {
+    //从指定EEPROM地址读取并校验一条外部通讯模式记录
     if (A_GasControl_ReadCommModeAtAddress(storage,
                                            A_GAS_CONTROL_COMM_RECORD_ADDRESS,
                                            mode))
     {
         return true;
     }
+    //从指定EEPROM地址读取并校验一条外部通讯模式记录
     if (!A_GasControl_ReadCommModeAtAddress(storage,
                                             A_GAS_CONTROL_COMM_LEGACY_ADDRESS,
                                             mode))
@@ -212,6 +224,7 @@ static bool A_GasControl_LoadCommMode(A_Storage_Context *storage,
         return false;
     }
 
+    //把当前外部通讯模式编码为8字节带CRC记录并写入EEPROM后读回校验
     (void) A_GasControl_SaveCommMode(storage, *mode);
     // 必须先把旧模式迁到0x0030，随后V2参数升级为当前记录时才可安全覆盖0x0020～0x0023。
     return true;
@@ -240,9 +253,11 @@ static bool A_GasControl_SaveCommMode(A_Storage_Context *storage,
     record[3] = (uint8_t) 'M';
     record[4] = A_GAS_CONTROL_COMM_RECORD_VERSION;
     record[5] = (uint8_t) mode;
+    //计算外部通讯模式EEPROM记录前六字节的Modbus多项式CRC16
     crc = A_GasControl_CommRecordCrc16(record, 6U);
     record[6] = (uint8_t) crc;
     record[7] = (uint8_t) (crc >> 8U);
+    //向 EEPROM 指定地址写入一段原始数据；从 EEPROM 指定地址读取一段原始数据
     if (!A_Storage_Write(storage,
                          A_GAS_CONTROL_COMM_RECORD_ADDRESS,
                          record,
@@ -254,6 +269,7 @@ static bool A_GasControl_SaveCommMode(A_Storage_Context *storage,
     {
         return false;
     }
+    //比较两段内存数据
     return (memcmp(record, verify, sizeof(record)) == 0);
 }
 
@@ -278,6 +294,7 @@ static bool A_GasControl_PressureIsFresh(const Gas_Cylinder *cylinder,
                                          const Gas_Config *config,
                                          uint32_t now_ms)
 {
+    //使用有符号毫秒差判断当前时间是否已经到达截止时间
     return ((cylinder != NULL) && (config != NULL) &&
             (cylinder->pressure_quality == GAS_PRESSURE_VALID) &&
             !A_GasControl_TimeReached(now_ms,
@@ -303,16 +320,19 @@ static bool A_GasControl_CloseCylinderValves(A_Gas_Control_Context *context, uin
     }
 
     cylinder = &context->system.cylinder[index];
+    //在气瓶状态、供排气互锁和单路供气约束下设置指定供气阀
     supply_ok = F_ValveControl_SetSupply(&context->platform,
                                          &context->system,
                                          &context->config,
                                          index,
                                          false);
+    //仅在自动模式的初始化、待测试、待用或低压待换状态下设置排气阀
     exhaust_ok = F_ValveControl_SetExhaust(&context->platform,
                                            &context->system,
                                            &context->config,
                                            index,
                                            false);
+    //平台就绪时可打开指定测试阀
     test_ok = A_GasControl_SetTestValve(context, index, false);
     if (exhaust_ok)
     {
@@ -352,6 +372,7 @@ static void F_GasControl_EnterLowReplace(A_Gas_Control_Context *context, uint8_t
     cylinder->recovery_sample_timestamp_ms = cylinder->pressure_timestamp_ms;
     if (state_changed || qualification_changed)
     {
+        //请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关
         A_Hmi_RequestQualificationSync(&context->hmi, index);
     }
     // 只有首次进入或原标志确实为通过时才请求优先回写，持续低压不会重复占用串口带宽。
@@ -401,6 +422,7 @@ static uint8_t A_GasControl_FindNextReady(const Gas_System *system,
         uint8_t index = (uint8_t) ((start_index + offset) % GAS_CYLINDER_COUNT); // 当前作用域变量，用于保存遍历索引。
         const Gas_Cylinder *cylinder = &system->cylinder[index]; // 当前作用域变量，用于保存气瓶对象或编号指针。
 
+        //检查指定气瓶是否具有未超过运行参数时限的有效压力数据
         if ((cylinder->state == GAS_CYL_READY) &&
             cylinder->qualification_passed &&
             !cylinder->supply_cmd && !cylinder->exhaust_cmd && !cylinder->test_cmd &&
@@ -434,6 +456,7 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
         {
             if (cylinder->supply_cmd || cylinder->exhaust_cmd || cylinder->test_cmd)
             {
+                //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时
                 (void) A_GasControl_CloseCylinderValves(context, index);
             }
             continue; // 停用优先级最高，状态判断不得重新打开阀门或自动改变为其他状态。
@@ -441,6 +464,7 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
 
         if (cylinder->supply_cmd && ((index == system->active_index) || switching_new))
         {
+            //检查指定气瓶是否具有未超过运行参数时限的有效压力数据
             if (A_GasControl_PressureIsFresh(cylinder, &context->config, now_ms))
             {
                 cylinder->state = (cylinder->pressure_mpa < context->config.low_warning_pressure_mpa) ?
@@ -457,19 +481,23 @@ static void A_GasControl_UpdateCylinderStates(A_Gas_Control_Context *context, ui
 
         if (cylinder->supply_cmd)
         {
+            //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时
             (void) A_GasControl_CloseCylinderValves(context, index);
             system->alarm_bits |= GAS_ALARM_VALVE_INTERLOCK;
             // 非工作瓶出现进气命令属于异常，立即关断并留下互锁报警供诊断。
         }
 
+        //检查指定气瓶是否具有未超过运行参数时限的有效压力数据
         if (A_GasControl_PressureIsFresh(cylinder, &context->config, now_ms))
         {
             if (cylinder->pressure_mpa < context->config.ready_min_pressure_mpa)
             {
+                //统一把指定气瓶转入低压待换
                 F_GasControl_EnterLowReplace(context, index);
             }
             else if (cylinder->state == GAS_CYL_LOW_REPLACE)
             {
+                //按压力样本时间戳累计独立合格样本
                 if (F_GasControl_RecoveryPressureConfirmed(cylinder))
                 {
                     cylinder->state = GAS_CYL_WAIT_TEST;
@@ -519,6 +547,7 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
 
     start_index = (context->switch_old_index < GAS_CYLINDER_COUNT) ?
                   context->switch_old_index : (uint8_t) (GAS_CYLINDER_COUNT - 1U);
+    //从指定位置之后按 1→2→3→4→5→6→1 顺序查找可投入工作的待用瓶
     next_index = A_GasControl_FindNextReady(system, &context->config, start_index, now_ms);
     // 无历史工作瓶时从6号之后开始，使首次选择自然落到1号瓶。
     if (next_index >= GAS_CYLINDER_COUNT)
@@ -527,6 +556,7 @@ static bool A_GasControl_SelectInitialBottle(A_Gas_Control_Context *context, uin
         return false;
     }
 
+    //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时；在气瓶状态、供排气互锁和单路供气约束下设置指定供气阀
     if (!A_GasControl_CloseCylinderValves(context, next_index) ||
         !F_ValveControl_SetSupply(&context->platform,
                                   system,
@@ -563,16 +593,19 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
         {
             if (cylinder->supply_cmd || cylinder->exhaust_cmd || cylinder->test_cmd)
             {
+                //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时
                 (void) A_GasControl_CloseCylinderValves(context, index);
             }
             continue;
         }
 
+        //使用有符号毫秒差判断当前时间是否已经到达截止时间
         if (cylinder->exhaust_cmd &&
             A_GasControl_TimeReached(now_ms, cylinder->exhaust_deadline_ms))
         {
             bool exhaust_closed; // 本次到期关闭结果；false表示硬件命令失败并需在后续周期继续重试。
 
+            //仅在自动模式的初始化、待测试、待用或低压待换状态下设置排气阀
             exhaust_closed = F_ValveControl_SetExhaust(&context->platform,
                                                         &context->system,
                                                         &context->config,
@@ -589,9 +622,11 @@ static void A_GasControl_ManualValveTask(A_Gas_Control_Context *context, uint32_
             // 只有硬件接受关阀命令后才取消截止时间；失败时保持到期状态并在下个5 ms周期重试。
         }
 
+        //使用有符号毫秒差判断当前时间是否已经到达截止时间
         if (cylinder->test_cmd &&
             A_GasControl_TimeReached(now_ms, cylinder->test_deadline_ms))
         {
+            //平台就绪时可打开指定测试阀
             if (!A_GasControl_SetTestValve(context, index, false))
             {
                 context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
@@ -623,12 +658,14 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
         !context->system.total_test_cmd &&
         F_ValveControl_TotalTestCanOpen(&context->platform, now_ms))
     {
+        //设置VAL_CAL总测试阀
         if (!F_ValveControl_SetTotalTest(&context->platform,
                                          &context->system,
                                          &context->config,
                                          true))
         {
             context->total_test_pending_open_mask = 0U;
+            //初始化或清空内存数据
             (void) memset(context->test_open_not_before_ms,
                           0,
                           sizeof(context->test_open_not_before_ms));
@@ -659,6 +696,7 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
         Gas_Cylinder *cylinder = &context->system.cylinder[index]; // 当前循环处理的气瓶运行状态。
 
         bit = (uint8_t) (1U << index);
+        //使用有符号毫秒差判断当前时间是否已经到达截止时间
         if (((context->total_test_pending_open_mask & bit) == 0U) ||
             !A_GasControl_TimeReached(now_ms,
                                       context->test_open_not_before_ms[index]))
@@ -668,6 +706,7 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
 
         context->total_test_pending_open_mask &= (uint8_t) ~bit;
         context->test_open_not_before_ms[index] = 0U;
+        //仅在自动模式的初始化、待测试、待用或低压待换状态下设置测试阀
         if (F_ValveControl_SetTest(&context->platform,
                                    &context->system,
                                    &context->config,
@@ -680,16 +719,20 @@ static void A_GasControl_TotalTestTask(A_Gas_Control_Context *context, uint32_t 
         {
             cylinder->test_deadline_ms = 0U;
             context->system.alarm_bits |= GAS_ALARM_MANUAL_VALVE_ABORTED;
+            //发现阀门GPIO错误后立即锁定全部开阀入口
             if (A_GasControl_HandleValveIoFault(context))
             {
+                //请求优先把指定气瓶的MCU实际测试阀命令回写到串口屏7～12号测试阀按钮
                 A_Hmi_RequestTestSync(&context->hmi, index);
                 return;
             }
         }
+        //请求优先把指定气瓶的MCU实际测试阀命令回写到串口屏7～12号测试阀按钮
         A_Hmi_RequestTestSync(&context->hmi, index);
         // 分路真正执行后再回写既有测试按钮，不增加任何新HMI控件。
     }
 
+    //检查六路分支测试阀是否至少有一路已经实际执行开启命令；设置VAL_CAL总测试阀
     if (!A_GasControl_AnyTestValveOn(&context->system) &&
         (context->total_test_pending_open_mask == 0U) &&
         context->system.total_test_cmd &&
@@ -721,6 +764,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
     }
     if (system->active_index >= GAS_CYLINDER_COUNT)
     {
+        //在自动模式且当前无工作瓶时按顺序选择一只待用瓶并打开进气阀
         (void) A_GasControl_SelectInitialBottle(context, now_ms);
         return;
     }
@@ -731,17 +775,21 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
         case GAS_SWITCH_IDLE: // 正常监测工作瓶，仅在低压首次满足时启动确认流程。
             if (active->state == GAS_CYL_DISABLED)
             {
+                //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时
                 if (!A_GasControl_CloseCylinderValves(context, system->active_index))
                 {
+                    //发现阀门GPIO错误后立即锁定全部开阀入口
                     (void) A_GasControl_HandleValveIoFault(context);
                     break;
                 }
                 context->switch_old_index = system->active_index;
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
+                //在自动模式且当前无工作瓶时按顺序选择一只待用瓶并打开进气阀
                 (void) A_GasControl_SelectInitialBottle(context, now_ms);
                 break;
             }
 
+            //检查指定气瓶是否具有未超过运行参数时限的有效压力数据
             if (!A_GasControl_PressureIsFresh(active, &context->config, now_ms))
             {
                 active->state = GAS_CYL_LOW_WARNING;
@@ -785,6 +833,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
                 context->switch_low_last_sample_ms = active->pressure_timestamp_ms;
                 // 只累计传感器产生的新样本，主循环重复读取同一数值不会增加计数。
             }
+            //使用有符号毫秒差判断当前时间是否已经到达截止时间
             if ((context->switch_low_sample_count >= context->config.low_confirm_samples) &&
                 A_GasControl_TimeReached(now_ms,
                                          context->switch_low_start_ms + context->config.low_confirm_time_ms))
@@ -840,6 +889,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             {
                 system->platform_ready = false;
                 system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+                //尝试关闭十九路阀门
                 (void) A_GasControl_ForceAllValvesOff(context);
                 system->active_index = GAS_NO_ACTIVE_CYLINDER;
                 system->mode = GAS_MODE_STOPPED;
@@ -857,6 +907,7 @@ static void A_GasControl_SwitchTask(A_Gas_Control_Context *context, uint32_t now
             {
                 if (system->cylinder[context->switch_old_index].state != GAS_CYL_DISABLED)
                 {
+                    //统一把指定气瓶转入低压待换
                     F_GasControl_EnterLowReplace(context, context->switch_old_index);
                 }
                 system->cylinder[context->switch_new_index].state = GAS_CYL_ACTIVE;
@@ -897,11 +948,13 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     uint8_t index; // 当前作用域变量，用于保存遍历索引。
     bool success = true; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
+    //查询SCI9串口屏硬件层是否未就绪或已锁存通信错误；取出一条串口屏按钮或下拉菜单选择事件
     if ((context == NULL) || H_Hmi_HasFault(&context->hmi.hardware) ||
         !A_Hmi_TakeButtonEvent(&context->hmi, &button_id, &value))
     {
         return false;
     }
+    //查询SCI9串口屏硬件层是否未就绪或已锁存通信错误
     if (H_Hmi_HasFault(&context->hmi.hardware))
     {
         return true;
@@ -913,8 +966,10 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         index = (uint8_t) (button_id - A_HMI_EXHAUST_BUTTON_BASE);
         if (value != 0U)
         {
+            //平台就绪且状态允许时打开指定排气阀并设置独立截止时间
             success = A_GasControl_StartExhaust(context, index);
         }
+        //请求优先把指定气瓶的MCU实际排气命令回写到串口屏1～6号排气按钮
         A_Hmi_RequestExhaustSync(&context->hmi, index);
         // 0仅表示屏端开关被再次触碰，不作为提前关阀命令；最终按钮状态始终回写MCU实际排气命令。
     }
@@ -922,7 +977,9 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
              (button_id < (A_HMI_TEST_BUTTON_BASE + GAS_CYLINDER_COUNT)))
     {
         index = (uint8_t) (button_id - A_HMI_TEST_BUTTON_BASE);
+        //平台就绪时可打开指定测试阀
         success = A_GasControl_SetTestValve(context, index, value != 0U);
+        //请求优先把指定气瓶的MCU实际测试阀命令回写到串口屏7～12号测试阀按钮
         A_Hmi_RequestTestSync(&context->hmi, index);
         // 无论请求是否通过互锁，都以MCU最终测试阀命令校正屏幕开关。
     }
@@ -930,7 +987,9 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
              (button_id < (A_HMI_DISABLE_BUTTON_BASE + GAS_CYLINDER_COUNT)))
     {
         index = (uint8_t) (button_id - A_HMI_DISABLE_BUTTON_BASE);
+        //设置或解除指定气瓶停用状态
         success = A_GasControl_SetCylinderDisabled(context, index, value != 0U);
+        //请求优先把指定气瓶的MCU停用状态回写到串口屏13～18号停用开关
         A_Hmi_RequestDisableSync(&context->hmi, index);
         // 停用请求被拒绝时也立即恢复按钮，避免本地开关外观与气瓶状态不一致。
     }
@@ -938,10 +997,13 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
              (button_id < (A_HMI_QUALIFIED_BUTTON_BASE + GAS_CYLINDER_COUNT)))
     {
         index = (uint8_t) (button_id - A_HMI_QUALIFIED_BUTTON_BASE);
+        //设置指定气瓶由人员确认的测试合格标志
         success = A_GasControl_SetQualificationPassed(context, index, value != 0U);
+        //请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关
         A_Hmi_RequestQualificationSync(&context->hmi, index);
         // 无论请求是否被状态门槛接受，都优先把按钮校正为MCU中的最终测试结论。
     }
+    //处理日志类型页签、全部时间、气瓶与进入状态下拉菜单选择、查询和重置按钮
     else if (A_HmiLog_HandleFilterButton(&context->hmi_log, button_id, value))
     {
         success = true;
@@ -949,61 +1011,73 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
     }
     else if ((button_id == A_HMI_EVENT_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
+        //请求刷新指定类型日志
         success = A_HmiLog_Request(&context->hmi_log, A_HMI_LOG_QUERY_EVENT);
         // 刷新事件日志时重建单类型RAM索引，并优先显示最新的第1页。
     }
     else if ((button_id == A_HMI_REGULAR_LOG_QUERY_BUTTON_ID) && (value != 0U))
     {
+        //请求刷新指定类型日志
         success = A_HmiLog_Request(&context->hmi_log, A_HMI_LOG_QUERY_REGULAR);
         // 刷新常规日志时重建索引，每页10条并保持单条压力、状态双行格式。
     }
     else if ((button_id == A_HMI_EVENT_LOG_LATEST_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_EVENT,
                                        A_HMI_LOG_PAGE_LATEST);
     }
     else if ((button_id == A_HMI_EVENT_LOG_PREVIOUS_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_EVENT,
                                        A_HMI_LOG_PAGE_PREVIOUS);
     }
     else if ((button_id == A_HMI_EVENT_LOG_NEXT_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_EVENT,
                                        A_HMI_LOG_PAGE_NEXT);
     }
     else if ((button_id == A_HMI_REGULAR_LOG_LATEST_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_REGULAR,
                                        A_HMI_LOG_PAGE_LATEST);
     }
     else if ((button_id == A_HMI_REGULAR_LOG_PREVIOUS_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_REGULAR,
                                        A_HMI_LOG_PAGE_PREVIOUS);
     }
     else if ((button_id == A_HMI_REGULAR_LOG_NEXT_BUTTON_ID) && (value != 0U))
     {
+        //请求显示指定日志类型的最新页、上一页或下一页
         success = A_HmiLog_RequestPage(&context->hmi_log,
                                        A_HMI_LOG_QUERY_REGULAR,
                                        A_HMI_LOG_PAGE_NEXT);
     }
     else if ((button_id == A_HMI_CONFIG_MENU_BUTTON_ID) && (value != 0U))
     {
+        //进入参数页时复制完整运行参数、应用两项本地固定规则
         success = A_HmiConfig_Open(&context->hmi_config,
                                    &context->config);
     }
     else if ((button_id == A_HMI_LOG_CLEAR_BUTTON_ID) && (value != 0U))
     {
+        //从密码参数页进入日志清除确认画面；查询循环日志区当前保存的有效记录数量
         success = A_HmiConfig_OpenLogClear(&context->hmi_config,
                                            A_GasLog_GetCount(&context->log_service));
+        //查询日志物理清除状态机是否仍占用EEPROM日志区
         if (success && A_GasLog_IsClearBusy(&context->log_service))
         {
+            //接收日志模块的清除状态、进度和当前数量；把已完成读回校验的页数转换为0～100的清除百分比
             A_HmiConfig_ReportLogClear(&context->hmi_config,
                                        A_HMI_LOG_CLEAR_BUSY,
                                        A_GasLog_GetClearProgress(&context->log_service),
@@ -1011,12 +1085,14 @@ static bool A_GasControl_ProcessHmiButton(A_Gas_Control_Context *context)
         }
         // 已在后台清除时重新进入Screen7只显示当前进度，不允许重复建立第二个擦除任务。
     }
+    //处理日志清除画面的确认和返回按钮
     else if (A_HmiConfig_HandleLogClearButton(&context->hmi_config,
                                               button_id,
                                               value))
     {
         success = true;
     }
+    //识别确认子画面、恢复默认及返回按钮
     else if (A_HmiConfig_HandleButton(&context->hmi_config,
                                       button_id,
                                       value,
@@ -1053,8 +1129,10 @@ static void A_GasControl_ProcessHmiTextInputs(A_Gas_Control_Context *context)
     while (transport->text_queue_count > 0U)
     {
         previous_count = transport->text_queue_count;
-        A_HmiLog_InputTask(&context->hmi_log);
+        A_HmiLog_InputTask(&context->hmi_log);//处理日志查询输入
+        //取出一条参数文本上传事件
         A_HmiConfig_InputTask(&context->hmi_config, &context->config);
+        //丢弃文本输入FIFO队首的一条无法识别事件
         if ((transport->text_queue_count == previous_count) &&
             !F_Hmi_DiscardTextEvent(transport))
         {
@@ -1107,6 +1185,7 @@ static void A_GasControl_CheckOutputInvariant(A_Gas_Control_Context *context)
 
     if ((supply_count > 1U) || conflict)
     {
+        //尝试关闭十九路阀门
         (void) A_GasControl_ForceAllValvesOff(context);
         context->system.active_index = GAS_NO_ACTIVE_CYLINDER;
         context->system.mode = GAS_MODE_STOPPED;
@@ -1186,11 +1265,13 @@ static bool A_GasControl_InitExternalComm(A_Gas_Control_Context *context,
 {
     if (mode == GAS_EXTERNAL_COMM_CAN)
     {
+        //校验当前运行参数
         if (!A_Can_Init(&context->external_can, &context->config))
         {
             context->system.alarm_bits |= GAS_ALARM_EXTERNAL_CAN;
             return false;
         }
+        //更新CAN地址表中的日志数量和容量信息；查询循环日志区当前保存的有效记录数量
         A_Can_UpdateLogInfo(&context->external_can,
                             A_GasLog_GetCount(&context->log_service),
                             A_GAS_LOG_RECORD_CAPACITY);
@@ -1199,11 +1280,13 @@ static bool A_GasControl_InitExternalComm(A_Gas_Control_Context *context,
     }
     if (mode == GAS_EXTERNAL_COMM_RS485)
     {
+        //初始化外部 SCI0 Modbus 从站及应用寄存器表
         if (!A_Modbus_Init(&context->external_modbus, &context->config))
         {
             context->system.alarm_bits |= GAS_ALARM_EXTERNAL_MODBUS;
             return false;
         }
+        //刷新外部保持寄存器中的有效日志数量、容量和单条记录长度；查询循环日志区当前保存的有效记录数量
         A_Modbus_UpdateLogInfo(&context->external_modbus,
                                A_GasLog_GetCount(&context->log_service),
                                A_GAS_LOG_RECORD_CAPACITY);
@@ -1222,6 +1305,7 @@ static bool A_GasControl_InitExternalComm(A_Gas_Control_Context *context,
 static bool A_GasControl_DeinitExternalComm(A_Gas_Control_Context *context,
                                             gas_external_comm_mode_t mode)
 {
+    //关闭CAN0并清除应用层就绪状态；关闭外部SCI0/RS485 Modbus并清除应用层就绪状态
     return (mode == GAS_EXTERNAL_COMM_CAN) ? A_Can_Deinit(&context->external_can) :
            ((mode == GAS_EXTERNAL_COMM_RS485) ? A_Modbus_Deinit(&context->external_modbus) : false);
 }
@@ -1234,6 +1318,7 @@ static bool A_GasControl_DeinitExternalComm(A_Gas_Control_Context *context,
  */
 static bool A_GasControl_TakeExternalConfig(A_Gas_Control_Context *context, Gas_Config *config)
 {
+    //取出一份已经校验、等待业务层保存应用的运行参数；取出一份已经通过寄存器解码和参数校验的待应用运行参数
     return (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN) ?
            A_Can_TakeConfigRequest(&context->external_can, config) :
            A_Modbus_TakeConfigRequest(&context->external_modbus, config);
@@ -1250,9 +1335,11 @@ static bool A_GasControl_UpdateExternalConfig(A_Gas_Control_Context *context,
 {
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
+        //检查运行参数的单项范围和压力阈值关系
         return (config != NULL) &&
                (A_GasConfig_Validate(config) == A_GAS_CONFIG_VALID);
     }
+    //把当前有效运行参数刷新到外部 Modbus 参数保持寄存器
     return A_Modbus_UpdateConfigRegisters(&context->external_modbus, config);
 }
 
@@ -1267,10 +1354,12 @@ static void A_GasControl_SetExternalConfigResult(A_Gas_Control_Context *context,
 {
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
+        //更新CAN只读整数地址0x0119公布的参数处理结果
         A_Can_SetConfigResult(&context->external_can, result);
     }
     else
     {
+        //更新外部 Modbus 参数处理结果寄存器
         A_Modbus_SetConfigResult(&context->external_modbus,
                                  (a_modbus_config_result_t) result);
     }
@@ -1285,6 +1374,7 @@ static void A_GasControl_SetExternalConfigResult(A_Gas_Control_Context *context,
 static bool A_GasControl_TakeExternalLogRequest(A_Gas_Control_Context *context,
                                                 uint16_t *logical_index)
 {
+    //取出并清除一条CAN日志读取请求；取出并清除一条由外部主站提交的日志读取请求
     return (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN) ?
            A_Can_TakeLogReadRequest(&context->external_can, logical_index) :
            A_Modbus_TakeLogReadRequest(&context->external_modbus, logical_index);
@@ -1299,6 +1389,7 @@ static bool A_GasControl_TakeExternalLogRequest(A_Gas_Control_Context *context,
 static bool A_GasControl_SetExternalLogRecord(A_Gas_Control_Context *context,
                                               const uint8_t record[A_GAS_LOG_RECORD_SIZE])
 {
+    //把一条32字节EEPROM原始日志复制到八个连续CAN数据地址窗口；把一条32字节原始日志按高字节在前顺序写入16个日志数据保持寄存器
     return (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN) ?
            A_Can_SetLogRecord(&context->external_can, record) :
            A_Modbus_SetLogRecord(&context->external_modbus, record);
@@ -1315,10 +1406,12 @@ static void A_GasControl_SetExternalLogResult(A_Gas_Control_Context *context,
 {
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
+        //更新CAN日志读取结果
         A_Can_SetLogReadResult(&context->external_can, result);
     }
     else
     {
+        //更新日志读取结果
         A_Modbus_SetLogReadResult(&context->external_modbus, (A_Modbus_Log_Result) result);
     }
 }
@@ -1355,6 +1448,7 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
     Gas_Cylinder *cylinder; // 当前作用域变量，用于保存气瓶对象或编号指针。
     bool success = false; // success 状态标志；使用范围：当前声明作用域内使用；取值范围：false/true，false表示操作失败，true表示操作成功。
 
+    //取出并清除一条已经通过地址和值检查的CAN人工控制请求
     if ((context == NULL) ||
         (context->external_comm_mode != GAS_EXTERNAL_COMM_CAN) ||
         !A_Can_TakeControlRequest(&context->external_can, &request))
@@ -1367,6 +1461,7 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
     {
         detail = A_CAN_WRITE_DETAIL_HARDWARE_NOT_READY;
     }
+    //判断自动切瓶是否正在执行实际关阀、无气死区、开阀或新阀稳定等待
     else if (A_GasControl_IsMechanicalSwitching(&context->system))
     {
         detail = A_CAN_WRITE_DETAIL_SWITCHING_BUSY;
@@ -1375,33 +1470,41 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
     {
         switch (request.type)
         {
+            //平台就绪且状态允许时打开指定排气阀并设置独立截止时间；立即关闭指定气瓶排气阀并取消本次人工排气截止时间
             case A_CAN_CONTROL_EXHAUST:
                 success = request.enabled ?
                     A_GasControl_StartExhaust(context, request.index) :
                     A_GasControl_StopExhaust(context, request.index);
                 if (success)
                 {
+                    //请求优先把指定气瓶的MCU实际排气命令回写到串口屏1～6号排气按钮
                     A_Hmi_RequestExhaustSync(&context->hmi, request.index);
                 }
                 break;
+            //平台就绪时可打开指定测试阀
             case A_CAN_CONTROL_TEST:
                 success = A_GasControl_SetTestValve(context,
                                                     request.index,
                                                     request.enabled);
+                //请求优先把指定气瓶的MCU实际测试阀命令回写到串口屏7～12号测试阀按钮
                 A_Hmi_RequestTestSync(&context->hmi, request.index);
                 break;
+            //设置或解除指定气瓶停用状态
             case A_CAN_CONTROL_DISABLE:
                 success = A_GasControl_SetCylinderDisabled(context,
                                                           request.index,
                                                           request.enabled);
+                //请求优先把指定气瓶的MCU停用状态回写到串口屏13～18号停用开关
                 A_Hmi_RequestDisableSync(&context->hmi, request.index);
                 break;
+            //设置指定气瓶由人员确认的测试合格标志
             case A_CAN_CONTROL_QUALIFICATION:
                 success = A_GasControl_SetQualificationPassed(context,
                                                              request.index,
                                                              request.enabled);
                 if (success)
                 {
+                    //请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关
                     A_Hmi_RequestQualificationSync(&context->hmi, request.index);
                 }
                 break;
@@ -1428,6 +1531,7 @@ static void A_GasControl_ProcessCanControl(A_Gas_Control_Context *context)
         result = A_CAN_WRITE_SUCCESS;
         detail = A_CAN_WRITE_DETAIL_NONE;
     }
+    //保存CAN人工控制最终执行结果
     A_Can_CompleteControlRequest(&context->external_can, result, detail);
 }
 
@@ -1475,30 +1579,38 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
 {
     Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
 
+    //从当前外部通讯实例取得一份已经校验的参数提交请求
     if ((context == NULL) ||
         !A_GasControl_TakeExternalConfig(context, &candidate))
     {
         return;
     }
 
+    //检查六只气瓶是否都由工作人员置于停用状态；检查十八路分瓶阀和VAL_CAL总测试阀软件命令是否已经全部关闭
     if ((context->external_comm_mode == GAS_EXTERNAL_COMM_RS485) &&
         (!A_GasControl_AllCylindersDisabled(&context->system) ||
          !A_GasControl_AllValveCommandsAreOff(&context->system)))
     {
+        //校验CAN直接读取的生效参数
         (void) A_GasControl_UpdateExternalConfig(context, &context->config);
+        //向当前外部通讯实例公布参数应用结果
         A_GasControl_SetExternalConfigResult(context, GAS_EXTERNAL_CONFIG_SYSTEM_BUSY);
         return;
     }
 
+    //把运行参数编码为单页记录并写入 AT24C256
     if (!A_GasConfig_Save(&context->storage_service, &candidate))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        //校验CAN直接读取的生效参数
         (void) A_GasControl_UpdateExternalConfig(context, &context->config);
+        //向当前外部通讯实例公布参数应用结果
         A_GasControl_SetExternalConfigResult(context, GAS_EXTERNAL_CONFIG_STORAGE_FAILED);
         return;
     }
 
     context->config = candidate;
+    //参数生效后按新的压力合法上限立即重判现有有效样本
     A_GasControl_ReclassifyPressureQuality(&context->system, &context->config);
     if ((context->system.switch_state == GAS_SWITCH_LOW_CONFIRM) ||
         (context->system.switch_state == GAS_SWITCH_NO_BACKUP))
@@ -1510,7 +1622,9 @@ static void A_GasControl_ProcessExternalConfig(A_Gas_Control_Context *context)
         // CAN稳定运行中修改阈值后重新开始尚未进入机械动作的低压判断，已经完成的阀门动作不会被追溯修改。
     }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
+    //校验CAN直接读取的生效参数
     (void) A_GasControl_UpdateExternalConfig(context, &context->config);
+    //向当前外部通讯实例公布参数应用结果
     A_GasControl_SetExternalConfigResult(context, GAS_EXTERNAL_CONFIG_SUCCESS);
 }
 
@@ -1525,24 +1639,29 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
     Gas_Config candidate; // 当前作用域变量，用于保存待校验候选值。
     A_Gas_Config_Validation validation; // 当前作用域变量，用于保存参数校验结果。
 
+    //根据11项可见输入补齐自动回差和固定新鲜度
     if ((context == NULL) ||
         !A_HmiConfig_TakeSaveRequest(&context->hmi_config, &candidate))
     {
         return;
     }
 
+    //检查运行参数的单项范围和压力阈值关系
     validation = A_GasConfig_Validate(&candidate);
     if (validation != A_GAS_CONFIG_VALID)
     {
+        //接收气源业务层保存结果
         A_HmiConfig_ReportResult(&context->hmi_config,
             (validation == A_GAS_CONFIG_INVALID_RELATION) ?
             A_HMI_CONFIG_RESULT_INVALID_RELATION : A_HMI_CONFIG_RESULT_INVALID_RANGE,
             &context->config);
         return;
     }
+    //把运行参数编码为单页记录并写入 AT24C256
     if (!A_GasConfig_Save(&context->storage_service, &candidate))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        //接收气源业务层保存结果
         A_HmiConfig_ReportResult(&context->hmi_config,
                                  A_HMI_CONFIG_RESULT_STORAGE_FAILED,
                                  &context->config);
@@ -1550,6 +1669,7 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
     }
 
     context->config = candidate;
+    //参数生效后按新的压力合法上限立即重判现有有效样本
     A_GasControl_ReclassifyPressureQuality(&context->system, &context->config);
     if ((context->system.switch_state == GAS_SWITCH_LOW_CONFIRM) ||
         (context->system.switch_state == GAS_SWITCH_NO_BACKUP))
@@ -1561,7 +1681,9 @@ static void A_GasControl_ProcessHmiConfig(A_Gas_Control_Context *context)
         // 尚未进入机械切瓶的低压确认按新阈值重新开始，已关旧阀或开新阀的过程不被中途打断。
     }
     context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
+    //校验CAN直接读取的生效参数
     (void) A_GasControl_UpdateExternalConfig(context, &context->config);
+    //接收气源业务层保存结果
     A_HmiConfig_ReportResult(&context->hmi_config,
                              A_HMI_CONFIG_RESULT_SUCCESS,
                              &context->config);
@@ -1581,25 +1703,32 @@ static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
     {
         return;
     }
+    //取出人员已经二次确认的日志物理清除请求
     if (A_HmiConfig_TakeLogClearRequest(&context->hmi_config))
     {
+        //请求物理清除全部事件和常规日志
         if (!A_GasLog_RequestClear(&context->log_service))
         {
             context->system.alarm_bits |= GAS_ALARM_STORAGE;
+            //接收日志模块的清除状态、进度和当前数量；查询循环日志区当前保存的有效记录数量
             A_HmiConfig_ReportLogClear(&context->hmi_config,
                                        A_HMI_LOG_CLEAR_FAILED,
                                        0U,
                                        A_GasLog_GetCount(&context->log_service));
             return;
         }
+        //取消当前日志扫描或翻页并清除RAM索引
         A_HmiLog_InvalidateCache(&context->hmi_log);
         // 清除请求一经接受立即废弃RAM分页索引，防止后续使用指向旧物理日志的逻辑位置。
     }
 
+    //分步提交空日志头、擦除旧管理头和全部数据页
     A_GasLog_ClearTask(&context->log_service, &context->system);
+    //查询最近一次日志物理清除的当前状态或最终结果
     result = A_GasLog_GetClearResult(&context->log_service);
     if (result == A_GAS_LOG_CLEAR_RESULT_BUSY)
     {
+        //接收日志模块的清除状态、进度和当前数量；把已完成读回校验的页数转换为0～100的清除百分比
         A_HmiConfig_ReportLogClear(&context->hmi_config,
                                    A_HMI_LOG_CLEAR_BUSY,
                                    A_GasLog_GetClearProgress(&context->log_service),
@@ -1609,6 +1738,7 @@ static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
              (result == A_GAS_LOG_CLEAR_RESULT_SUCCESS))
     {
         context->system.alarm_bits &= ~(uint32_t) GAS_ALARM_STORAGE;
+        //接收日志模块的清除状态、进度和当前数量；查询循环日志区当前保存的有效记录数量
         A_HmiConfig_ReportLogClear(&context->hmi_config,
                                    A_HMI_LOG_CLEAR_SUCCESS,
                                    100U,
@@ -1618,6 +1748,7 @@ static void A_GasControl_ProcessHmiLogClear(A_Gas_Control_Context *context)
              (result == A_GAS_LOG_CLEAR_RESULT_FAILED))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        //接收日志模块的清除状态、进度和当前数量；把已完成读回校验的页数转换为0～100的清除百分比；查询循环日志区当前保存的有效记录数量
         A_HmiConfig_ReportLogClear(&context->hmi_config,
                                    A_HMI_LOG_CLEAR_FAILED,
                                    A_GasLog_GetClearProgress(&context->log_service),
@@ -1637,38 +1768,48 @@ static void A_GasControl_ProcessExternalLogRead(A_Gas_Control_Context *context)
     uint16_t logical_index; // 当前作用域变量，用于保存日志逻辑索引。
     uint16_t valid_count; // 当前作用域变量，用于保存数量计数。
 
+    //从当前外部通讯实例取得一条日志读取请求
     if ((context == NULL) ||
         !A_GasControl_TakeExternalLogRequest(context, &logical_index))
     {
         return;
     }
 
+    //查询日志物理清除状态机是否仍占用EEPROM日志区
     if (A_GasLog_IsClearBusy(&context->log_service))
     {
+        //向当前外部通讯实例公布日志读取结果
         A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_BUSY);
         return;
     }
+    //查询日志管理模块是否已经成功初始化
     if (!A_GasLog_IsReady(&context->log_service))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        //向当前外部通讯实例公布日志读取结果
         A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_READ_FAILED);
         return;
     }
 
+    //查询循环日志区当前保存的有效记录数量
     valid_count = A_GasLog_GetCount(&context->log_service);
     if (logical_index >= valid_count)
     {
+        //向当前外部通讯实例公布日志读取结果
         A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_INVALID_INDEX);
         return;
     }
+    //按照从最旧到最新的逻辑顺序读取并校验一条32字节原始日志；把32字节原始日志写入当前外部通讯的数据窗口
     if (!A_GasLog_ReadRecord(&context->log_service, logical_index, record) ||
         !A_GasControl_SetExternalLogRecord(context, record))
     {
         context->system.alarm_bits |= GAS_ALARM_STORAGE;
+        //向当前外部通讯实例公布日志读取结果
         A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_READ_FAILED);
         return;
     }
 
+    //向当前外部通讯实例公布日志读取结果
     A_GasControl_SetExternalLogResult(context, GAS_EXTERNAL_LOG_SUCCESS);
 }
 
@@ -1691,7 +1832,9 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
         return;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //把编译期默认值写入一个运行参数结构体
     A_GasConfig_LoadDefaults(&context->config);
     context->external_comm_mode = (gas_external_comm_mode_t) GAS_DEFAULT_EXTERNAL_COMM_MODE;
     system = &context->system;
@@ -1707,12 +1850,14 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     // 先建立安全的软件初态；只有后续平台、传感器和阀门初始化成功才允许真实输出。
 
     system->platform_ready = H_GasPlatform_Init(&context->platform);
+    //根据 DWT 周期计数增量更新并读取指定实例的单调毫秒计数
     now_ms = H_GasPlatform_Millis(&context->platform);
     context->switch_enter_ms = now_ms;
     if (!system->platform_ready)
     {
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
     }
+    //以全部阀门关闭的安全状态初始化阀门服务
     if (!F_ValveControl_Init(&context->platform, system))
     {
         context->emergency_close_pending = true;
@@ -1730,10 +1875,12 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
         system->alarm_bits |= GAS_ALARM_SENSOR_COMM | GAS_ALARM_PLATFORM_NOT_READY;
     }
 
+    //使用板级 AT24C256 引脚和默认七位地址初始化 EEPROM 存储功能
     if (A_Storage_Init(&context->storage_service))
     {
         Gas_Config stored_config; // 当前作用域变量，用于保存运行参数。
 
+        //优先读取0x0030的新记录
         comm_record_valid = A_GasControl_LoadCommMode(&context->storage_service,
                                                       &context->external_comm_mode);
         // 通讯模式必须先于参数加载；V2参数自动升级会占用旧模式记录所在的0x0020～0x0023。
@@ -1742,10 +1889,12 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
             context->config = stored_config;
             // EEPROM记录只有标识、版本、CRC和参数关系全部有效时才覆盖编译期默认值。
         }
+        //把运行参数编码为单页记录并写入 AT24C256
         else if (!A_GasConfig_Save(&context->storage_service, &context->config))
         {
             system->alarm_bits |= GAS_ALARM_STORAGE;
         }
+        //加载双副本日志管理头
         if (!A_GasLog_Init(&context->log_service, &context->storage_service, system))
         {
             system->alarm_bits |= GAS_ALARM_STORAGE;
@@ -1757,6 +1906,7 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
         system->alarm_bits |= GAS_ALARM_STORAGE;
     }
 
+    //按照指定模式初始化CAN或SCI0/RS485外部通讯实例；把当前外部通讯模式编码为8字节带CRC记录并写入EEPROM后读回校验
     if (A_GasControl_InitExternalComm(context, context->external_comm_mode) &&
         context->storage_service.initialized && !comm_record_valid &&
         !A_GasControl_SaveCommMode(&context->storage_service, context->external_comm_mode))
@@ -1768,12 +1918,14 @@ void A_GasControl_Init(A_Gas_Control_Context *context)
     {
         system->alarm_bits |= GAS_ALARM_HMI_COMM;
     }
+    //初始化串口屏参数编辑模块
     if (!A_HmiConfig_Init(&context->hmi_config,
                           &context->hmi.function,
                           &context->hmi.hardware))
     {
         system->alarm_bits |= GAS_ALARM_HMI_COMM;
     }
+    //初始化串口屏分页日志实例
     if (!A_HmiLog_Init(&context->hmi_log,
                        &context->hmi.function,
                        &context->hmi.hardware,
@@ -1797,6 +1949,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     bool previous_restored; // 原通讯接口恢复结果；false表示未恢复，true表示已恢复。
     bool previous_mode_saved; // 原通讯模式记录回写结果；false表示存储失败，true表示已读回验证。
 
+    //检查六只气瓶是否都由工作人员置于停用状态；检查十八路分瓶阀和VAL_CAL总测试阀软件命令是否已经全部关闭
     if ((context == NULL) || (mode > GAS_EXTERNAL_COMM_RS485) ||
         !A_GasControl_AllCylindersDisabled(&context->system) ||
         !A_GasControl_AllValveCommandsAreOff(&context->system))
@@ -1805,11 +1958,13 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     }
     if (mode == context->external_comm_mode)
     {
+        //查询CAN外部通讯应用层是否已经成功初始化；查询外部 Modbus 是否已经成功初始化
         return (mode == GAS_EXTERNAL_COMM_CAN) ? A_Can_IsReady(&context->external_can) :
                                                 A_Modbus_IsReady(&context->external_modbus);
     }
 
     previous_mode = context->external_comm_mode;
+    //关闭指定的CAN或SCI0/RS485外部通讯实例
     if (!A_GasControl_DeinitExternalComm(context, previous_mode))
     {
         if (previous_mode == GAS_EXTERNAL_COMM_CAN)
@@ -1823,12 +1978,15 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
         return false;
     }
 
+    //按照指定模式初始化CAN或SCI0/RS485外部通讯实例
     if (!A_GasControl_InitExternalComm(context, mode))
     {
+        //关闭指定的CAN或SCI0/RS485外部通讯实例
         target_closed = A_GasControl_DeinitExternalComm(context, mode);
         previous_restored = false;
         if (target_closed)
         {
+            //按照指定模式初始化CAN或SCI0/RS485外部通讯实例
             previous_restored = A_GasControl_InitExternalComm(context, previous_mode);
             context->external_comm_mode = previous_mode;
         }
@@ -1851,10 +2009,13 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
     }
 
     context->external_comm_mode = mode;
+    //把当前外部通讯模式编码为8字节带CRC记录并写入EEPROM后读回校验
     if (!context->storage_service.initialized ||
         !A_GasControl_SaveCommMode(&context->storage_service, mode))
     {
+        //关闭指定的CAN或SCI0/RS485外部通讯实例
         target_closed = A_GasControl_DeinitExternalComm(context, mode);
+        //把当前外部通讯模式编码为8字节带CRC记录并写入EEPROM后读回校验
         previous_mode_saved = context->storage_service.initialized &&
                               A_GasControl_SaveCommMode(&context->storage_service,
                                                        previous_mode);
@@ -1863,6 +2024,7 @@ bool A_GasControl_SetExternalCommMode(A_Gas_Control_Context *context,
         if (target_closed)
         {
             context->external_comm_mode = previous_mode;
+            //按照指定模式初始化CAN或SCI0/RS485外部通讯实例
             previous_restored = A_GasControl_InitExternalComm(context, previous_mode);
         }
         else
@@ -1923,7 +2085,9 @@ bool A_GasControl_StartExhaust(A_Gas_Control_Context *context, uint8_t index)
         return false;
     }
 
+    //根据 DWT 周期计数增量更新并读取指定实例的单调毫秒计数
     now_ms = H_GasPlatform_Millis(&context->platform);
+    //仅在自动模式的初始化、待测试、待用或低压待换状态下设置排气阀
     if (!F_ValveControl_SetExhaust(&context->platform,
                                    &context->system,
                                    &context->config,
@@ -1955,9 +2119,11 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
     if (!cylinder->exhaust_cmd)
     {
         cylinder->exhaust_deadline_ms = 0U;
+        //请求优先把指定气瓶的MCU实际排气命令回写到串口屏1～6号排气按钮
         A_Hmi_RequestExhaustSync(&context->hmi, index);
         return true;
     }
+    //仅在自动模式的初始化、待测试、待用或低压待换状态下设置排气阀
     if (!F_ValveControl_SetExhaust(&context->platform,
                                    &context->system,
                                    &context->config,
@@ -1967,6 +2133,7 @@ bool A_GasControl_StopExhaust(A_Gas_Control_Context *context, uint8_t index)
         return false;
     }
     cylinder->exhaust_deadline_ms = 0U;
+    //请求优先把指定气瓶的MCU实际排气命令回写到串口屏1～6号排气按钮
     A_Hmi_RequestExhaustSync(&context->hmi, index);
     // 关闭操作不受气瓶状态限制，成功后立即同步屏幕按钮并取消原自动关闭计时。
     return true;
@@ -2009,6 +2176,7 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
             return true;
         }
 
+        //根据 DWT 周期计数增量更新并读取指定实例的单调毫秒计数
         now_ms = H_GasPlatform_Millis(&context->platform);
         context->total_test_pending_open_mask |= bit;
         context->test_open_not_before_ms[index] = context->system.total_test_cmd ?
@@ -2020,6 +2188,7 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
 
     context->total_test_pending_open_mask &= (uint8_t) ~bit;
     context->test_open_not_before_ms[index] = 0U;
+    //仅在自动模式的初始化、待测试、待用或低压待换状态下设置测试阀
     if (cylinder->test_cmd &&
         !F_ValveControl_SetTest(&context->platform,
                                 &context->system,
@@ -2031,6 +2200,7 @@ bool A_GasControl_SetTestValve(A_Gas_Control_Context *context, uint8_t index, bo
     }
     cylinder->test_deadline_ms = 0U;
 
+    //检查六路分支测试阀是否至少有一路已经实际执行开启命令；设置VAL_CAL总测试阀
     if (!A_GasControl_AnyTestValveOn(&context->system) &&
         (context->total_test_pending_open_mask == 0U) &&
         context->system.total_test_cmd &&
@@ -2075,6 +2245,7 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
         {
             return false;
         }
+        //关闭指定气瓶的进气阀、排气阀和测试阀并清除人工阀门计时
         if (!A_GasControl_CloseCylinderValves(context, index))
         {
             return false;
@@ -2083,6 +2254,7 @@ bool A_GasControl_SetCylinderDisabled(A_Gas_Control_Context *context,
         cylinder->state = GAS_CYL_DISABLED;
         cylinder->qualification_passed = false;
         cylinder->recovery_sample_count = 0U;
+        //请求优先把指定气瓶的MCU测试通过标志回写到串口屏51～56号开关
         A_Hmi_RequestQualificationSync(&context->hmi, index);
         // 停用通常用于维护或换瓶，因此同时撤销原测试结论，重新启用后必须再次测试。
         if ((system->active_index == index) ||
@@ -2129,7 +2301,9 @@ bool A_GasControl_SetQualificationPassed(A_Gas_Control_Context *context,
     cylinder = &context->system.cylinder[index];
     if (passed)
     {
+        //根据 DWT 周期计数增量更新并读取指定实例的单调毫秒计数
         now_ms = H_GasPlatform_Millis(&context->platform);
+        //检查指定气瓶是否具有未超过运行参数时限的有效压力数据
         if ((cylinder->state != GAS_CYL_WAIT_TEST) ||
             !A_GasControl_PressureIsFresh(cylinder, &context->config, now_ms) ||
             (cylinder->pressure_mpa < context->config.ready_min_pressure_mpa))
@@ -2167,18 +2341,23 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     }
 
     system = &context->system;
+    //根据 DWT 周期计数增量更新并读取指定实例的单调毫秒计数
     now_ms = H_GasPlatform_Millis(&context->platform);
 
+    //轮询1～7号地址的输入寄存器0和1
     A_ModbusPoll_Task(&context->sensor_poll, system, &context->config, now_ms);
+    //周期推进 12 V 吸合计时
     valve_timing_ok = F_ValveControl_Task(&context->platform, system, now_ms);
     if (!valve_timing_ok)
     {
         system->platform_ready = false;
         system->alarm_bits |= GAS_ALARM_PLATFORM_NOT_READY;
+        //尝试关闭十九路阀门
         (void) A_GasControl_ForceAllValvesOff(context);
     }
     else if (context->emergency_close_pending)
     {
+        //尝试关闭十九路阀门
         (void) A_GasControl_ForceAllValvesOff(context);
     }
     // 保持电压切换或全关失败后锁定所有开阀入口；紧急全关在之后每个5 ms周期继续重试。
@@ -2191,20 +2370,26 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
     if (hmi_input_allowed)
     {
-        A_Hmi_Task(&context->hmi, system, now_ms);
+        A_Hmi_Task(&context->hmi, system, now_ms);//解析串口数据
+        //发现SCI9未就绪或通信错误后停用该时间源
         hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
     }
     if (hmi_input_allowed)
     {
+        //按FIFO顺序把本周期收到的文本输入交给日志和参数模块
         A_GasControl_ProcessHmiTextInputs(context);
+        //发现SCI9未就绪或通信错误后停用该时间源
         hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
+        //把串口屏阀门、停用、测试合格、日志查询和参数页按钮转换为对应业务操作
         while (hmi_input_allowed && A_GasControl_ProcessHmiButton(context))
         {
+            //发现SCI9未就绪或通信错误后停用该时间源
             if (A_GasControl_HandleHmiFault(context))
             {
                 hmi_input_allowed = false;
                 break;
             }
+            //发现阀门GPIO错误后立即锁定全部开阀入口
             if (A_GasControl_HandleValveIoFault(context))
             {
                 break;
@@ -2213,6 +2398,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
         }
         if (hmi_input_allowed)
         {
+            //发现SCI9未就绪或通信错误后停用该时间源
             hmi_input_allowed = !A_GasControl_HandleHmiFault(context);
         }
         // 文本阶段、按钮阶段以及空队列返回后均复查SCI9，故障批次不得继续生成保存或清除请求。
@@ -2223,31 +2409,41 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     }
     if (hmi_input_allowed)
     {
+        //校验已由人员二次确认的完整参数
         A_GasControl_ProcessHmiConfig(context);
+        //接收密码参数页二次确认的日志清除请求
         A_GasControl_ProcessHmiLogClear(context);
     }
     // 文本输入先于按钮处理，保证查询和保存操作使用同一帧批次中的最新输入值；故障批次不执行其派生请求。
 
     A_GasControl_ManualValveTask(context, now_ms);
+    //发现阀门GPIO错误后立即锁定全部开阀入口
     (void) A_GasControl_HandleValveIoFault(context);
     if (context->emergency_close_pending)
     {
         return;
     }
+    //根据有效压力、测试合格标志、当前工作瓶和停用标志维护七种气瓶业务状态
     A_GasControl_UpdateCylinderStates(context, now_ms);
+    //发现阀门GPIO错误后立即锁定全部开阀入口
     (void) A_GasControl_HandleValveIoFault(context);
     if (context->emergency_close_pending)
     {
         return;
     }
+    //执行工作瓶低压确认、顺序查找、先关旧瓶和后开新瓶的非阻塞自动切换
     A_GasControl_SwitchTask(context, now_ms);
+    //发现阀门GPIO错误后立即锁定全部开阀入口
     (void) A_GasControl_HandleValveIoFault(context);
     if (context->emergency_close_pending)
     {
         return;
     }
+    //在总测试阀预先吸合并满足共享VALP1+间隔后
     A_GasControl_TotalTestTask(context, now_ms);
+    //检查最多一路进气、进气与人工阀互锁以及停用瓶全关不变量
     A_GasControl_CheckOutputInvariant(context);
+    //发现阀门GPIO错误后立即锁定全部开阀入口
     (void) A_GasControl_HandleValveIoFault(context);
     if (context->emergency_close_pending)
     {
@@ -2261,18 +2457,23 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     {
         system->alarm_bits |= GAS_ALARM_STORAGE;
     }
+    //按照待刷新位图分时发送一个参数值或确认/结果提示
     A_HmiConfig_Task(&context->hmi_config);
+    //分步执行索引建立、当前页读取、记录格式转换和串口发送
     A_HmiLog_Task(&context->hmi_log, system->date_time.valid);
     // 参数显示和日志发送按周期分时占用SCI9；底层EEPROM单次读写仍为同步操作。
     if (context->external_comm_mode == GAS_EXTERNAL_COMM_CAN)
     {
+        //更新CAN地址表中的日志数量和容量信息；查询循环日志区当前保存的有效记录数量
         A_Can_UpdateLogInfo(&context->external_can,
                             A_GasLog_GetCount(&context->log_service),
                             A_GAS_LOG_RECORD_CAPACITY);
+        //周期解析CAN读写请求、访问地址表并分批组织非阻塞响应
         A_Can_Task(&context->external_can,
                    system,
                    &context->config,
                    context->external_comm_mode);
+        //查询CAN应用层及其下层是否存在影响外部通讯的故障
         if (A_Can_HasFault(&context->external_can))
         {
             system->alarm_bits |= GAS_ALARM_EXTERNAL_CAN;
@@ -2284,11 +2485,15 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
     }
     else
     {
+        //刷新外部保持寄存器中的有效日志数量、容量和单条记录长度；查询循环日志区当前保存的有效记录数量
         A_Modbus_UpdateLogInfo(&context->external_modbus,
                                A_GasLog_GetCount(&context->log_service),
                                A_GAS_LOG_RECORD_CAPACITY);
+        //将六瓶压力与状态、总压力、阀门位图、测试合格位图和系统状态刷新到外部输入寄存器
         A_Modbus_Refresh(&context->external_modbus, system);
+        //周期处理外部主站请求
         A_Modbus_Task(&context->external_modbus, &context->config);
+        //查询外部Modbus应用层及其下层是否存在影响通讯的故障
         if (A_Modbus_HasFault(&context->external_modbus))
         {
             system->alarm_bits |= GAS_ALARM_EXTERNAL_MODBUS;
@@ -2298,10 +2503,14 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
             system->alarm_bits &= ~(uint32_t) GAS_ALARM_EXTERNAL_MODBUS;
         }
     }
+    //通过现有气源业务接口执行CAN单瓶排气、测试、停用和测试结论请求
     A_GasControl_ProcessCanControl(context);
+    //发现阀门GPIO错误后立即锁定全部开阀入口
     if (!A_GasControl_HandleValveIoFault(context))
     {
+        //保存并应用外部通讯提交的运行参数
         A_GasControl_ProcessExternalConfig(context);
+        //执行当前外部通讯提交的日志逻辑序号读取请求
         A_GasControl_ProcessExternalLogRead(context);
     }
     // 协议层先解析一帧请求，再由气源应用层执行控制、参数持久化或EEPROM日志读取。
@@ -2315,6 +2524,7 @@ void A_GasControl_Task(A_Gas_Control_Context *context)
 
     if (!A_HmiLog_IsBusy(&context->hmi_log))
     {
+        //分时刷新压力、气瓶状态、十八路双色阀位、四组六路操作按钮及卡片高亮
         A_Hmi_Refresh(&context->hmi, system, now_ms);
     }
 }

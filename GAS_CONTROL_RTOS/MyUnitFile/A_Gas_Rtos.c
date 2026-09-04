@@ -23,15 +23,19 @@ static void F_GasRtos_ControlTask(void *argument)
 
     if ((context == NULL) || (context->gas_control == NULL))
     {
+        //删除当前FreeRTOS任务
         vTaskDelete(NULL);
         return;
     }
 
+    //初始化六瓶状态机、三阀控制、内部轮询、默认CAN外部通讯、串口屏和EEPROM存储服务
     A_GasControl_Init(context->gas_control);
     last_wake_tick = xTaskGetTickCount(); // 当前作用域变量，用于保存当前处理数据。
     for (;;)
     {
+        //周期执行压力轮询、七状态判断、三阀计时、自动切瓶、日志、串口屏和当前外部通讯
         A_GasControl_Task(context->gas_control);
+        //阻塞到下一个固定任务周期；把毫秒转换为FreeRTOS节拍
         vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(A_GAS_RTOS_CONTROL_PERIOD_MS));
         // 使用绝对周期延时减少任务执行时间波动导致的长期漂移。
     }
@@ -51,8 +55,10 @@ bool A_GasRtos_Start(A_Gas_Rtos_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->gas_control = gas_control;
+    //静态创建FreeRTOS任务
     context->control_task_handle = xTaskCreateStatic(F_GasRtos_ControlTask,
                                                      "GasControl",
                                                      A_GAS_RTOS_CONTROL_STACK_WORDS,
@@ -65,6 +71,7 @@ bool A_GasRtos_Start(A_Gas_Rtos_Context *context,
         return false;
     }
 
+    //启动FreeRTOS调度器
     vTaskStartScheduler();
     return false;
 }

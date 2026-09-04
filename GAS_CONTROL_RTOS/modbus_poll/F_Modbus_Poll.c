@@ -37,10 +37,12 @@ static void F_ModbusPoll_FinishTransaction(F_Modbus_Poll_Context *context,
         return;
     }
 
+    //查询指定实例当前传感器串口事务的错误标志
     sensor_error = H_GasPlatform_SensorHasError(context->platform);
     abort_ok = false;
     if (context->platform != NULL)
     {
+        //中止指定实例的 SCI1 收发事务、清除完成标志
         abort_ok = H_GasPlatform_SensorAbort(context->platform);
     }
     if (sensor_error || !abort_ok)
@@ -97,6 +99,7 @@ bool F_ModbusPoll_Init(F_Modbus_Poll_Context *context,
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
     context->state = MODBUS_POLL_STATE_IDLE;
     context->platform = platform;
@@ -144,6 +147,7 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
     context->request[3] = (uint8_t) start_register;
     context->request[4] = (uint8_t) (register_count >> 8U);
     context->request[5] = (uint8_t) register_count;
+    //按照 Modbus RTU 多项式计算指定数据的 CRC16
     crc = F_ModbusPoll_Crc16(context->request, 6U);
     context->request[6] = (uint8_t) crc;
     context->request[7] = (uint8_t) (crc >> 8U);
@@ -160,14 +164,17 @@ bool F_ModbusPoll_StartRead(F_Modbus_Poll_Context *context,
                                      context->response,
                                      context->expected_response_length))
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
         return false;
     }
 
+    //切换 RS485 到发送方向
     if (!H_GasPlatform_SensorTxStart(context->platform,
                                      context->request,
                                      sizeof(context->request)))
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
         return false;
     }
@@ -193,20 +200,25 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
         return;
     }
 
+    //查询指定实例当前传感器串口事务的错误标志
     if (H_GasPlatform_SensorHasError(context->platform))
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_IO);
         return;
     }
 
+    //使用无符号毫秒差判断当前时间是否已经到达截止时间
     if (F_ModbusPoll_TimeReached(now_ms, context->deadline_ms))
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_TIMEOUT);
         return;
     }
 
     if (context->state == MODBUS_POLL_STATE_TX)
     {
+        //查询指定实例最近一次 SCI1 异步发送是否已成功完成
         if (H_GasPlatform_SensorTxDone(context->platform))
         {
             context->state = MODBUS_POLL_STATE_RX;
@@ -215,6 +227,7 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
         return;
     }
 
+    //查询指定实例最近一次 SCI1 定长异步接收是否已成功完成
     if ((context->state != MODBUS_POLL_STATE_RX) ||
         !H_GasPlatform_SensorRxDone(context->platform))
     {
@@ -223,22 +236,26 @@ void F_ModbusPoll_Task(F_Modbus_Poll_Context *context, uint32_t now_ms)
 
     received_crc = (uint16_t) ((uint16_t) context->response[context->expected_response_length - 2U] |
                                ((uint16_t) context->response[context->expected_response_length - 1U] << 8U));
+    //按照 Modbus RTU 多项式计算指定数据的 CRC16
     calculated_crc = F_ModbusPoll_Crc16(context->response,
                                          context->expected_response_length - 2U);
     // 先校验整帧 CRC，再核对从站、功能码和数据长度，避免错误帧被上层当成压力数据。
 
     if (received_crc != calculated_crc)
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_CRC);
     }
     else if ((context->response[0] != context->slave_address) ||
              (context->response[1] != context->function_code) ||
              (context->response[2] != (uint8_t) (context->register_count * 2U)))
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_PROTOCOL);
     }
     else
     {
+        //结束当前内部 Modbus 事务
         F_ModbusPoll_FinishTransaction(context, MODBUS_POLL_RESULT_OK);
     }
 }

@@ -49,6 +49,7 @@ static bool H_GasPlatform_ConfigureValvePins(void)
 
     for (i = 0U; i < (sizeof(all_valve_pins) / sizeof(all_valve_pins[0])); ++i)
     {
+        //配置GPIO引脚模式
         if (R_IOPORT_PinCfg(&g_ioport_ctrl, all_valve_pins[i], safe_off_cfg) != FSP_SUCCESS)
         {
             success = false;
@@ -184,11 +185,13 @@ static bool H_GasPlatform_SetValveBoost(H_Gas_Platform_Context *context, uint8_t
 {
     bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
+    //把从 0 开始的气瓶索引转换为对应的 VAL_P1～VAL_P6 12 V 吸合控制引脚
     if ((context == NULL) || !H_GasPlatform_BoostValvePin(index, &pin))
     {
         return false;
     }
 
+    //写入GPIO引脚电平；按照阀门有效电平配置
     if (R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(on)) != FSP_SUCCESS)
     {
         context->valve_io_error = true;
@@ -232,12 +235,14 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
         }
         if (context->boost_interval_active[index])
         {
+            //使用有符号毫秒差判断当前时间是否到达截止时间
             if (!H_GasPlatform_TimeReached(context->millis, context->boost_available_ms[index]))
             {
                 return false;
             }
             context->boost_interval_active[index] = false;
         }
+        //设置指定气瓶组的 VAL_Px
         if (!H_GasPlatform_SetValveBoost(context, index, true))
         {
             return false;
@@ -250,6 +255,7 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
         if (result != FSP_SUCCESS)
         {
             context->valve_io_error = true;
+            //设置指定气瓶组的 VAL_Px
             (void) H_GasPlatform_SetValveBoost(context, index, false);
             return false;
         }
@@ -259,6 +265,7 @@ static bool H_GasPlatform_WriteValveOutput(H_Gas_Platform_Context *context,
         return true;
     }
 
+    //写入GPIO引脚电平；按照阀门有效电平配置
     result = R_IOPORT_PinWrite(&g_ioport_ctrl, pin, H_GasPlatform_ValveLevel(false));
     if (result != FSP_SUCCESS)
     {
@@ -286,6 +293,7 @@ static bool H_GasPlatform_SensorDirectionReceive(void)
     bsp_io_level_t receive_level = (GAS_SENSOR_RS485_RX_LEVEL != 0U) ?
                                    BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW;
 
+    //写入GPIO引脚电平
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, PRE_EN, receive_level) == FSP_SUCCESS);
 }
 
@@ -300,6 +308,7 @@ static bool H_GasPlatform_SensorDirectionTransmit(void)
     bsp_io_level_t transmit_level = (GAS_SENSOR_RS485_TX_LEVEL != 0U) ?
                                     BSP_IO_LEVEL_HIGH : BSP_IO_LEVEL_LOW;
 
+    //写入GPIO引脚电平
     return (R_IOPORT_PinWrite(&g_ioport_ctrl, PRE_EN, transmit_level) == FSP_SUCCESS);
 }
 
@@ -323,17 +332,23 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
         return false;
     }
 
+    //初始化或清空内存数据
     (void) memset(context, 0, sizeof(*context));
+    //把全部阀门控制和强吸合控制引脚强制配置为 GPIO 输出
     valve_pins_ready = H_GasPlatform_ConfigureValvePins();
+    //把板上全部已知阀门GPIO写为关闭电平
     valves_off = H_GasPlatform_AllValvesOff(context);
+    //把压力传感器 RS485 收发器切换到接收状态
     direction_ready = H_GasPlatform_SensorDirectionReceive();
 
+    //计算SCI串口波特率参数；初始化SCI串口
     if ((R_SCI_UART_BaudCalculate(GAS_SENSOR_UART_BAUDRATE,
                                   false,
                                   GAS_SENSOR_UART_MAX_ERROR_X1000,
                                   &baud_setting) == FSP_SUCCESS) &&
         (R_SCI_UART_Open(&rs485_sensor_ctrl, &rs485_sensor_cfg) == FSP_SUCCESS))
     {
+        //更新SCI串口波特率；注册SCI串口回调
         if ((R_SCI_UART_BaudSet(&rs485_sensor_ctrl, &baud_setting) == FSP_SUCCESS) &&
             (R_SCI_UART_CallbackSet(&rs485_sensor_ctrl,
                                     rs485_sensor_callback,
@@ -345,6 +360,7 @@ bool H_GasPlatform_Init(H_Gas_Platform_Context *context)
         }
         else
         {
+            //关闭SCI串口
             (void) R_SCI_UART_Close(&rs485_sensor_ctrl);
         }
     }
@@ -410,16 +426,19 @@ bool H_GasPlatform_SensorTxStart(H_Gas_Platform_Context *context, const uint8_t 
     }
 
     context->sensor_tx_done = false;
+    //把压力传感器 RS485 收发器切换到发送状态
     if (!H_GasPlatform_SensorDirectionTransmit())
     {
         context->sensor_uart_error = true;
         return false;
     }
 
+    //启动SCI异步发送
     err = R_SCI_UART_Write(&rs485_sensor_ctrl, data, (uint32_t) length);
     if (err != FSP_SUCCESS)
     {
         context->sensor_uart_error = true;
+        //把压力传感器 RS485 收发器切换到接收状态
         (void) H_GasPlatform_SensorDirectionReceive();
         return false;
     }
@@ -444,6 +463,7 @@ bool H_GasPlatform_SensorRxStart(H_Gas_Platform_Context *context, uint8_t *data,
 
     context->sensor_rx_done = false;
     context->sensor_uart_error = false;
+    //启动SCI异步接收
     err = R_SCI_UART_Read(&rs485_sensor_ctrl, data, (uint32_t) length);
     if (err != FSP_SUCCESS)
     {
@@ -472,8 +492,10 @@ bool H_GasPlatform_SensorAbort(H_Gas_Platform_Context *context)
     context->sensor_tx_done = false;
     context->sensor_rx_done = false;
     context->sensor_uart_error = false;
+    //中止SCI串口传输
     abort_ok = context->sensor_uart_open &&
                (R_SCI_UART_Abort(&rs485_sensor_ctrl, UART_DIR_RX_TX) == FSP_SUCCESS);
+    //把压力传感器 RS485 收发器切换到接收状态
     direction_ok = H_GasPlatform_SensorDirectionReceive();
     if (!abort_ok || !direction_ok)
     {
@@ -529,6 +551,7 @@ bool H_GasPlatform_WriteSupplyValve(H_Gas_Platform_Context *context,
 {
     bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
+    //把从 0 开始的气瓶索引转换为对应的供气阀 GPIO 引脚
     if ((context == NULL) || !H_GasPlatform_SupplyValvePin(cylinder_index, &pin))
     {
         return false;
@@ -542,6 +565,7 @@ bool H_GasPlatform_WriteSupplyValve(H_Gas_Platform_Context *context,
     // 板级输出未使能时只接受关阀命令。
 #endif
 
+    //控制单路阀门负端
     return H_GasPlatform_WriteValveOutput(context,
                             cylinder_index,
                             pin,
@@ -563,6 +587,7 @@ bool H_GasPlatform_WriteExhaustValve(H_Gas_Platform_Context *context,
 {
     bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
+    //把从 0 开始的气瓶索引转换为对应的排气阀 GPIO 引脚
     if ((context == NULL) || !H_GasPlatform_ExhaustValvePin(cylinder_index, &pin))
     {
         return false;
@@ -576,6 +601,7 @@ bool H_GasPlatform_WriteExhaustValve(H_Gas_Platform_Context *context,
     // 板级输出未使能时只接受关阀命令。
 #endif
 
+    //控制单路阀门负端
     return H_GasPlatform_WriteValveOutput(context,
                             cylinder_index,
                             pin,
@@ -597,6 +623,7 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context,
 {
     bsp_io_port_pin_t pin; // 当前作用域变量，用于保存GPIO引脚。
 
+    //把从 0 开始的气瓶索引转换为对应的测试阀 GPIO 引脚
     if ((context == NULL) || !H_GasPlatform_TestValvePin(cylinder_index, &pin))
     {
         return false;
@@ -610,6 +637,7 @@ bool H_GasPlatform_WriteTestValve(H_Gas_Platform_Context *context,
     // 板级输出未使能时只接受关阀命令。
 #endif
 
+    //控制单路阀门负端
     return H_GasPlatform_WriteValveOutput(context,
                                            cylinder_index,
                                            pin,
@@ -641,6 +669,7 @@ bool H_GasPlatform_WriteTotalTestValve(H_Gas_Platform_Context *context,
     // 板级输出未使能时只接受关阀命令。
 #endif
 
+    //控制单路阀门负端
     return H_GasPlatform_WriteValveOutput(context,
                                            0U,
                                            VAL_CAL,
@@ -667,12 +696,14 @@ bool H_GasPlatform_ValveTask(H_Gas_Platform_Context *context, uint32_t now_ms)
 
     for (index = 0U; index < GAS_CYLINDER_COUNT; ++index)
     {
+        //使用有符号毫秒差判断当前时间是否到达截止时间
         if (context->boost_interval_active[index] &&
             H_GasPlatform_TimeReached(now_ms, context->boost_available_ms[index]))
         {
             context->boost_interval_active[index] = false;
         }
 
+        //使用有符号毫秒差判断当前时间是否到达截止时间；设置指定气瓶组的 VAL_Px
         if (context->boost_state[index] &&
             H_GasPlatform_TimeReached(now_ms, context->boost_deadline_ms[index]) &&
             !H_GasPlatform_SetValveBoost(context, index, false))
@@ -718,6 +749,7 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
 
     for (i = 0U; i < (sizeof(all_valve_pins) / sizeof(all_valve_pins[0])); ++i)
     {
+        //写入GPIO引脚电平；按照阀门有效电平配置
         if (R_IOPORT_PinWrite(&g_ioport_ctrl,
                               all_valve_pins[i],
                               H_GasPlatform_ValveLevel(false)) != FSP_SUCCESS)
@@ -730,11 +762,16 @@ bool H_GasPlatform_AllValvesOff(H_Gas_Platform_Context *context)
 
     if (success)
     {
+        //初始化或清空内存数据
         (void) memset(context->supply_state, 0, sizeof(context->supply_state));
+        //初始化或清空内存数据
         (void) memset(context->exhaust_state, 0, sizeof(context->exhaust_state));
+        //初始化或清空内存数据
         (void) memset(context->test_state, 0, sizeof(context->test_state));
         context->total_test_state = false;
+        //初始化或清空内存数据
         (void) memset(context->boost_state, 0, sizeof(context->boost_state));
+        //初始化或清空内存数据
         (void) memset(context->boost_deadline_ms, 0, sizeof(context->boost_deadline_ms));
         context->valve_io_error = false;
         // 运行中全关不清除强吸合最短间隔，防止停止后立即重启绕过线圈保护。
@@ -761,6 +798,7 @@ void rs485_sensor_callback(uart_callback_args_t *p_args)
     if (p_args->event == UART_EVENT_TX_COMPLETE)
     {
         context->sensor_tx_done = true;
+        //把压力传感器 RS485 收发器切换到接收状态
         if (!H_GasPlatform_SensorDirectionReceive())
         {
             context->sensor_uart_error = true;
@@ -776,6 +814,7 @@ void rs485_sensor_callback(uart_callback_args_t *p_args)
                                UART_EVENT_BREAK_DETECT)) != 0U)
     {
         context->sensor_uart_error = true;
+        //把压力传感器 RS485 收发器切换到接收状态
         (void) H_GasPlatform_SensorDirectionReceive();
     }
     else

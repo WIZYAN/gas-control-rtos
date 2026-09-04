@@ -22,6 +22,7 @@ bool A_Storage_Init(A_Storage_Context *context)
         return false;
     }
 
+    //初始化软件 IIC、写保护 GPIO 和 AT24C256 七位器件地址
     return F_At24c256_Init(context,
                           AT24C_SCL,
                           AT24C_SDA,
@@ -40,6 +41,7 @@ bool A_Storage_Read(A_Storage_Context *context,
                          uint8_t *buffer,
                          size_t length)
 {
+    //从指定 16 位 EEPROM 地址开始连续读取数据
     return F_At24c256_Read(context, address, buffer, length);
 }
 
@@ -54,6 +56,7 @@ bool A_Storage_Write(A_Storage_Context *context,
                           const uint8_t *data,
                           size_t length)
 {
+    //按照 64 字节页边界自动拆分数据
     return F_At24c256_Write(context, address, data, length);
 }
 
@@ -67,5 +70,6 @@ bool A_Storage_EraseRange(A_Storage_Context *context,
                           uint16_t address,
                           size_t length)
 {
+    //把指定地址范围按页写方式填充为 0xFF
     return F_At24c256_EraseRange(context, address, length);
 }
